@@ -8,10 +8,10 @@
 import type { Config } from "../types/config"
 import { PLYMOUTH_CONF, PLYMOUTH_SCRIPT, PLYMOUTH_THEME } from "./plymouth/plymouth-theme"
 import { NETWORK_SERVICE } from "./systemd/network-service"
+import { NETWORK_SERVICE_UNIT } from "./systemd/network-service-unit"
 import { STRUX_SERVICE } from "./systemd/strux-service"
 
 export const BUILD_BASE_SCRIPT = function(config: Config) {
-
     return `#!/bin/bash
 set -e
 
@@ -19,7 +19,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-progress "Preparing Base Root Filesystem
+progress "Preparing Base Root Filesystem"
 
 ARCH="${config.arch}"
 DEBIAN_SUITE="forky"
@@ -53,21 +53,21 @@ progress "Running debootstrap (downloading Debian packages)..."
 
 if [ "$DEBIAN_ARCH" = "$HOST_ARCH" ]; then
     # Native architecture - simple debootstrap
-    debootstrap \
-        --variant=minbase \
-        --include=ca-certificates \
-        "$DEBIAN_SUITE" \
-        "$ROOTFS_DIR" \
+    debootstrap \\
+        --variant=minbase \\
+        --include=ca-certificates \\
+        "$DEBIAN_SUITE" \\
+        "$ROOTFS_DIR" \\
         http://deb.debian.org/debian
 else
     # Cross-architecture - use foreign mode with qemu
-    debootstrap \
-        --arch="$DEBIAN_ARCH" \
-        --variant=minbase \
-        --foreign \
-        --include=ca-certificates \
-        "$DEBIAN_SUITE" \
-        "$ROOTFS_DIR" \
+    debootstrap \\
+        --arch="$DEBIAN_ARCH" \\
+        --variant=minbase \\
+        --foreign \\
+        --include=ca-certificates \\
+        "$DEBIAN_SUITE" \\
+        "$ROOTFS_DIR" \\
         http://deb.debian.org/debian
 
     # Copy QEMU static binary for second stage
@@ -107,7 +107,7 @@ run_in_chroot "apt-get update"
 
 # Install systemd and session management
 progress "Installing systemd and core packages..."
-run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
     systemd \\
     systemd-sysv \\
     libpam-systemd \\
@@ -119,7 +119,7 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
 
 # Install graphics stack
 progress "Installing graphics stack (Mesa drivers)..."
-run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
     mesa-vulkan-drivers \\
     mesa-va-drivers \\
     libgl1-mesa-dri \\
@@ -130,47 +130,47 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
 # Install architecture-specific GPU drivers
 if [ "$DEBIAN_ARCH" = "amd64" ]; then
     progress "Installing Intel/AMD GPU drivers for x86_64..."
-    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        mesa-vulkan-intel \
-        intel-media-va-driver \
-        libegl-mesa0 \
-        libgl1-mesa-glx \
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+        mesa-vulkan-intel \\
+        intel-media-va-driver \\
+        libegl-mesa0 \\
+        libgl1-mesa-glx \\
         libwayland-egl1" || true
 fi
 
 
 # Install Wayland and browser components
 progress "Installing Wayland and WPE WebKit..."
-run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    libwlroots-0.19 \
-    wayland-protocols \
-    libwayland-client0 \
-    libwayland-server0 \
-    cog \
-    libwpewebkit-2.0-1 \
-    libwpe-1.0-1 \
+run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+    libwlroots-0.19 \\
+    wayland-protocols \\
+    libwayland-client0 \\
+    libwayland-server0 \\
+    cog \\
+    libwpewebkit-2.0-1 \\
+    libwpe-1.0-1 \\
     libwpebackend-fdo-1.0-1"
 
 # Install fonts and media support
 progress "Installing fonts and media support..."
-run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    fonts-dejavu-core \
-    fonts-noto-core \
-    gstreamer1.0-plugins-base \
+run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+    fonts-dejavu-core \\
+    fonts-noto-core \\
+    gstreamer1.0-plugins-base \\
     gstreamer1.0-plugins-good"
 
 
 
 # Install system utilities
 progress "Installing system utilities..."
-run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    udev \
-    kmod \
-    iproute2 \
-    netcat-openbsd \
-    procps \
-    libjson-glib-1.0-0 \
-    wlr-randr \
+run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+    udev \\
+    kmod \\
+    iproute2 \\
+    netcat-openbsd \\
+    procps \\
+    libjson-glib-1.0-0 \\
+    wlr-randr \\
     xwayland"
 
 ${config.rootfs?.packages && config.rootfs.packages.length > 0 ? `# Install custom packages from config
@@ -180,8 +180,21 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
 ` : ""}
 
 ${config.rootfs?.deb_packages && config.rootfs.deb_packages.length > 0 ? `# Copy and install .deb files
+progress "Copying .deb files to dist folder..."
+mkdir -p /project/dist/deb-packages
+${config.rootfs.deb_packages.map((debPackage: string) => {
+        // Resolve path: if relative, prepend /project/; if starts with ./, remove it first
+        const normalizedPath = debPackage.startsWith("./") ? debPackage.slice(2) : debPackage
+        const sourcePath = normalizedPath.startsWith("/") ? normalizedPath : `/project/${normalizedPath}`
+        const fileName = debPackage.split("/").pop()
+        return `cp "${sourcePath}" /project/dist/deb-packages/${fileName}`
+    }).join("\n")}
+
 progress "Copying .deb files to rootfs..."
-${config.rootfs.deb_packages.map((debPackage: string) => `cp "${debPackage}" "$ROOTFS_DIR/tmp/"`).join("\n")}
+${config.rootfs.deb_packages.map((debPackage: string) => {
+        const fileName = debPackage.split("/").pop()
+        return `cp "/project/dist/deb-packages/${fileName}" "$ROOTFS_DIR/tmp/"`
+    }).join("\n")}
 
 progress "Installing .deb files..."
 run_in_chroot "DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/${config.rootfs.deb_packages.map((f: string) => f.split("/").pop()).join(" /tmp/")}" || true
@@ -195,9 +208,13 @@ cat > "$ROOTFS_DIR/etc/systemd/system/strux.service" << 'EOF'
 ${STRUX_SERVICE}
 EOF
 
+cat > "$ROOTFS_DIR/etc/systemd/system/strux-network.service" << 'EOF'
+${NETWORK_SERVICE_UNIT}
+EOF
+
 mkdir -p "$ROOTFS_DIR/etc/systemd/network"
 
-cat > "$ROOTFS_DIR/etc/systemd/system/network/20-ethernet.network" << 'EOF'
+cat > "$ROOTFS_DIR/etc/systemd/network/20-ethernet.network" << 'EOF'
 ${NETWORK_SERVICE}
 EOF
 
@@ -219,7 +236,7 @@ ${config.boot.service_files && config.boot.service_files.length > 0 ? `# Enable 
 ${config.boot.service_files.map((serviceFile: string) => {
         const fileName = serviceFile.split("/").pop()
         const serviceName = fileName?.replace(/\.service$/, "") ?? fileName
-        return `run_in_chroot "systemctl enable ${serviceName}.service || true"`
+        return `run_in_chroot "systemctl enable '${serviceName}.service' || true"`
     }).join("\n")}
 ` : ""}
 

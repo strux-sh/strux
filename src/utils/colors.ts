@@ -171,7 +171,7 @@ export async function runWithSpinner(
         info(spinnerMsg)
         const proc = spawn(command, args, {
             ...options,
-            stdio: "inherit",
+            stdio: options.stdio ?? "inherit",
         })
 
         return new Promise((resolve, reject) => {
@@ -196,7 +196,7 @@ export async function runWithSpinner(
 
     const proc = spawn(command, args, {
         ...options,
-        stdio: ["inherit", "pipe", "pipe"],
+        stdio: options.stdio ?? ["inherit", "pipe", "pipe"],
     })
 
     let stdout = ""
