@@ -46,7 +46,7 @@ jobs:
 
       - name: Test introspection
         run: |
-          ./strux-introspect test/sample_main.go
+          ./strux-introspect test/main.go
 
       - name: Test Bun build
         run: bun build src/index.ts --compile --outfile strux-test
@@ -88,5 +88,5 @@ jobs:
       - name: Test binaries
         shell: bash
         run: |
-          ./strux-introspect${{ matrix.os == 'windows-latest' && '.exe' || '' }} test/sample_main.go > /dev/null
+          ./strux-introspect${{ matrix.os == 'windows-latest' && '.exe' || '' }} test/main.go > /dev/null
           ./strux${{ matrix.os == 'windows-latest' && '.exe' || '' }} --version || true

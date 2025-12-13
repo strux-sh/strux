@@ -5,7 +5,7 @@
  */
 
 import { $ } from "bun"
-import { join } from "path"
+import { join, resolve } from "path"
 import { mkdir, rm, readdir, stat, copyFile } from "fs/promises"
 import { Readable } from "stream"
 import { spawn } from "child_process"
@@ -260,19 +260,77 @@ async function compileApp(arch: string): Promise<void> {
     const crossCompiler = goArch === "amd64" ? "x86_64-linux-gnu-gcc" : "aarch64-linux-gnu-gcc"
     const cwd = process.cwd()
 
+    // Check if go.mod requires github.com/strux-dev/strux
+    const goModPath = join(cwd, "go.mod")
+    let needsStruxReplace = false
+    let struxModulePath = ""
+
+    try {
+        const goModContent = await Bun.file(goModPath).text()
+        if (goModContent.includes("github.com/strux-dev/strux")) {
+            needsStruxReplace = true
+            // Try to find the local strux module (should be in parent directory)
+            const parentDir = resolve(cwd, "..")
+            const parentGoModPath = join(parentDir, "go.mod")
+            try {
+                const parentGoModContent = await Bun.file(parentGoModPath).text()
+                if (parentGoModContent.includes("module github.com/strux-dev/strux")) {
+                    struxModulePath = parentDir
+                }
+            } catch {
+                // Parent go.mod doesn't exist or isn't the strux module
+            }
+        }
+    } catch {
+        // go.mod doesn't exist or can't be read
+    }
+
+    // Build Docker volume mounts
+    const dockerVolumes = [`${cwd}:/project`]
+    if (needsStruxReplace && struxModulePath) {
+        dockerVolumes.push(`${struxModulePath}:/strux-module`)
+    }
+
+    // Build the script with replace directive if needed
+    // Only use replace directive if local module exists (for development)
+    // If repo is public and no local module, Go will download normally
+    let setupScript = ""
+    if (needsStruxReplace && struxModulePath) {
+        setupScript = `
+        # Add replace directive for local strux module (only if local version exists)
+        if ! grep -q "replace github.com/strux-dev/strux" go.mod; then
+            echo "" >> go.mod
+            echo "replace github.com/strux-dev/strux => /strux-module" >> go.mod
+        fi
+        `
+    }
+
+    // Only set GOPRIVATE if we're using a local replace (private repo scenario)
+    // If repo is public and no local module, GOPRIVATE isn't needed
+    const goPrivateEnv = needsStruxReplace && struxModulePath ? "GOPRIVATE=github.com/strux-dev/* " : ""
+
     const script = `
         mkdir -p /project/dist
-        CGO_ENABLED=1 GOOS=linux GOARCH=${goArch} CC=${crossCompiler} go build -o /project/dist/app .
+        ${setupScript}
+        CGO_ENABLED=1 GOOS=linux GOARCH=${goArch} CC=${crossCompiler} ${goPrivateEnv}go build -o /project/dist/app .
     `
+
+    const dockerEnvVars = [
+        "-e", "GOCACHE=/project/dist/.go-cache",
+        "-e", "GOMODCACHE=/project/dist/.go-mod-cache",
+    ]
+    // Only add GOPRIVATE if using local replace (private repo scenario)
+    if (needsStruxReplace && struxModulePath) {
+        dockerEnvVars.push("-e", "GOPRIVATE=github.com/strux-dev/*")
+    }
 
     await runWithSpinner(
         "docker",
         [
             "run", "--rm",
-            "-v", `${cwd}:/project`,
+            ...dockerVolumes.flatMap(v => ["-v", v]),
             "-w", "/project",
-            "-e", "GOCACHE=/project/dist/.go-cache",
-            "-e", "GOMODCACHE=/project/dist/.go-mod-cache",
+            ...dockerEnvVars,
             "strux-builder",
             "/bin/sh", "-c", script,
         ],
