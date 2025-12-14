@@ -153,6 +153,40 @@ Build a complete OS image for the specified Board Support Package.
 Run the built OS image in QEMU for testing. Auto-detects GPU (Intel/AMD/NVIDIA) for GL acceleration.
 NVIDIA Devices and MacOS (with Apple Silicon) devices tend to have issues with GPU Passthrough, so we have employed software rendering for both.
 
+**Options:**
+- `--debug` - Show console output and systemd messages
+
+### `strux dev`
+
+Start Strux OS in development mode with hot-reload capabilities. This command builds a development-optimized image, starts a Vite dev server for your frontend (if present), watches for file changes, and runs QEMU with automatic rebuilds.
+
+**Options:**
+- `--clean` - Deletes the entire dist folder starting the build from scratch
+- `--debug` - Show console output and systemd messages (disables splash screen)
+
+**Features:**
+- **Hot-reload for Go code**: Automatically rebuilds your Go binary and regenerates TypeScript types when `.go` files change
+- **Frontend dev server**: Starts a Vite dev server (if `frontend/` directory exists) accessible from the VM
+- **Config watching**: Rebuilds the dev image when `strux.json` changes
+- **Automatic service restart**: The VM automatically restarts your application when the binary is updated
+
+**Workflow:**
+1. Builds a development-optimized OS image
+2. Generates TypeScript types from your `main.go`
+3. Builds and copies the initial Go binary to the dev mount
+4. Starts Vite dev server (if frontend exists)
+5. Sets up file watchers for Go files and config
+6. Launches QEMU with the dev image
+
+**Example:**
+```bash
+strux dev qemu
+strux dev qemu --clean  # Force clean rebuild
+strux dev qemu --debug  # Show debug output
+```
+
+**Note:** You must have a `frontend/` directory with a `package.json` for the Vite dev server to start. The dev server runs on `0.0.0.0` to allow access from the QEMU VM.
+
 ### `strux usb add`
 
 Detects connected USB devices on macOS (including Apple Silicon), Linux, and Windows, then lets you toggle which ones should be kept in `qemu.usb` in `strux.json`. Existing devices start selected so you can deselect to remove; new detections start unselected so you can add them.
