@@ -369,7 +369,7 @@ jobs:
           name: strux-windows-installer
           path: strux-setup.exe
 
-  # Generate Homebrew formula
+  # Generate Homebrew formula and tarballs
   build-homebrew:
     name: Generate Homebrew Formula
     runs-on: ubuntu-latest
@@ -393,19 +393,28 @@ jobs:
             echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create tarball and get SHA
+      - name: Create tarballs and get SHAs
         id: tarball
         run: |
-          mkdir -p strux-${{ steps.version.outputs.version }}
-          cp binaries/strux-darwin-arm64 strux-${{ steps.version.outputs.version }}/strux-arm64 || true
-          cp binaries/strux-darwin-x64 strux-${{ steps.version.outputs.version }}/strux-x64 || true
-          cp binaries/strux-introspect-darwin-arm64 strux-${{ steps.version.outputs.version }}/strux-introspect-arm64 || true
-          cp binaries/strux-introspect-darwin-amd64 strux-${{ steps.version.outputs.version }}/strux-introspect-x64 || true
+          VERSION="${{ steps.version.outputs.version }}"
 
-          tar -czvf strux-${{ steps.version.outputs.version }}-darwin.tar.gz strux-${{ steps.version.outputs.version }}
+          # Create ARM64 tarball
+          mkdir -p strux-arm64
+          cp binaries/strux-darwin-arm64 strux-arm64/strux || true
+          cp binaries/strux-introspect-darwin-arm64 strux-arm64/strux-introspect || true
+          chmod +x strux-arm64/*
+          tar -czvf strux-${VERSION}-darwin-arm64.tar.gz -C strux-arm64 .
+          SHA256_ARM64=$(sha256sum strux-${VERSION}-darwin-arm64.tar.gz | cut -d' ' -f1)
+          echo "sha256_arm64=$SHA256_ARM64" >> $GITHUB_OUTPUT
 
-          SHA256=$(sha256sum strux-${{ steps.version.outputs.version }}-darwin.tar.gz | cut -d' ' -f1)
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          # Create x64 tarball
+          mkdir -p strux-x64
+          cp binaries/strux-darwin-x64 strux-x64/strux || true
+          cp binaries/strux-introspect-darwin-amd64 strux-x64/strux-introspect || true
+          chmod +x strux-x64/*
+          tar -czvf strux-${VERSION}-darwin-x64.tar.gz -C strux-x64 .
+          SHA256_X64=$(sha256sum strux-${VERSION}-darwin-x64.tar.gz | cut -d' ' -f1)
+          echo "sha256_x64=$SHA256_X64" >> $GITHUB_OUTPUT
 
       - name: Generate Homebrew formula
         run: |
@@ -419,20 +428,27 @@ jobs:
             on_macos do
               if Hardware::CPU.arm?
                 url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz"
-                # sha256 will be updated after release
+                sha256 "${{ steps.tarball.outputs.sha256_arm64 }}"
               else
                 url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-${{ steps.version.outputs.version }}-darwin-x64.tar.gz"
-                # sha256 will be updated after release
+                sha256 "${{ steps.tarball.outputs.sha256_x64 }}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-linux-arm64"
+              else
+                url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-linux-x64"
               end
             end
 
             def install
-              if Hardware::CPU.arm?
-                bin.install "strux-arm64" => "strux"
-                bin.install "strux-introspect-arm64" => "strux-introspect"
+              if OS.mac?
+                bin.install "strux"
+                bin.install "strux-introspect"
               else
-                bin.install "strux-x64" => "strux"
-                bin.install "strux-introspect-x64" => "strux-introspect"
+                bin.install Dir["strux*"].first => "strux"
               end
             end
 
@@ -448,11 +464,17 @@ jobs:
           name: homebrew-formula
           path: strux.rb
 
-      - name: Upload Darwin tarball
+      - name: Upload Darwin ARM64 tarball
         uses: actions/upload-artifact@v4
         with:
-          name: strux-darwin-tarball
-          path: strux-*.tar.gz
+          name: strux-darwin-arm64-tarball
+          path: strux-*-darwin-arm64.tar.gz
+
+      - name: Upload Darwin x64 tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: strux-darwin-x64-tarball
+          path: strux-*-darwin-x64.tar.gz
 
   # Create GitHub Release
   release:
@@ -538,3 +560,42 @@ jobs:
             | macOS | x64 | `strux-darwin-x64` |
             | macOS | arm64 (Apple Silicon) | `strux-darwin-arm64` |
             | Windows | x64 | `strux-windows-x64.exe` |
+
+  # Publish Homebrew formula to tap repository
+  publish-homebrew:
+    name: Publish to Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: [release]
+    steps:
+      - name: Download Homebrew formula
+        uses: actions/download-artifact@v4
+        with:
+          name: homebrew-formula
+          path: .
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push to Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          # Clone the tap repository
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/strux-dev/homebrew-strux.git tap
+
+          # Copy the formula
+          cp strux.rb tap/Formula/strux.rb
+
+          # Commit and push
+          cd tap
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Formula/strux.rb
+          git commit -m "Update strux to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push
