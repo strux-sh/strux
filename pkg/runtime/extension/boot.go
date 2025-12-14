@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // BootExtension provides boot and system management functions
@@ -45,6 +46,10 @@ func (b *BootMethods) HideSplash() error {
 	}
 	defer conn.Close()
 
+	if uc, ok := conn.(*net.UnixConn); ok {
+		_ = uc.SetDeadline(time.Now().Add(2 * time.Second))
+	}
+
 	fmt.Printf("Strux Boot: Connected, sending HIDE_SPLASH command\n")
 
 	// Send HIDE_SPLASH command
@@ -52,6 +57,11 @@ func (b *BootMethods) HideSplash() error {
 	if err != nil {
 		fmt.Printf("Strux Boot: Failed to send: %v\n", err)
 		return fmt.Errorf("failed to send hide splash command: %w", err)
+	}
+
+	// Gracefully close write side to signal EOF to the server
+	if uc, ok := conn.(*net.UnixConn); ok {
+		_ = uc.CloseWrite()
 	}
 
 	fmt.Printf("Strux Boot: HIDE_SPLASH command sent successfully\n")

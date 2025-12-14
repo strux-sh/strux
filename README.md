@@ -35,7 +35,8 @@ brew install strux
 
 **macOS runtime prerequisites for `strux run` with USB passthrough:**
 - QEMU (install via Homebrew: `brew install qemu`)
-- usbredir tools (install via Homebrew: `brew install usbredir`)
+- usbredir tools (install via Homebrew: `brew install usbredir`) — provides `usbredirect`/`usbredir-host` used automatically on macOS
+- QEMU must be built with usbredir support (Homebrew bottles currently lack `usb-redir` device). Use a QEMU build that includes usbredir (e.g., build from source with usbredir enabled or MacPorts `sudo port install qemu +usbredir`) and point `STRUX_QEMU_BIN` to that binary if needed.
 
 The CLI will fail fast with guidance if `usbredir-host` is missing.
 

@@ -190,56 +190,68 @@ export function generateTypeScriptDefinitions(
         lines.push("")
     }
 
+    const globalLines: string[] = []
+    const appendInterfaceBlock = (block: string[]): void => {
+        if (globalLines.length > 0 && globalLines[globalLines.length - 1] !== "") {
+            globalLines.push("")
+        }
+        globalLines.push(...block)
+    }
+
     // Generate interfaces for custom structs (excluding the app struct)
     const usedStructs = findUsedStructs(app, structs)
     for (const structName of usedStructs) {
         const structDef = structs[structName]
         if (structDef) {
-            lines.push(`interface ${structName} {`)
+            const block: string[] = [`interface ${structName} {`]
             for (const field of structDef.fields) {
-                lines.push(`  ${field.name}: ${field.tsType};`)
+                block.push(`  ${field.name}: ${field.tsType};`)
             }
-            lines.push("}")
-            lines.push("")
+            block.push("}")
+            appendInterfaceBlock(block)
         }
     }
 
-    // Generate the App interface
-    lines.push(`interface ${app.name} {`)
+    // Generate the App interface inside the global scope
+    const appBlock: string[] = [`interface ${app.name} {`]
 
-    // Add fields
     for (const field of app.fields) {
-        lines.push(`  ${field.name}: ${field.tsType};`)
+        appBlock.push(`  ${field.name}: ${field.tsType};`)
     }
 
-    // Add separator if both fields and methods exist
     if (app.fields.length > 0 && app.methods.length > 0) {
-        lines.push("")
+        appBlock.push("")
     }
 
-    // Add methods
     for (const method of app.methods) {
         const params = formatMethodParams(method)
         const returnType = formatReturnType(method)
-        lines.push(`  ${method.name}(${params}): ${returnType};`)
+        appBlock.push(`  ${method.name}(${params}): ${returnType};`)
     }
 
-    lines.push("}")
-    lines.push("")
+    appBlock.push("}")
+    appendInterfaceBlock(appBlock)
+
+    if (globalLines.length > 0 && globalLines[globalLines.length - 1] !== "") {
+        globalLines.push("")
+    }
 
     // Generate Window interface augmentation with both user app and strux runtime
-    // Match the format from init
+    globalLines.push("const strux: Strux;")
+    globalLines.push("interface Window {")
+    globalLines.push("  strux: Strux;")
+    globalLines.push("  go: {")
+    globalLines.push(`    ${app.packageName}: {`)
+    globalLines.push(`      ${app.name}: ${app.name};`)
+    globalLines.push("    }")
+    globalLines.push("  }")
+    globalLines.push("}")
+
     lines.push("// Global type declarations")
     lines.push("declare global {")
-    lines.push("  const strux: Strux;")
-    lines.push("  interface Window {")
-    lines.push("    strux: Strux;")
-    lines.push("    go: {")
-    lines.push(`      ${app.packageName}: {`)
-    lines.push(`        ${app.name}: ${app.name};`)
-    lines.push("      }")
-    lines.push("    }")
-    lines.push("  }")
+    for (const line of globalLines) {
+        lines.push(line === "" ? "" : `  ${line}`)
+    }
     lines.push("}")
     lines.push("")
     lines.push("export {};")
@@ -362,4 +374,3 @@ function checkTypeForStruct(
         used.add(baseType)
     }
 }
-

@@ -26,19 +26,61 @@ function decode(output?: Uint8Array | null): string {
     return decoder.decode(output)
 }
 
+
 function normalizeId(id: string | number | undefined | null): string | null {
     if (id === undefined || id === null) {
         return null
     }
 
-    const asString = typeof id === "number" ? id.toString(16) : String(id)
-    const cleaned = asString.replace(/^0x/i, "").replace(/[^a-fA-F0-9]/g, "")
-    if (cleaned.length === 0) {
+    // Accept hex strings, decimal strings, and numbers; normalize to 4-digit lowercase hex
+    let num: number
+
+    if (typeof id === "number") {
+        num = id
+    } else if (typeof id === "string") {
+        const lower = id.toLowerCase().trim()
+        // If string starts with "0x", parse as hex
+        if (lower.startsWith("0x")) {
+            num = parseInt(id, 16)
+        } else if (/^[0-9]{4}$/.test(lower)) {
+            // 4-digit numeric string (no hex letters) - use threshold to decide
+            // If decimal value >= 4096 (0x1000), it's more likely hex (USB IDs are typically hex)
+            // Otherwise treat as decimal
+            // This handles: "1008" (< 4096) -> decimal -> "03f0", "5705" (>= 4096) -> hex -> "5705"
+            const asDecimal = parseInt(lower, 10)
+            if (asDecimal >= 4096) {
+                // Large value, likely hex
+                num = parseInt(id, 16)
+            } else {
+                // Small value, treat as decimal
+                num = parseInt(id, 10)
+            }
+        } else if (/^[0-9a-f]{4}$/.test(lower)) {
+            // 4-digit string with hex letters - definitely hex
+            num = parseInt(id, 16)
+        } else if (/^[0-9a-f]+$/.test(lower)) {
+            // String contains only hex digits but not exactly 4 digits
+            if (/[a-f]/.test(lower)) {
+                // Contains hex letters (a-f), definitely hex
+                num = parseInt(id, 16)
+            } else {
+                // Contains only digits (0-9), parse as decimal
+                num = parseInt(id, 10)
+            }
+        } else {
+            // Contains non-hex characters, treat as decimal
+            num = parseInt(id, 10)
+        }
+    } else {
         return null
     }
 
-    const normalized = cleaned.toLowerCase().padStart(4, "0")
-    return normalized.slice(-4)
+    if (isNaN(num)) {
+        return null
+    }
+
+    // Convert to 4-digit lowercase hex string (toString(16) already returns lowercase)
+    return num.toString(16).padStart(4, "0").slice(-4)
 }
 
 function runCommand(command: string, args: string[]): { stdout: string; stderr: string; exitCode: number; error?: Error } {
@@ -74,8 +116,9 @@ export function parseLsusbOutput(output: string): UsbDevice[] {
             continue
         }
 
-        const vendorId = normalizeId(match[1])
-        const productId = normalizeId(match[2])
+        // lsusb outputs are always hex, so parse directly as hex
+        const vendorId = normalizeId("0x" + match[1])
+        const productId = normalizeId("0x" + match[2])
         if (!vendorId || !productId) {
             continue
         }
@@ -233,8 +276,9 @@ export function parseWindowsUsbJson(jsonOutput: string): UsbDevice[] {
             continue
         }
 
-        const vendorId = normalizeId(match[1])
-        const productId = normalizeId(match[2])
+        // Windows USB IDs are always hex
+        const vendorId = normalizeId("0x" + match[1])
+        const productId = normalizeId("0x" + match[2])
         if (!vendorId || !productId) {
             continue
         }

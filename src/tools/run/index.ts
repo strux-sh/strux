@@ -7,6 +7,7 @@
 import { $ } from "bun"
 import { join } from "path"
 import { stat, readdir } from "fs/promises"
+import { Socket } from "net"
 import { validateConfig, type Config } from "../../types/config"
 import { info, success, warning, error as logError, title } from "../../utils/colors"
 import { fileExists } from "../../utils/path"
@@ -15,7 +16,14 @@ interface UsbRedirSession {
     port: number
     process: Bun.Subprocess
     key: string
+    stdoutChunks: Uint8Array[]
+    stderrChunks: Uint8Array[]
+    exited: Promise<number | null>
+    redirectBin: string
+    redirectMode: "usbredir-host" | "usbredirect"
 }
+
+const decoder = new TextDecoder()
 
 /**
  * Detect GPU vendor on Linux by checking /sys/class/drm/cardN/device/vendor
@@ -144,30 +152,102 @@ function normalizeHex(id: string): string {
     return id.toLowerCase().replace(/^0x/, "").padStart(4, "0")
 }
 
-function hasUsbRedirHost(): boolean {
-    try {
-        const result = Bun.spawnSync(["which", "usbredir-host"], { stdout: "pipe", stderr: "pipe" })
-        return result.exitCode === 0
-    } catch {
-        return false
+function normalizeUsbId(id: string): { primary: string } {
+    const trimmed = id.trim()
+    return { primary: normalizeHex(trimmed) }
+}
+
+function findUsbRedirectBinary(): { bin: string; mode: "usbredir-host" | "usbredirect" } | null {
+    const candidates: { bin: string; mode: "usbredir-host" | "usbredirect" }[] = [
+        { bin: "usbredir-host", mode: "usbredir-host" },
+        { bin: "usbredirect", mode: "usbredirect" },
+    ]
+
+    for (const candidate of candidates) {
+        try {
+            const result = Bun.spawnSync(["which", candidate.bin], { stdout: "pipe", stderr: "pipe" })
+            if (result.exitCode === 0) {
+                return candidate
+            }
+        } catch {
+            continue
+        }
+    }
+
+    return null
+}
+
+function spawnUsbRedirSession(port: number, key: string, redirect: { bin: string; mode: "usbredir-host" | "usbredirect" }): UsbRedirSession {
+    // Connect as client to QEMU server (QEMU listens, usbredirect connects)
+    // Bind explicitly to IPv4 loopback to avoid ::1/localhost resolution mismatches
+    const args = redirect.mode === "usbredir-host"
+        ? ["--device", key, "--tcp", `127.0.0.1:${port}`]
+        : ["--device", key, "--to", `127.0.0.1:${port}`]
+
+    const stdoutChunks: Uint8Array[] = []
+    const stderrChunks: Uint8Array[] = []
+    const proc = Bun.spawn([redirect.bin, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+    })
+
+    // Capture stdout and stderr asynchronously
+    if (proc.stdout) {
+        (async () => {
+            for await (const chunk of proc.stdout) {
+                stdoutChunks.push(chunk)
+            }
+        })().catch(() => {
+            // Ignore stream errors
+        })
+    }
+
+    if (proc.stderr) {
+        (async () => {
+            for await (const chunk of proc.stderr) {
+                stderrChunks.push(chunk)
+                // Forward all errors to stderr for debugging
+                process.stderr.write(chunk)
+            }
+        })().catch(() => {
+            // Ignore stream errors
+        })
+    }
+
+    const exited = proc.exited.then((code) => code)
+
+    return {
+        port,
+        process: proc,
+        key,
+        stdoutChunks,
+        stderrChunks,
+        exited,
+        redirectBin: redirect.bin,
+        redirectMode: redirect.mode,
     }
 }
 
-function startUsbRedirSessions(usbDevices: { vendor_id: string; product_id: string }[]): UsbRedirSession[] {
-    const sessions: UsbRedirSession[] = []
-
-    usbDevices.forEach((usb, index) => {
+function createUsbRedirSessionPorts(usbDevices: { vendor_id: string; product_id: string }[]): { port: number; key: string; vendor: string; product: string }[] {
+    return usbDevices.map((usb, index) => {
         const port = 43000 + index
-        const key = `${normalizeHex(usb.vendor_id)}:${normalizeHex(usb.product_id)}`
-        const proc = Bun.spawn([
-            "usbredir-host",
-            "--device", key,
-            "--tcp", `localhost:${port}`,
-        ], {
-            stdout: "inherit",
-            stderr: "inherit",
-        })
-        sessions.push({ port, process: proc, key })
+        const vendor = normalizeUsbId(usb.vendor_id)
+        const product = normalizeUsbId(usb.product_id)
+        const key = `${vendor.primary}:${product.primary}`
+        return { port, key, vendor: usb.vendor_id, product: usb.product_id }
+    })
+}
+
+function startUsbRedirSessions(sessionConfigs: { port: number; key: string; vendor: string; product: string }[]): UsbRedirSession[] {
+    const sessions: UsbRedirSession[] = []
+    const redirect = findUsbRedirectBinary()
+
+    if (!redirect) {
+        throw new Error("usbredir tool not found. Install with `brew install usbredir`.")
+    }
+
+    sessionConfigs.forEach((config) => {
+        sessions.push(spawnUsbRedirSession(config.port, config.key, redirect))
     })
 
     return sessions
@@ -180,6 +260,51 @@ function stopUsbRedirSessions(sessions: UsbRedirSession[]): void {
         } catch {
             // Ignore cleanup errors
         }
+    }
+}
+
+function decodeChunks(chunks: Uint8Array[]): string {
+    if (chunks.length === 0) return ""
+    return chunks.map((chunk) => decoder.decode(chunk)).join("")
+}
+
+async function waitForPort(host: string, port: number, timeoutMs = 1000): Promise<boolean> {
+    return await new Promise((resolve) => {
+        const socket = new Socket()
+        const timer = setTimeout(() => {
+            socket.destroy()
+            resolve(false)
+        }, timeoutMs)
+
+        socket.once("connect", () => {
+            clearTimeout(timer)
+            socket.destroy()
+            resolve(true)
+        })
+        socket.once("error", () => {
+            clearTimeout(timer)
+            socket.destroy()
+            resolve(false)
+        })
+
+        socket.connect(port, host)
+    })
+}
+
+function supportsUsbRedir(qemuBin: string): boolean {
+    try {
+        const helpResult = Bun.spawnSync([qemuBin, "-device", "help"], { stdout: "pipe", stderr: "pipe" })
+        if ((helpResult.exitCode ?? 1) === 0) {
+            const output = new TextDecoder().decode(helpResult.stdout ?? new Uint8Array())
+            if (output.includes("usb-redir")) {
+                return true
+            }
+        }
+
+        const probe = Bun.spawnSync([qemuBin, "-device", "usb-redir,help"], { stdout: "pipe", stderr: "pipe" })
+        return (probe.exitCode ?? 1) === 0
+    } catch {
+        return false
     }
 }
 
@@ -200,6 +325,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
     const resolution = config.display?.resolution ?? "1920x1080"
     const { width: resWidth, height: resHeight } = parseResolution(resolution)
     const isX86 = arch === "x86_64"
+    const qemuOverride = process.env.STRUX_QEMU_BIN
 
     let qemuBin: string
     let machineType: string
@@ -209,7 +335,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
     let accelArgs: string[]
 
     if (isX86) {
-        qemuBin = "qemu-system-x86_64"
+        qemuBin = qemuOverride ?? "qemu-system-x86_64"
         machineType = "q35"
         consoleArg = `root=/dev/vda rw quiet splash loglevel=0 logo.nologo vt.handoff=7 rd.plymouth.show-delay=0 plymouth.ignore-serial-consoles systemd.show_status=false console=tty1 console=ttyS0 fbcon=map:0 vt.global_cursor_default=0 video=Virtual-1:${resolution}@60`
 
@@ -233,7 +359,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
         }
     } else {
         // ARM64
-        qemuBin = "qemu-system-aarch64"
+        qemuBin = qemuOverride ?? "qemu-system-aarch64"
         machineType = "virt"
         consoleArg = `root=/dev/vda rw quiet splash loglevel=0 logo.nologo vt.handoff=7 rd.plymouth.show-delay=0 plymouth.ignore-serial-consoles systemd.show_status=false console=tty1 console=ttyAMA0 fbcon=map:0 vt.global_cursor_default=0 video=${resolution}`
 
@@ -283,22 +409,26 @@ export async function run(options: RunOptions = {}): Promise<void> {
     // Add USB passthrough devices
     const usbDevices = config.qemu?.usb ?? []
     const usbRedirSessions: UsbRedirSession[] = []
+    let usbRedirSessionConfigs: { port: number; key: string; vendor: string; product: string }[] = []
     if (usbDevices.length > 0) {
         info(`USB passthrough: ${usbDevices.length} device(s)`)
         const isMac = process.platform === "darwin"
         if (isMac) {
-            if (!hasUsbRedirHost()) {
-                throw new Error("usbredir-host not found. Install with `brew install usbredir`.")
+            const forceUsbRedir = process.env.STRUX_USB_REDIR_FORCE === "1"
+            const usbRedirSupported = supportsUsbRedir(qemuBin)
+            if (!usbRedirSupported && !forceUsbRedir) {
+                throw new Error("This QEMU build does not include usb-redir support. Install a build with usbredir enabled (e.g., build QEMU from source with usbredir, or use MacPorts 'sudo port install qemu +usbredir'), then set STRUX_QEMU_BIN to that binary. To override detection, set STRUX_USB_REDIR_FORCE=1.")
             }
-
-            usbRedirSessions.push(...startUsbRedirSessions(usbDevices))
-            usbRedirSessions.forEach((session, index) => {
+            // Create session configs to get ports, but don't start usbredirect yet
+            usbRedirSessionConfigs = createUsbRedirSessionPorts(usbDevices)
+            // QEMU will be the server, so configure chardev sockets first
+            usbRedirSessionConfigs.forEach((config, index) => {
                 args.push(
-                    "-chardev", `tcp,host=localhost,port=${session.port},id=redir${index},server,nowait`,
+                    "-chardev", `socket,host=127.0.0.1,port=${config.port},id=redir${index},server=on,wait=off`,
                     "-device", `usb-redir,chardev=redir${index},id=usbredir${index}`
                 )
             })
-            info("Using usbredir for USB passthrough on macOS")
+            info("Using usbredir for USB passthrough on macOS (QEMU as server)")
         } else {
             for (const usb of usbDevices) {
                 args.push(
@@ -324,6 +454,34 @@ export async function run(options: RunOptions = {}): Promise<void> {
         env: process.env,
     })
 
+    // If using usbredir with QEMU as server, start usbredirect clients after QEMU is listening
+    if (usbRedirSessionConfigs.length > 0 && process.platform === "darwin") {
+        // Wait a moment for QEMU to start listening on the sockets
+        await new Promise((resolve) => setTimeout(resolve, 500))
+
+        // Verify QEMU is listening on the ports before starting usbredirect clients
+        for (const config of usbRedirSessionConfigs) {
+            const listening = await waitForPort("127.0.0.1", config.port, 2000)
+            if (!listening) {
+                throw new Error(`QEMU did not start listening on port ${config.port} for ${config.key}`)
+            }
+        }
+
+        // Now start usbredirect clients to connect to QEMU
+        usbRedirSessions.push(...startUsbRedirSessions(usbRedirSessionConfigs))
+
+        // Give usbredir a moment to fail fast if it cannot open the device
+        await new Promise((resolve) => setTimeout(resolve, 300))
+
+        const failed = usbRedirSessions.find((s) => s.process.exitCode !== null && s.process.exitCode !== undefined && s.process.exitCode !== 0)
+        if (failed) {
+            const stderr = decodeChunks(failed.stderrChunks)
+            const stdout = decodeChunks(failed.stdoutChunks)
+            const msg = stderr || stdout || "usbredir failed to open the device. Ensure it is connected and not claimed exclusively."
+            throw new Error(`usbredir failed for ${failed.key}: ${msg}`)
+        }
+    }
+
     // Forward signals to QEMU process
     const signalHandler = (signal: NodeJS.Signals) => {
         proc.kill(signal === "SIGINT" ? 2 : 15)
@@ -332,15 +490,48 @@ export async function run(options: RunOptions = {}): Promise<void> {
     process.on("SIGINT", () => signalHandler("SIGINT"))
     process.on("SIGTERM", () => signalHandler("SIGTERM"))
 
-    try {
-        // Wait for process to exit
-        const exitCode = await proc.exited
+    // Monitor usbredirect processes for unexpected exits
+    const usbRedirMonitors = usbRedirSessions.map(async (session) => {
+        const code = await session.exited
+        if (code !== null && code !== 0) {
+            const stderr = decodeChunks(session.stderrChunks)
+            const stdout = decodeChunks(session.stdoutChunks)
+            const errorMsg = stderr || stdout || "usbredirect process exited unexpectedly"
 
-        if (exitCode !== 0) {
-            throw new Error(`QEMU exited with code ${exitCode}`)
+            // Only log non-connection-reset errors, as connection resets are expected when QEMU shuts down
+            if (!errorMsg.includes("Connection reset by peer") && !errorMsg.includes("Failed to read guest")) {
+                logError(`usbredirect process for ${session.key} exited with code ${code}: ${errorMsg}`)
+            }
         }
+        return code
+    })
 
-        success("QEMU emulator stopped")
+    try {
+        // Wait for QEMU or any usbredirect process to exit
+        const results = await Promise.race([
+            proc.exited.then((code) => ({ type: "qemu" as const, code })),
+            Promise.any(usbRedirMonitors).then((code) => ({ type: "usbredir" as const, code })),
+        ])
+
+        if (results.type === "qemu") {
+            const exitCode = results.code
+            if (exitCode !== 0) {
+                throw new Error(`QEMU exited with code ${exitCode}`)
+            }
+            success("QEMU emulator stopped")
+        } else {
+            // usbredirect exited - check if QEMU is still running
+            const qemuStillRunning = proc.exitCode === null
+            if (qemuStillRunning) {
+                warning("usbredirect process exited unexpectedly. USB passthrough may not work correctly.")
+            }
+            // Continue waiting for QEMU to exit
+            const exitCode = await proc.exited
+            if (exitCode !== 0) {
+                throw new Error(`QEMU exited with code ${exitCode}`)
+            }
+            success("QEMU emulator stopped")
+        }
     } finally {
         // Clean up signal handlers
         process.removeAllListeners("SIGINT")
