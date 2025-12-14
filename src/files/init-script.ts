@@ -18,6 +18,9 @@ export const INIT_SCRIPT = function() {
 # Create /run directory (needed by systemd)
 /bin/mkdir -p /run
 
+# Create /strux directory for virtfs mount (systemd will mount it later in dev mode)
+/bin/mkdir -p /strux
+
 # Hand off to systemd
 exec /sbin/init
 

@@ -1,21 +1,19 @@
 /***
  *
- *  Build Tool
+ *  Dev Build Tool - Builds dev-specific image
  *
  */
 
-import { $ } from "bun"
-import { join, resolve } from "path"
+import { join } from "path"
 import { mkdir, rm, readdir, stat, copyFile } from "fs/promises"
 import { Readable } from "stream"
 import { spawn } from "child_process"
-import { validateConfig, type Config } from "../../types/config"
+import { type Config } from "../../types/config"
 import { loadBSP, type LoadedBSP } from "../../types/bsp"
 import {
     info,
     success,
     warning,
-    debug,
     cached,
     complete,
     runWithSpinner,
@@ -31,26 +29,10 @@ import { INIT_SCRIPT } from "../../files/init-script"
 import { NETWORK_SCRIPT } from "../../files/network-script"
 import { POST_ROOTFS_BUILD_SCRIPT } from "../../files/post-rootfs-build-script"
 import { STRUX_SCRIPT } from "../../files/strux-script"
+import { compileApp, loadConfig } from "../build"
 
 const CACHE_DIR = "dist"
 const BASE_CACHE_PATH = "dist/.cache/rootfs-base.tar.gz"
-
-export interface BuildOptions {
-    clean: boolean
-}
-
-/**
- * Clean the build cache
- */
-export async function clean(): Promise<void> {
-    info("Cleaning build cache...")
-    try {
-        await rm(CACHE_DIR, { recursive: true, force: true })
-        success("Cache cleaned successfully")
-    } catch (err) {
-        throw new Error(`Failed to remove cache: ${err}`)
-    }
-}
 
 /**
  * Check if base rootfs cache exists
@@ -64,112 +46,10 @@ async function cacheExists(): Promise<boolean> {
     }
 }
 
-/**
- * Load project configuration from strux.json
- */
-export async function loadConfig(): Promise<Config> {
-    const cwd = process.cwd()
-    const configFile = Bun.file(join(cwd, "strux.json"))
-
-    if (!(await configFile.exists())) {
-        throw new Error("strux.json not found. Run this command in a Strux project directory")
-    }
-
-    const data = await configFile.json()
-    const result = await import("../../types/config").then(m => m.validateConfigWithUrlCheck(data))
-
-    if (!result.success) {
-        throw result.error
-    }
-
-    return result.data
-}
+// loadConfig is imported from build module below
 
 /**
- * Main build function
- */
-export async function build(bspName: string, options: BuildOptions): Promise<void> {
-    if (options.clean) {
-        await clean()
-    }
-
-    // Load config
-    const config = await loadConfig()
-
-    // Load BSP
-    const cwd = process.cwd()
-    const bspPath = join(cwd, "bsp", bspName)
-    const bsp = await loadBSP(bspPath)
-
-    if (bsp.soc) {
-        info(`Using BSP: ${bsp.name} (${bsp.soc})`)
-    } else {
-        info(`Using BSP: ${bsp.name}`)
-    }
-
-    // Determine architecture - BSP overrides config
-    const arch = bsp.arch ?? config.arch
-
-    // Step 0: Build Frontend (if configured)
-    await buildFrontend()
-
-    // Step 1: Build Docker Image
-    await buildDockerImage(config)
-
-    // Step 2: Compile User Application
-    await compileApp(arch)
-
-    // Step 3: Compile Cage
-    await compileCage()
-
-    // Step 4: Compile WPE Extension
-    await compileExtension()
-
-    // Step 5: Generate Base Rootfs (cached)
-    const packages = [...(config.rootfs.packages ?? []), ...bsp.packages]
-
-    if (await cacheExists()) {
-        cached("Using base rootfs")
-        if (packages.length > 0) {
-            warning("Custom packages configured - run 'strux build --clean' if packages changed")
-        }
-    } else {
-        await generateBaseImage(config)
-    }
-
-    // Step 6: Build BSP Artifacts
-    await buildBSPArtifacts(bsp)
-
-    // Step 7: Build Custom Kernel (if enabled)
-    if (bsp.kernel?.enabled) {
-        await buildKernel(config, bsp)
-    }
-
-    // Step 8: Build U-Boot (if enabled)
-    if (bsp.uboot?.enabled) {
-        await buildUBoot(config, bsp)
-    }
-
-    // Step 9: Generate Final OS Image
-    await generateImage(config)
-
-    // Step 10: Generate Disk Image (if BSP has partitions)
-    if ((bsp.partitions?.layout?.length ?? 0) > 0) {
-        await generateDiskImage(bsp)
-    }
-
-    complete("Build complete!")
-    info("Output: ./dist/rootfs.ext4, ./dist/vmlinuz, ./dist/initrd.img")
-    if (bsp.uboot?.enabled) {
-        info("U-Boot: ./dist/uboot/")
-    }
-    if ((bsp.partitions?.layout?.length ?? 0) > 0) {
-        info(`Disk Image: ./dist/${bsp.name}.img`)
-    }
-}
-
-/**
- * Build the Docker builder image
+ * Build Docker builder image
  */
 async function buildDockerImage(config: Config): Promise<void> {
     const dockerfile = DOCKER_BUILD_ENV_DOCKERFILE(config)
@@ -252,106 +132,15 @@ async function buildDockerImage(config: Config): Promise<void> {
 }
 
 /**
- * Compile the user's Go application
- */
-export async function compileApp(arch: string): Promise<void> {
-    const goArch = arch === "amd64" || arch === "x86_64" ? "amd64" : "arm64"
-    const archLabel = goArch === "amd64" ? "x86_64" : "ARM64"
-    const crossCompiler = goArch === "amd64" ? "x86_64-linux-gnu-gcc" : "aarch64-linux-gnu-gcc"
-    const cwd = process.cwd()
-
-    // Check if go.mod requires github.com/strux-dev/strux
-    const goModPath = join(cwd, "go.mod")
-    let needsStruxReplace = false
-    let struxModulePath = ""
-
-    try {
-        const goModContent = await Bun.file(goModPath).text()
-        if (goModContent.includes("github.com/strux-dev/strux")) {
-            needsStruxReplace = true
-            // Try to find the local strux module (should be in parent directory)
-            const parentDir = resolve(cwd, "..")
-            const parentGoModPath = join(parentDir, "go.mod")
-            try {
-                const parentGoModContent = await Bun.file(parentGoModPath).text()
-                if (parentGoModContent.includes("module github.com/strux-dev/strux")) {
-                    struxModulePath = parentDir
-                }
-            } catch {
-                // Parent go.mod doesn't exist or isn't the strux module
-            }
-        }
-    } catch {
-        // go.mod doesn't exist or can't be read
-    }
-
-    // Build Docker volume mounts
-    const dockerVolumes = [`${cwd}:/project`]
-    if (needsStruxReplace && struxModulePath) {
-        dockerVolumes.push(`${struxModulePath}:/strux-module`)
-    }
-
-    // Build the script with replace directive if needed
-    // Only use replace directive if local module exists (for development)
-    // If repo is public and no local module, Go will download normally
-    let setupScript = ""
-    if (needsStruxReplace && struxModulePath) {
-        setupScript = `
-        # Add replace directive for local strux module (only if local version exists)
-        if ! grep -q "replace github.com/strux-dev/strux" go.mod; then
-            echo "" >> go.mod
-            echo "replace github.com/strux-dev/strux => /strux-module" >> go.mod
-        fi
-        `
-    }
-
-    // Only set GOPRIVATE if we're using a local replace (private repo scenario)
-    // If repo is public and no local module, GOPRIVATE isn't needed
-    const goPrivateEnv = needsStruxReplace && struxModulePath ? "GOPRIVATE=github.com/strux-dev/* " : ""
-
-    const script = `
-        mkdir -p /project/dist
-        ${setupScript}
-        CGO_ENABLED=1 GOOS=linux GOARCH=${goArch} CC=${crossCompiler} ${goPrivateEnv}go build -o /project/dist/app .
-    `
-
-    const dockerEnvVars = [
-        "-e", "GOCACHE=/project/dist/.go-cache",
-        "-e", "GOMODCACHE=/project/dist/.go-mod-cache",
-    ]
-    // Only add GOPRIVATE if using local replace (private repo scenario)
-    if (needsStruxReplace && struxModulePath) {
-        dockerEnvVars.push("-e", "GOPRIVATE=github.com/strux-dev/*")
-    }
-
-    await runWithSpinner(
-        "docker",
-        [
-            "run", "--rm",
-            ...dockerVolumes.flatMap(v => ["-v", v]),
-            "-w", "/project",
-            ...dockerEnvVars,
-            "strux-builder",
-            "/bin/sh", "-c", script,
-        ],
-        {},
-        `Compiling application for Linux ${archLabel}...`,
-        "Application compiled"
-    )
-}
-
-/**
  * Compile the Cage compositor
  */
 async function compileCage(): Promise<void> {
-
     // Check if cage source already exists
     const cageSourceDir = join(process.cwd(), "dist", "cage_src")
     if (await stat(cageSourceDir).then(() => true).catch(() => false)) {
         cached("Cage source already exists")
         return
     } else {
-
         await runWithSpinner(
             "git",
             ["clone", "https://github.com/strux-dev/cage.git", "dist/cage_src"],
@@ -398,14 +187,12 @@ async function compileCage(): Promise<void> {
 async function compileExtension(): Promise<void> {
     const cwd = process.cwd()
 
-
     // Check if extension source already exists
     const extensionSourceDir = join(process.cwd(), "dist", "extension_src")
     if (await stat(extensionSourceDir).then(() => true).catch(() => false)) {
         cached("Extension source already exists")
         return
     } else {
-
         await runWithSpinner(
             "git",
             ["clone", "https://github.com/strux-dev/strux-wpe-extension.git", "dist/extension_src"],
@@ -590,9 +377,9 @@ ${ubootBuildScript}
 }
 
 /**
- * Generate final OS image
+ * Generate dev OS image
  */
-async function generateImage(config: Config): Promise<void> {
+async function generateDevImage(config: Config): Promise<void> {
     await mkdir("dist", { recursive: true })
     const cwd = process.cwd()
 
@@ -626,8 +413,8 @@ async function generateImage(config: Config): Promise<void> {
 
     const initScript = INIT_SCRIPT()
     const networkScript = NETWORK_SCRIPT
-    const buildScript = POST_ROOTFS_BUILD_SCRIPT(config, false) // devMode = false for production
-    const struxScript = STRUX_SCRIPT(false) // isDev = false for production build
+    const buildScript = POST_ROOTFS_BUILD_SCRIPT(config, true) // devMode = true
+    const struxScript = STRUX_SCRIPT(true) // isDev = true for dev build
 
     const fullScript = `
 export FRONTEND_PATH="${frontendPath}"
@@ -635,7 +422,8 @@ export SPLASH_ENABLED="${splashEnabled}"
 export INITIAL_LOAD_COLOR="${initialLoadColor}"
 export DISPLAY_RESOLUTION="${resolution}"
 export STRUX_OVERLAY_PATH="${overlayPath}"
-export STRUX_IS_DEV="0"
+export STRUX_DEV_MODE=1
+export STRUX_IS_DEV=1
 mkdir -p /tmp
 cat > /tmp/init.sh << 'EOF_INIT'
 ${initScript}
@@ -652,7 +440,7 @@ EOF_STRUX
 ${buildScript}
 `
 
-    await runWithSpinner(
+    await runWithProgress(
         "docker",
         [
             "run", "--rm", "--privileged",
@@ -661,52 +449,120 @@ ${buildScript}
             "/bin/sh", "-c", fullScript,
         ],
         {},
-        "Generating OS image...",
-        "OS image generated"
+        "Generating dev OS image...",
+        "Dev OS image generated"
     )
+
+    // Copy kernel and initrd with dev prefix (or reuse production if same)
+    try {
+        const vmlinuz = join(cwd, "dist", "vmlinuz")
+        const initrd = join(cwd, "dist", "initrd.img")
+        const devVmlinuz = join(cwd, "dist", "dev-vmlinuz")
+        const devInitrd = join(cwd, "dist", "dev-initrd.img")
+
+        // Copy kernel if it exists
+        try {
+            await stat(vmlinuz)
+            await copyFile(vmlinuz, devVmlinuz)
+            info("Copied kernel to dev-vmlinuz")
+        } catch {
+            warning("Kernel not found, dev image may need kernel")
+        }
+
+        // Copy initrd if it exists (should be created by build script)
+        try {
+            await stat(devInitrd)
+            info("Dev initrd ready: dev-initrd.img")
+        } catch {
+            // Try copying production initrd as fallback
+            try {
+                await stat(initrd)
+                await copyFile(initrd, devInitrd)
+                info("Copied production initrd to dev-initrd.img")
+            } catch {
+                warning("Initrd not found, dev image may need initrd")
+            }
+        }
+    } catch (err) {
+        warning(`Error copying kernel/initrd: ${err}`)
+    }
 }
 
 /**
- * Generate disk image
+ * Main dev build function
  */
-async function generateDiskImage(bsp: LoadedBSP): Promise<void> {
-    // TODO: Implement disk image generation based on BSP partition layout
-    info(`Generating disk image for ${bsp.name}...`)
-    success("Disk image generated")
-}
+export async function buildDevImage(bspName: string, clean = false): Promise<void> {
+    if (clean) {
+        info("Cleaning dev build cache...")
+        try {
+            await rm(CACHE_DIR, { recursive: true, force: true })
+            success("Dev build cache cleaned")
+        } catch (err) {
+            throw new Error(`Failed to clean dev cache: ${err}`)
+        }
+    }
 
+    // Load config
+    const config = await loadConfig()
 
-/***
- *
- *
- *  Build Frontend
- *
- */
+    // Load BSP
+    const cwd = process.cwd()
+    const bspPath = join(cwd, "bsp", bspName)
+    const bsp = await loadBSP(bspPath)
 
-async function buildFrontend(): Promise<void> {
+    if (bsp.soc) {
+        info(`Using BSP: ${bsp.name} (${bsp.soc})`)
+    } else {
+        info(`Using BSP: ${bsp.name}`)
+    }
 
-    const frontendSourceDir = join(process.cwd(), "frontend")
+    // Determine architecture - BSP overrides config
+    const arch = bsp.arch ?? config.arch
 
-    // Run strux types using the same binary that's currently running
-    await runWithSpinner(
-        process.execPath,
-        ["types"],
-        {},
-        "Generating Typescript type definitions...",
-        "Types generated"
-    )
+    // Step 1: Build Docker Image
+    await buildDockerImage(config)
 
-    // Build frontend
-    await runWithSpinner(
-        "npm",
-        ["run", "build"],
-        {
-            cwd: frontendSourceDir,
-        },
-        "Building frontend...",
-        "Frontend built"
-    )
+    // Step 2: Compile User Application (for dev mount)
+    await compileApp(arch)
 
+    // Step 3: Compile Cage
+    await compileCage()
 
+    // Step 4: Compile WPE Extension
+    await compileExtension()
+
+    // Step 5: Generate Base Rootfs (cached)
+    const packages = [...(config.rootfs.packages ?? []), ...bsp.packages]
+
+    if (await cacheExists()) {
+        cached("Using base rootfs")
+        if (packages.length > 0) {
+            warning("Custom packages configured - run 'strux dev --clean' if packages changed")
+        }
+    } else {
+        await generateBaseImage(config)
+    }
+
+    // Step 6: Build BSP Artifacts
+    await buildBSPArtifacts(bsp)
+
+    // Step 7: Build Custom Kernel (if enabled)
+    if (bsp.kernel?.enabled) {
+        await buildKernel(config, bsp)
+    }
+
+    // Step 8: Build U-Boot (if enabled)
+    if (bsp.uboot?.enabled) {
+        await buildUBoot(config, bsp)
+    }
+
+    // Step 9: Generate Dev OS Image
+    await generateDevImage(config)
+
+    complete("Dev build complete!")
+    info("Output: ./dist/dev-rootfs.ext4, ./dist/dev-vmlinuz, ./dist/dev-initrd.img")
+    if (bsp.uboot?.enabled) {
+        info("U-Boot: ./dist/uboot/")
+    }
 }
 

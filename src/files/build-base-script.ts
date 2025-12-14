@@ -7,9 +7,6 @@
 
 import type { Config } from "../types/config"
 import { PLYMOUTH_CONF, PLYMOUTH_SCRIPT, PLYMOUTH_THEME } from "./plymouth/plymouth-theme"
-import { NETWORK_SERVICE } from "./systemd/network-service"
-import { NETWORK_SERVICE_UNIT } from "./systemd/network-service-unit"
-import { STRUX_SERVICE } from "./systemd/strux-service"
 
 export const BUILD_BASE_SCRIPT = function(config: Config) {
     return `#!/bin/bash
@@ -200,75 +197,6 @@ progress "Installing .deb files..."
 run_in_chroot "DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/${config.rootfs.deb_packages.map((f: string) => f.split("/").pop()).join(" /tmp/")}" || true
 run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -f -y" || true
 ` : ""}
-
-
-# Configure Systemd services
-
-cat > "$ROOTFS_DIR/etc/systemd/system/strux.service" << 'EOF'
-${STRUX_SERVICE}
-EOF
-
-cat > "$ROOTFS_DIR/etc/systemd/system/strux-network.service" << 'EOF'
-${NETWORK_SERVICE_UNIT}
-EOF
-
-mkdir -p "$ROOTFS_DIR/etc/systemd/network"
-
-cat > "$ROOTFS_DIR/etc/systemd/network/20-ethernet.network" << 'EOF'
-${NETWORK_SERVICE}
-EOF
-
-${config.boot.service_files && config.boot.service_files.length > 0 ? `# Copy custom systemd service files
-progress "Installing custom systemd service files..."
-${config.boot.service_files.map((serviceFile: string) => {
-        const fileName = serviceFile.split("/").pop()
-        return `cp "${serviceFile}" "$ROOTFS_DIR/etc/systemd/system/${fileName}"`
-    }).join("\n")}
-` : ""}
-
-# Enable systemd services
-run_in_chroot "systemctl enable seatd.service"
-run_in_chroot "systemctl enable dbus.service"
-run_in_chroot "systemctl enable strux.service"
-run_in_chroot "systemctl enable strux-network.service"
-
-${config.boot.service_files && config.boot.service_files.length > 0 ? `# Enable custom systemd services
-${config.boot.service_files.map((serviceFile: string) => {
-        const fileName = serviceFile.split("/").pop()
-        const serviceName = fileName?.replace(/\.service$/, "") ?? fileName
-        return `run_in_chroot "systemctl enable '${serviceName}.service' || true"`
-    }).join("\n")}
-` : ""}
-
-# Enable Plymouth services for boot splash
-run_in_chroot "systemctl enable plymouth-start.service || true"
-run_in_chroot "systemctl enable plymouth-read-write.service || true"
-
-# Mask the default Plymouth quit services - we control quit from strux.sh
-# This prevents Plymouth from quitting before Cage is ready
-run_in_chroot "systemctl mask plymouth-quit.service || true"
-run_in_chroot "systemctl mask plymouth-quit-wait.service || true"
-
-# Disable unnecessary services to speed up boot
-run_in_chroot "systemctl mask systemd-timesyncd.service || true"
-run_in_chroot "systemctl mask systemd-resolved.service || true"
-run_in_chroot "systemctl mask apt-daily.timer || true"
-run_in_chroot "systemctl mask apt-daily-upgrade.timer || true"
-
-# Enable systemd-networkd for automatic network configuration
-run_in_chroot "systemctl enable systemd-networkd.service || true"
-
-# Disable getty services to prevent login prompt flash during boot
-run_in_chroot "systemctl mask getty@tty1.service || true"
-run_in_chroot "systemctl mask getty@tty2.service || true"
-run_in_chroot "systemctl mask getty@tty3.service || true"
-run_in_chroot "systemctl mask getty@tty4.service || true"
-run_in_chroot "systemctl mask getty@tty5.service || true"
-run_in_chroot "systemctl mask getty@tty6.service || true"
-run_in_chroot "systemctl mask serial-getty@ttyS0.service || true"
-run_in_chroot "systemctl mask serial-getty@ttyAMA0.service || true"
-run_in_chroot "systemctl mask console-getty.service || true"
-run_in_chroot "systemctl mask getty.target || true"
 
 progress "Creating Plymouth theme and boot splash..."
 

@@ -5,9 +5,14 @@
  *
  */
 
-export const STRUX_SCRIPT = function() {
+export const STRUX_SCRIPT = function(isDev = false) {
+    // Set STRUX_IS_DEV environment variable in the script based on isDev parameter
+    const isDevEnv = isDev ? "1" : "0"
 
     return `#!/bin/sh
+
+# Set dev mode from parameter (can be overridden by environment variable)
+export STRUX_IS_DEV="${isDevEnv}"
 
 # Verbose logging - output to both stdout and console
 log() {
@@ -139,19 +144,47 @@ export WLR_DRM_NO_MODIFIERS=1
 export G_DEBUG=
 export G_SLICE=always-malloc
 
-# Check if backend binary exists
-log "Checking backend binary..."
-if [ -x /usr/bin/strux-app ]; then
-    log "Backend binary found: /usr/bin/strux-app"
-    ls -la /usr/bin/strux-app > /dev/console 2>&1 || true
+# Check for dev mode binary first
+DEV_MODE=0
+# Check if virtfs mount exists and has content
+if [ -d /strux ] && [ -f /strux/.dev ] && [ -x /strux/app ] 2>/dev/null; then
+    log "Using dev mode binary: /strux/app"
+    APP_BINARY="/strux/app"
+    DEV_MODE=1
+elif [ -x /usr/bin/strux-app ]; then
+    log "Using production binary: /usr/bin/strux-app"
+    APP_BINARY="/usr/bin/strux-app"
+    DEV_MODE=0
 else
-    log "ERROR: Backend binary not found or not executable!"
-    ls -la /usr/bin/strux-app > /dev/console 2>&1 || true
+    log "ERROR: No binary found!"
+    if [ -d /strux ]; then
+        log "Checking /strux directory..."
+        ls -la /strux > /dev/console 2>&1 || true
+    else
+        log "/strux directory does not exist (virtfs not mounted?)"
+    fi
+    if [ -f /usr/bin/strux-app ]; then
+        ls -la /usr/bin/strux-app > /dev/console 2>&1 || true
+    else
+        log "/usr/bin/strux-app does not exist"
+    fi
+    exit 1
+fi
+
+# Start dev watcher script in background (dev mode only)
+if [ "$DEV_MODE" = "1" ] || [ "$STRUX_IS_DEV" = "1" ]; then
+    log "Starting dev watcher script..."
+    /usr/bin/strux-dev-watcher.sh > /tmp/strux-watcher.log 2>&1 &
+    WATCHER_PID=$!
+    log "Dev watcher started with PID: $WATCHER_PID"
 fi
 
 # Start the backend app in the background BEFORE Cage
+# Backend still runs on localhost:8080 for IPC/API calls
+# Backend serves from ./frontend relative to its working directory
+# Change to / so ./frontend resolves to /frontend
 log "Starting backend app..."
-strux-app > /dev/console 2>&1 &
+cd / && $APP_BINARY > /tmp/strux-backend.log 2>&1 &
 BACKEND_PID=$!
 log "Backend started with PID: $BACKEND_PID"
 
@@ -186,7 +219,8 @@ fi
 # Cage runs a wrapper that waits for backend before launching Cog
 log "Starting Cage (backend loading in background)..."
 log "Running: cage $SPLASH_ARG -- sh -c '...'"
-cage $SPLASH_ARG -- sh -c '
+# Pass STRUX_IS_DEV as environment variable to the subshell so it's available
+STRUX_IS_DEV="$STRUX_IS_DEV" cage $SPLASH_ARG -- sh -c '
     echo "[CAGE] Starting cage wrapper script..." > /dev/console
 
     # Set output resolution using wlr-randr
@@ -215,9 +249,26 @@ cage $SPLASH_ARG -- sh -c '
 
     echo "[CAGE] Backend is ready! Starting Cog..." > /dev/console
 
+    # Determine Cog URL based on dev mode
+    # Check STRUX_IS_DEV first (passed as env var), then fall back to DEV_MODE detection
+    if [ -n "$STRUX_IS_DEV" ] && [ "$STRUX_IS_DEV" = "1" ]; then
+        # Dev mode: load frontend directly from Vite dev server
+        COG_URL="http://10.0.2.2:5173"
+        echo "[CAGE] Dev mode (STRUX_IS_DEV=$STRUX_IS_DEV): Loading frontend from $COG_URL" > /dev/console
+    elif [ "$DEV_MODE" = "1" ]; then
+        # Dev mode: load frontend directly from Vite dev server
+        COG_URL="http://10.0.2.2:5173"
+        echo "[CAGE] Dev mode (DEV_MODE=1): Loading frontend from $COG_URL" > /dev/console
+    else
+        # Production: load from local backend (serves from /frontend)
+        COG_URL="http://localhost:8080"
+        echo "[CAGE] Production mode: Loading frontend from $COG_URL" > /dev/console
+    fi
+
     # Launch Cog with extension support
+    # Redirect stderr to log file to avoid console interference
     # --bg-color prevents white flash before page renders
-    cog http://localhost:8080 --web-extensions-dir=/usr/lib/wpe-web-extensions 2>/dev/console
+    cog "$COG_URL" --web-extensions-dir=/usr/lib/wpe-web-extensions > /tmp/strux-cog.log 2>&1
 '
 
 CAGE_EXIT=$?

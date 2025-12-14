@@ -8,8 +8,8 @@
 export const STRUX_SERVICE = `
 [Unit]
 Description=Strux Kiosk Service
-After=network.target seatd.service dbus.service systemd-logind.service plymouth-start.service
-Wants=seatd.service dbus.service plymouth-start.service
+After=network.target seatd.service dbus.service systemd-logind.service plymouth-start.service strux-dev-watcher.path strux-mount-setup.service
+Wants=seatd.service dbus.service plymouth-start.service strux-dev-watcher.path strux-mount-setup.service
 Requires=seatd.service
 
 [Service]

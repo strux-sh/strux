@@ -73,12 +73,28 @@ program.command("clean")
 
 program.command("run")
     .description("Run the Strux OS in QEMU emulator")
-    .action(async () => {
+    .option("--debug", "Show console output and systemd messages")
+    .action(async (options: { debug?: boolean }) => {
         const { run } = await import("./tools/run")
         try {
-            await run()
+            await run({ systemDebug: options.debug ?? false })
         } catch (err) {
             error(`Run failed: ${err instanceof Error ? err.message : String(err)}`)
+            process.exit(1)
+        }
+    })
+
+program.command("dev")
+    .argument("[bsp]", "The Board Support Package to use (default: qemu)", "qemu")
+    .option("--clean", "Clean the dev build cache before building")
+    .option("--debug", "Show console output and systemd messages")
+    .description("Start Strux OS in dev mode with hot-reload")
+    .action(async (bspName: string, options: { clean?: boolean; debug?: boolean }) => {
+        const { dev } = await import("./tools/dev")
+        try {
+            await dev(bspName, { clean: options.clean ?? false, debug: options.debug ?? false })
+        } catch (err) {
+            error(`Dev failed: ${err instanceof Error ? err.message : String(err)}`)
             process.exit(1)
         }
     })

@@ -119,16 +119,18 @@ async function loadConfig(): Promise<Config> {
 /**
  * Check if required build artifacts exist
  */
-async function checkArtifacts(): Promise<void> {
+async function checkArtifacts(isDev = false): Promise<void> {
+    const prefix = isDev ? "dev-" : ""
     const artifacts = [
-        { path: "dist/vmlinuz", name: "kernel" },
-        { path: "dist/initrd.img", name: "initrd" },
-        { path: "dist/rootfs.ext4", name: "rootfs" },
+        { path: `dist/${prefix}vmlinuz`, name: "kernel" },
+        { path: `dist/${prefix}initrd.img`, name: "initrd" },
+        { path: `dist/${prefix}rootfs.ext4`, name: "rootfs" },
     ]
 
     for (const artifact of artifacts) {
         if (!fileExists(artifact.path)) {
-            throw new Error(`${artifact.name} not found at ${artifact.path}. Run 'strux build qemu' first`)
+            const cmd = isDev ? "strux dev" : "strux build qemu"
+            throw new Error(`${artifact.name} not found at ${artifact.path}. Run '${cmd}' first`)
         }
     }
 }
@@ -145,7 +147,8 @@ function parseResolution(resolution: string): { width: string; height: string } 
 }
 
 export interface RunOptions {
-    // Future options can be added here
+    isDev?: boolean
+    systemDebug?: boolean
 }
 
 function normalizeHex(id: string): string {
@@ -312,14 +315,17 @@ function supportsUsbRedir(qemuBin: string): boolean {
  * Run Strux OS in QEMU emulator
  */
 export async function run(options: RunOptions = {}): Promise<void> {
-    title("Running Strux OS")
+    const isDev = options.isDev ?? false
+    const systemDebug = options.systemDebug ?? false
+    title(isDev ? "Running Strux OS (Dev Mode)" : "Running Strux OS")
     info("Starting QEMU emulator...")
 
     // Check for required artifacts
-    await checkArtifacts()
+    await checkArtifacts(isDev)
 
     // Load configuration
     const config = await loadConfig()
+    const cwd = process.cwd()
 
     const arch = config.arch
     const resolution = config.display?.resolution ?? "1920x1080"
@@ -337,7 +343,12 @@ export async function run(options: RunOptions = {}): Promise<void> {
     if (isX86) {
         qemuBin = qemuOverride ?? "qemu-system-x86_64"
         machineType = "q35"
-        consoleArg = `root=/dev/vda rw quiet splash loglevel=0 logo.nologo vt.handoff=7 rd.plymouth.show-delay=0 plymouth.ignore-serial-consoles systemd.show_status=false console=tty1 console=ttyS0 fbcon=map:0 vt.global_cursor_default=0 video=Virtual-1:${resolution}@60`
+        // Show systemd messages for debugging if systemDebug is enabled
+        if (systemDebug) {
+            consoleArg = `root=/dev/vda rw console=tty1 console=ttyS0 fbcon=map:0 vt.global_cursor_default=0 video=Virtual-1:${resolution}@60`
+        } else {
+            consoleArg = `root=/dev/vda rw quiet splash loglevel=0 logo.nologo vt.handoff=7 rd.plymouth.show-delay=0 plymouth.ignore-serial-consoles systemd.show_status=false console=tty1 console=ttyS0 fbcon=map:0 vt.global_cursor_default=0 video=Virtual-1:${resolution}@60`
+        }
 
         if (process.platform === "darwin") {
             displayOpt = "cocoa"
@@ -361,7 +372,12 @@ export async function run(options: RunOptions = {}): Promise<void> {
         // ARM64
         qemuBin = qemuOverride ?? "qemu-system-aarch64"
         machineType = "virt"
-        consoleArg = `root=/dev/vda rw quiet splash loglevel=0 logo.nologo vt.handoff=7 rd.plymouth.show-delay=0 plymouth.ignore-serial-consoles systemd.show_status=false console=tty1 console=ttyAMA0 fbcon=map:0 vt.global_cursor_default=0 video=${resolution}`
+        // Show systemd messages for debugging if systemDebug is enabled
+        if (systemDebug) {
+            consoleArg = `root=/dev/vda rw console=tty1 console=ttyAMA0 fbcon=map:0 vt.global_cursor_default=0 video=${resolution}`
+        } else {
+            consoleArg = `root=/dev/vda rw quiet splash loglevel=0 logo.nologo vt.handoff=7 rd.plymouth.show-delay=0 plymouth.ignore-serial-consoles systemd.show_status=false console=tty1 console=ttyAMA0 fbcon=map:0 vt.global_cursor_default=0 video=${resolution}`
+        }
 
         if (process.platform === "darwin") {
             displayOpt = "cocoa"
@@ -381,6 +397,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
     }
 
     // Build QEMU arguments
+    const prefix = isDev ? "dev-" : ""
     const args: string[] = [
         "-machine", machineType,
         "-m", "2048",
@@ -389,13 +406,31 @@ export async function run(options: RunOptions = {}): Promise<void> {
         "-device", "qemu-xhci",
         "-device", "usb-kbd",
         "-device", "usb-tablet",
-        "-drive", "file=dist/rootfs.ext4,format=raw,if=virtio",
-        "-kernel", "dist/vmlinuz",
-        "-initrd", "dist/initrd.img",
+        "-drive", `file=dist/${prefix}rootfs.ext4,format=raw,if=virtio`,
+        "-kernel", `dist/${prefix}vmlinuz`,
+        "-initrd", `dist/${prefix}initrd.img`,
         "-append", consoleArg,
         "-serial", "mon:stdio",
         ...accelArgs,
     ]
+
+    // Add virtfs mount for dev mode
+    if (isDev) {
+        const struxDir = join(cwd, "dist", "strux")
+        // Verify directory exists before starting QEMU
+        try {
+            await stat(struxDir)
+            info(`Virtfs directory found: ${struxDir}`)
+        } catch {
+            warning(`Virtfs directory not found: ${struxDir}`)
+            warning("Dev mode requires dist/strux directory. Make sure you've run 'strux dev' first.")
+        }
+        args.push(
+            "-virtfs", `local,path=${struxDir},mount_tag=strux,security_model=mapped-xattr`,
+            "-device", "virtio-9p-pci,fsdev=strux,mount_tag=strux"
+        )
+        info("Virtfs configured for dev mode")
+    }
 
     // Add network if enabled (user-mode NAT networking)
     if (config.qemu?.network !== false) {
