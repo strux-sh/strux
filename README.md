@@ -168,7 +168,7 @@ Start Strux OS in development mode with hot-reload capabilities. This command bu
 - **Hot-reload for Go code**: Automatically rebuilds your Go binary and regenerates TypeScript types when `.go` files change
 - **Frontend dev server**: Starts a Vite dev server (if `frontend/` directory exists) accessible from the VM
 - **Config watching**: Rebuilds the dev image when `strux.json` changes
-- **Automatic service restart**: The VM automatically restarts your application when the binary is updated
+- **Automatic service restart**: The VM automatically restarts the operating system when the binary is updated
 
 **Workflow:**
 1. Builds a development-optimized OS image
@@ -180,9 +180,9 @@ Start Strux OS in development mode with hot-reload capabilities. This command bu
 
 **Example:**
 ```bash
-strux dev qemu
-strux dev qemu --clean  # Force clean rebuild
-strux dev qemu --debug  # Show debug output
+strux dev
+strux dev --clean  # Force clean rebuild
+strux dev --debug  # Show debug output
 ```
 
 **Note:** You must have a `frontend/` directory with a `package.json` for the Vite dev server to start. The dev server runs on `0.0.0.0` to allow access from the QEMU VM.
