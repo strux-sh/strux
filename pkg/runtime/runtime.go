@@ -428,12 +428,22 @@ func (rt *Runtime) executeMethod(methodName string, paramsRaw json.RawMessage) (
 		results = results[:len(results)-1]
 	}
 
-	// Return the first non-error result
-	if len(results) > 0 {
+	// Return all non-error results
+	if len(results) == 0 {
+		return nil, nil
+	}
+
+	// If only one result, return it directly
+	if len(results) == 1 {
 		return results[0].Interface(), nil
 	}
 
-	return nil, nil
+	// Multiple results - return as array for JS
+	resultArray := make([]interface{}, len(results))
+	for i, r := range results {
+		resultArray[i] = r.Interface()
+	}
+	return resultArray, nil
 }
 
 // getField retrieves the value of a field
