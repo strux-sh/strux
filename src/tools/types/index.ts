@@ -327,8 +327,17 @@ function formatMethodParams(method: MethodDef): string {
 function formatReturnType(method: MethodDef): string {
     let baseType = "void"
 
-    if (method.returnType) {
-        baseType = method.returnType.tsType
+    const returnTypes = method.returnTypes
+    if (returnTypes && returnTypes.length > 0) {
+        if (returnTypes.length === 1) {
+            // Single return value
+            baseType = returnTypes[0]!.tsType
+        } else {
+            // Multiple return values - use tuple type
+            const types = returnTypes.map(rt => rt.tsType)
+            baseType = `[${types.join(", ")}]`
+        }
+
         if (method.hasError) {
             baseType += " | null"
         }
@@ -354,8 +363,10 @@ function findUsedStructs(
         for (const param of method.params) {
             checkTypeForStruct(param.tsType, knownStructNames, used)
         }
-        if (method.returnType) {
-            checkTypeForStruct(method.returnType.tsType, knownStructNames, used)
+        if (method.returnTypes) {
+            for (const rt of method.returnTypes) {
+                checkTypeForStruct(rt.tsType, knownStructNames, used)
+            }
         }
     }
 

@@ -19,10 +19,10 @@ type IntrospectionOutput struct {
 
 // AppInfo describes the main application struct
 type AppInfo struct {
-	Name        string       `json:"name"`
-	PackageName string       `json:"packageName"`
-	Fields      []FieldDef   `json:"fields"`
-	Methods     []MethodDef  `json:"methods"`
+	Name        string      `json:"name"`
+	PackageName string      `json:"packageName"`
+	Fields      []FieldDef  `json:"fields"`
+	Methods     []MethodDef `json:"methods"`
 }
 
 // StructDef describes a struct definition
@@ -39,10 +39,10 @@ type FieldDef struct {
 
 // MethodDef describes a method
 type MethodDef struct {
-	Name       string     `json:"name"`
-	Params     []ParamDef `json:"params"`
-	ReturnType *TypeDef   `json:"returnType"`
-	HasError   bool       `json:"hasError"`
+	Name        string     `json:"name"`
+	Params      []ParamDef `json:"params"`
+	ReturnTypes []TypeDef  `json:"returnTypes"`
+	HasError    bool       `json:"hasError"`
 }
 
 // ParamDef describes a method parameter
@@ -236,8 +236,8 @@ func extractMethod(funcDecl *ast.FuncDecl, knownStructs map[string]bool) MethodD
 		}
 	}
 
-	// Extract return type
-	var returnType *TypeDef
+	// Extract return types
+	returnTypes := []TypeDef{}
 	hasError := false
 
 	if funcDecl.Type.Results != nil && len(funcDecl.Type.Results.List) > 0 {
@@ -249,27 +249,35 @@ func extractMethod(funcDecl *ast.FuncDecl, knownStructs map[string]bool) MethodD
 			hasError = true
 		}
 
-		// Get the first non-error return type
-		firstReturn := exprToString(results[0].Type)
-		if firstReturn != "error" {
-			returnType = &TypeDef{
-				GoType: firstReturn,
-				TSType: goTypeToTS(firstReturn, knownStructs),
+		// Collect all non-error return types
+		for _, result := range results {
+			goType := exprToString(result.Type)
+			if goType == "error" {
+				continue // Skip error types
 			}
-		} else if len(results) > 1 {
-			// First is error but there are more returns (unusual but handle it)
-			returnType = &TypeDef{
-				GoType: firstReturn,
-				TSType: goTypeToTS(firstReturn, knownStructs),
+
+			// Handle multiple names on same type (e.g., "x, y int")
+			if len(result.Names) > 1 {
+				for range result.Names {
+					returnTypes = append(returnTypes, TypeDef{
+						GoType: goType,
+						TSType: goTypeToTS(goType, knownStructs),
+					})
+				}
+			} else {
+				returnTypes = append(returnTypes, TypeDef{
+					GoType: goType,
+					TSType: goTypeToTS(goType, knownStructs),
+				})
 			}
 		}
 	}
 
 	return MethodDef{
-		Name:       methodName,
-		Params:     params,
-		ReturnType: returnType,
-		HasError:   hasError,
+		Name:        methodName,
+		Params:      params,
+		ReturnTypes: returnTypes,
+		HasError:    hasError,
 	}
 }
 

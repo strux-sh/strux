@@ -27,7 +27,7 @@ export type ParamDef = z.infer<typeof ParamDefSchema>;
 export const MethodDefSchema = z.object({
     name: z.string(),
     params: z.array(ParamDefSchema),
-    returnType: TypeDefSchema.nullable(),
+    returnTypes: z.array(TypeDefSchema),
     hasError: z.boolean(),
 })
 export type MethodDef = z.infer<typeof MethodDefSchema>;
