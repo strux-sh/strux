@@ -304,6 +304,9 @@ mount -o loop "$ROOTFS_OUTPUT" /tmp/ext4mount
 cp -a /tmp/rootfs/* /tmp/ext4mount/
 umount /tmp/ext4mount
 
+# TODO: see about "chown -R $USER" where "$USER" is unprivileged user id outside container
+chmod -R 777 /project/dist
+
 if [ "$STRUX_DEV_MODE" = "1" ]; then
     echo "Dev rootfs ext4 image ready: $ROOTFS_OUTPUT"
 else
