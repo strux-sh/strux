@@ -9,8 +9,8 @@ progress() {
 
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
-CAGE_SOURCE_DIR="$PROJECT_DIR/dist/cage_src"
-CAGE_BINARY="$PROJECT_DIR/dist/cage"
+CAGE_SOURCE_DIR="$PROJECT_DIR/dist/cage"
+CAGE_BINARY="$PROJECT_DIR/dist/cache/cage"
 
 # ============================================================================
 # CHECK IF CAGE SOURCE EXISTS
@@ -67,8 +67,8 @@ meson compile -C build || {
 
 progress "Copying Cage binary..."
 
-# Create dist directory if it doesn't exist
-mkdir -p "$PROJECT_DIR/dist"
+# Create cache directory if it doesn't exist
+mkdir -p "$PROJECT_DIR/dist/cache"
 
 # Copy the binary
 cp build/cage "$CAGE_BINARY" || {

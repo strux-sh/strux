@@ -9,9 +9,9 @@ progress() {
 
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
-EXTENSION_SOURCE_DIR="$PROJECT_DIR/dist/extension_src"
-EXTENSION_BUILD_DIR="$PROJECT_DIR/dist/extension_build"
-EXTENSION_BINARY="$PROJECT_DIR/dist/libstrux-extension.so"
+EXTENSION_SOURCE_DIR="$PROJECT_DIR/dist/extension"
+EXTENSION_BUILD_DIR="$PROJECT_DIR/dist/cache/extension_build"
+EXTENSION_BINARY="$PROJECT_DIR/dist/cache/libstrux-extension.so"
 
 # ============================================================================
 # CHECK IF EXTENSION SOURCE EXISTS
@@ -73,8 +73,8 @@ make || {
 
 progress "Copying WPE extension library..."
 
-# Create dist directory if it doesn't exist
-mkdir -p "$PROJECT_DIR/dist"
+# Create cache directory if it doesn't exist
+mkdir -p "$PROJECT_DIR/dist/cache"
 
 # Copy the library
 cp libstrux-extension.so "$EXTENSION_BINARY" || {

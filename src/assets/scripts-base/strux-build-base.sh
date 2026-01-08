@@ -16,6 +16,9 @@ progress "Preparing Base Root Filesystem"
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
 PROJECT_DIST_DIR="/project/dist"
+PROJECT_CACHE_DIR="/project/dist/cache"
+
+mkdir -p "$PROJECT_CACHE_DIR"
 
 # ============================================================================
 # SECTION 2: CONFIGURATION READING FROM YAML FILES
@@ -59,6 +62,7 @@ if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
 fi
+
 
 # ============================================================================
 # SECTION 3: PACKAGE COLLECTION AND SEPARATION
@@ -406,25 +410,168 @@ fi
 
 
 # ============================================================================
-# SECTION 9: CREATE PLYMOUTH THEME AND SCRIPT
+# SECTION 9: INSTALL DEFAULT KERNEL (IF NOT USING CUSTOM KERNEL)
 # ============================================================================
-# This section creates the plymouth theme and script for the base root filesystem.
+# This section installs the Debian kernel if we are not using a custom kernel.
+# If STRUX_CUSTOM_KERNEL is true, the kernel will be built separately.
 # ============================================================================
 
-progress "Creating plymouth theme and boot splash..."
+# Check if custom kernel is enabled in BSP config
+CUSTOM_KERNEL=$(yq eval '.bsp.boot.kernel.custom_kernel' "$BSP_CONFIG" 2>/dev/null || echo "false")
 
-mkdir -p "$ROOTFS_DIR/usr/share/plymouth/themes/strux"
+# Set STRUX_CUSTOM_KERNEL environment variable based on BSP config
+if [ "$CUSTOM_KERNEL" = "true" ]; then
+    STRUX_CUSTOM_KERNEL="true"
+    progress "Custom kernel enabled in BSP config - skipping Debian kernel installation"
+else
+    STRUX_CUSTOM_KERNEL="false"
+fi
 
-cp "$PROJECT_DIST_DIR/artifacts/strux.plymouth" "$ROOTFS_DIR/usr/share/plymouth/themes/strux/strux.plymouth"
-cp "$PROJECT_DIST_DIR/artifacts/strux.script" "$ROOTFS_DIR/usr/share/plymouth/themes/strux/strux.script"
+export STRUX_CUSTOM_KERNEL
 
-# Set Strux as the default Plymouth theme
-run_in_chroot "plymouth-set-default-theme strux || true"
 
-mkdir -p "$ROOTFS_DIR/etc/plymouth"
+# Fetch kernel from Debian repos (if not building custom kernel)
+if [ "${STRUX_CUSTOM_KERNEL:-false}" != "true" ]; then
+    progress "Installing Debian kernel..."
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends linux-image-$DEBIAN_ARCH"
 
-cp "$PROJECT_DIST_DIR/artifacts/plymouthd.conf" "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
+    # Find and copy the kernel
+    progress "Extracting kernel image..."
+    VMLINUZ=$(ls "$ROOTFS_DIR/boot/vmlinuz-"* 2>/dev/null | head -n 1)
+    if [ -n "$VMLINUZ" ]; then
+        mkdir -p "$PROJECT_DIST_DIR/cache"
+        cp "$VMLINUZ" "$PROJECT_DIST_DIR/cache/vmlinuz"
+        echo "Kernel copied to $PROJECT_DIST_DIR/cache/vmlinuz"
+    fi
 
-# Ensure initramfs includes Plymouth
-mkdir -p "$ROOTFS_DIR/etc/initramfs-tools/conf.d"
-echo "FRAMEBUFFER=y" > "$ROOTFS_DIR/etc/initramfs-tools/conf.d/plymouth"
+    # Find and copy the initramfs
+    INITRD=$(ls "$ROOTFS_DIR/boot/initrd.img-"* 2>/dev/null | head -n 1)
+    if [ -n "$INITRD" ]; then
+        mkdir -p "$PROJECT_DIST_DIR/cache"
+        cp "$INITRD" "$PROJECT_DIST_DIR/cache/initrd.img"
+        echo "Initramfs copied to $PROJECT_DIST_DIR/cache/initrd.img"
+    fi
+
+    # Get kernel version for depmod
+    KERNEL_VERSION=$(ls "$ROOTFS_DIR/lib/modules" 2>/dev/null | head -n 1)
+    if [ -n "$KERNEL_VERSION" ]; then
+        progress "Generating module dependencies..."
+        run_in_chroot "depmod $KERNEL_VERSION"
+        echo "Module dependencies generated for kernel $KERNEL_VERSION"
+    fi
+else
+    progress "Custom kernel enabled - installing custom kernel and generating initramfs"
+    
+    # Check if custom kernel compiled artifacts exist in cache
+    if [ ! -f "$PROJECT_DIST_DIR/cache/kernel/vmlinuz" ] && [ ! -f "$PROJECT_DIST_DIR/cache/kernel/Image" ] && [ ! -f "$PROJECT_DIST_DIR/cache/kernel/bzImage" ]; then
+        echo "Error: Custom kernel image not found in $PROJECT_DIST_DIR/cache/kernel/"
+        echo "Expected one of: vmlinuz, Image (ARM64), or bzImage (x86_64)"
+        exit 1
+    fi
+    
+    # Determine kernel image name and architecture-specific path
+    if [ "$DEBIAN_ARCH" = "arm64" ]; then
+        KERNEL_IMAGE="$PROJECT_DIST_DIR/cache/kernel/Image"
+        KERNEL_NAME="Image"
+    else
+        KERNEL_IMAGE="$PROJECT_DIST_DIR/cache/kernel/bzImage"
+        KERNEL_NAME="bzImage"
+    fi
+    
+    # Fallback to vmlinuz if architecture-specific image not found
+    if [ ! -f "$KERNEL_IMAGE" ]; then
+        KERNEL_IMAGE="$PROJECT_DIST_DIR/cache/kernel/vmlinuz"
+        KERNEL_NAME="vmlinuz"
+    fi
+    
+    if [ ! -f "$KERNEL_IMAGE" ]; then
+        echo "Error: Custom kernel image not found: $KERNEL_IMAGE"
+        exit 1
+    fi
+    
+    # Copy kernel image to cache directory
+    progress "Copying custom kernel image..."
+    mkdir -p "$PROJECT_DIST_DIR/cache"
+    cp "$KERNEL_IMAGE" "$PROJECT_DIST_DIR/cache/vmlinuz"
+    echo "Custom kernel copied to $PROJECT_DIST_DIR/cache/vmlinuz"
+    
+    # Install kernel modules into rootfs (if they exist)
+    if [ -d "$PROJECT_DIST_DIR/cache/kernel/modules" ]; then
+        progress "Installing custom kernel modules..."
+        KERNEL_VERSION=$(ls "$PROJECT_DIST_DIR/cache/kernel/modules" 2>/dev/null | head -n 1)
+        
+        if [ -n "$KERNEL_VERSION" ]; then
+            # Copy modules to rootfs
+            mkdir -p "$ROOTFS_DIR/lib/modules"
+            cp -r "$PROJECT_DIST_DIR/cache/kernel/modules/$KERNEL_VERSION" "$ROOTFS_DIR/lib/modules/"
+            
+            # Generate module dependencies
+            progress "Generating module dependencies..."
+            run_in_chroot "depmod $KERNEL_VERSION"
+            echo "Module dependencies generated for kernel $KERNEL_VERSION"
+        else
+            echo "Warning: No kernel version found in modules directory"
+        fi
+    else
+        echo "Warning: Kernel modules directory not found at $PROJECT_DIST_DIR/cache/kernel/modules"
+    fi
+    
+    # Install initramfs-tools if not already installed
+    progress "Installing initramfs-tools..."
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends initramfs-tools" || true
+    
+    # Generate initramfs using update-initramfs
+    if [ -n "$KERNEL_VERSION" ]; then
+        progress "Generating initial initramfs for custom kernel..."
+        # Generate initramfs
+        run_in_chroot "update-initramfs -c -k $KERNEL_VERSION" || {
+            echo "Warning: Failed to generate initramfs, trying alternative method..."
+            # Alternative: use mkinitcpio-style approach or manual initramfs creation
+            run_in_chroot "mkinitramfs -o /boot/initrd.img-$KERNEL_VERSION $KERNEL_VERSION" || true
+        }
+        
+        # Find and copy the generated initramfs
+        INITRD=$(ls "$ROOTFS_DIR/boot/initrd.img-$KERNEL_VERSION"* 2>/dev/null | head -n 1)
+        if [ -n "$INITRD" ]; then
+            mkdir -p "$PROJECT_DIST_DIR/cache"
+            cp "$INITRD" "$PROJECT_DIST_DIR/cache/initrd.img"
+            echo "Initramfs copied to $PROJECT_DIST_DIR/cache/initrd.img"
+        else
+            echo "Warning: Initramfs not found after generation"
+        fi
+    else
+        echo "Warning: Cannot generate initramfs without kernel version"
+    fi
+fi
+
+
+# ============================================================================
+# SECTION 10: CLEANUP
+# ============================================================================
+# This section cleans up the build environment.
+# ============================================================================
+
+# Clean up apt cache to reduce image size
+progress "Cleaning up package cache..."
+run_in_chroot "apt-get clean"
+rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"*
+rm -rf "$ROOTFS_DIR/var/cache/apt/"*
+
+# Unmount filesystems
+progress "Unmounting filesystems..."
+umount "$ROOTFS_DIR/sys" 2>/dev/null || true
+umount "$ROOTFS_DIR/proc" 2>/dev/null || true
+umount "$ROOTFS_DIR/dev/pts" 2>/dev/null || true
+umount "$ROOTFS_DIR/dev" 2>/dev/null || true
+
+# Remove QEMU static binary (not needed in final image)
+rm -f "$ROOTFS_DIR/usr/bin/qemu-aarch64-static"
+
+# Save the base rootfs as a tarball for caching
+progress "Saving base rootfs cache..."
+mkdir -p /project/dist/cache
+cd "$ROOTFS_DIR"
+tar -czf /project/dist/cache/rootfs-base.tar.gz .
+
+echo "Base rootfs cache created successfully."
+echo "  Size: $(du -h /project/dist/cache/rootfs-base.tar.gz | cut -f1)"

@@ -15,6 +15,10 @@ import { pathExists } from "../../utils/path"
 import { mkdir } from "fs/promises"
 import { join } from "path"
 
+
+// Additional
+import cryptoRandomString from "crypto-random-string"
+
 // Files
 
 // @ts-ignore
@@ -61,11 +65,14 @@ export async function init() {
     // Calculate Project Path
     Settings.calculateProjectPath()
 
+    // Generate a random client key
+    const clientKey = cryptoRandomString({ length: 32, type: "distinguishable" })
+
     // Make the BSP Directory
     await mkdir(join(Settings.projectPath, "bsp", "qemu"), { recursive: true })
 
     // Write the BSP.yaml file in the directory
-    await Bun.write(join(Settings.projectPath, "bsp", "qemu", "bsp.yaml"), templateBaseBSPYAML.replace("${projectName}", Settings.projectName).replace("${version}", Settings.struxVersion))
+    await Bun.write(join(Settings.projectPath, "bsp", "qemu", "bsp.yaml"), templateBaseBSPYAML.replace("${projectName}", Settings.projectName).replace("${version}", Settings.struxVersion).replace("${hostArch}", Settings.arch))
 
 
     // Create the scripts directory in the BSP directory
@@ -103,7 +110,7 @@ export async function init() {
 
     // Write the Strux.yaml file in the directory
     await Bun.write(join(Settings.projectPath, "strux.yaml"),
-        templateBaseYAML.replace("${projectName}", Settings.projectName).replace("${version}", Settings.struxVersion)
+        templateBaseYAML.replace("${projectName}", Settings.projectName).replace("${version}", Settings.struxVersion).replace("${clientKey}", clientKey)
     )
 
     // Generate the Strux Types by introspecting the main.go file

@@ -8,6 +8,8 @@
 import path from "path"
 import { directoryExists } from "./utils/path"
 import { STRUX_VERSION } from "./version"
+import type { StruxYaml } from "./types/main-yaml"
+import type { BSPYaml } from "./types/bsp-yaml"
 
 export type TemplateType = "vanilla" | "react" | "vue"
 export type ArchType = "arm64" | "x86_64"
@@ -24,6 +26,12 @@ export class SettingsConfig {
     struxVersion: string
     clean: boolean
     projectVersion: string
+
+    main: StruxYaml | null = null
+    bsp: BSPYaml | null = null
+
+    bspName: string | null = null
+
 
     constructor() {
 
@@ -67,6 +75,8 @@ export class SettingsConfig {
         return this.projectPath
 
     }
+
+
 }
 
 

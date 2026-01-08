@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Strux
+Description=Strux OS Boot Splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/strux
+ScriptFile=/usr/share/plymouth/themes/strux/strux.script

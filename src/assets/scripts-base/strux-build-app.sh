@@ -8,10 +8,10 @@ progress() {
 }
 
 # Delete the old app directory contents if it exists (this will later be mounted [in dev mode] or copied (in build mode))
-rm -rf /project/dist/app/*
+rm -rf /project/dist/cache/app/*
 
 # Create the app directory if it doesn't exist
-mkdir -p /project/dist/app
+mkdir -p /project/dist/cache/app
 
 cd /project
 
@@ -92,7 +92,7 @@ CGO_ENABLED=1 \
 GOOS=linux \
 GOARCH="$GO_ARCH" \
 CC="$CROSS_COMPILER" \
-${GO_PRIVATE_ENV}go build -o /project/dist/app/main .
+${GO_PRIVATE_ENV}go build -o /project/dist/cache/app/main .
 
 progress "Go application built successfully"
 

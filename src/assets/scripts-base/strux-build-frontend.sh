@@ -22,11 +22,11 @@ npm run build
 
 progress "Copying Built Frontend to Dist Directory..."
 
-# Remove the dist/frontend directory if it exists
-rm -rf /project/dist/frontend
+# Remove the dist/cache/frontend directory if it exists
+rm -rf /project/dist/cache/frontend
 
-# Create the dist/frontend directory if it doesn't exist
-mkdir -p /project/dist/frontend
+# Create the dist/cache/frontend directory if it doesn't exist
+mkdir -p /project/dist/cache/frontend
 
-# Copy the built frontend to the dist/frontend directory
-cp -r dist/* /project/dist/frontend
+# Copy the built frontend to the dist/cache/frontend directory
+cp -r dist/* /project/dist/cache/frontend

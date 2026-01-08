@@ -5,7 +5,7 @@ bsp:
   display:
     resolution: 1920x1080
   
-  arch: arm64
+  arch: ${hostArch}
   hostname: ${projectName}
 
   # scripts:

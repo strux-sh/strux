@@ -54,4 +54,20 @@ build:
   host_packages:
     - curl
     - wget
-   
+
+dev:
+  # --- The Dev Server Configuration ---
+  server:
+
+    # --- The Fallback Hosts to use ---
+    fallback_hosts:
+      # --- Replace these with your local network IP addresses or add additional hosts here as needed ---
+      # --- This will launch and bind the dev server to these hosts and ports on the local network, and add them to the dev client config ---
+      - host: 10.0.2.2
+        port: 8000
+
+    # --- Whether to use mDNS discovery ---
+    use_mdns_on_client: true
+
+    # --- The Dev Client Key to use ---
+    client_key: ${clientKey}

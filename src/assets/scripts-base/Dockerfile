@@ -82,6 +82,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     # YAML processor for reading configuration files
     yq \
+    unzip \
     # Custom host packages 
     ${additionalPackages} \
     && rm -rf /var/lib/apt/lists/*
@@ -89,11 +90,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Use login shell for RUN commands so .bashrc is sourced automatically
 SHELL ["/bin/bash", "--login", "-c"]
 
+
+RUN curl -fsSL https://bun.com/install | bash
+
 # Install nvm and Node.js
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 
 RUN nvm install 24
-
 
 # Set NVM_DIR environment variable
 ENV NVM_DIR="/root/.nvm"

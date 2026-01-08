@@ -40,6 +40,11 @@ export class Logger {
         console.error(`${Logger.prefix} ${chalk.redBright("✗")} ${message}`)
     }
 
+    public static errorWithExit(message: string) {
+        console.error(`${Logger.prefix} ${chalk.redBright("✗")} ${message}`)
+        process.exit(1)
+    }
+
     public static cached(message: string) {
 
 
