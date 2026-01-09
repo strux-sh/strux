@@ -13,6 +13,10 @@ import { join } from "path"
 import { fileExists } from "../../utils/path"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
+import { USBRedirect } from "./usb"
+import { waitForPort } from "../../utils/network"
+
+const decoder = new TextDecoder()
 
 async function run() {
 
@@ -85,7 +89,7 @@ async function run() {
 
 
     // Build the QEMU Arguments
-    const args: string = [
+    const args: string[] = [
         "-machine", machineType,
         "-m", "2048",
         "-device", gpuDevice,
@@ -106,6 +110,138 @@ async function run() {
     ]
 
 
+    const usbDevices = Settings.main!.qemu!.usb! ?? []
+    let sessionConfigs: { port: number; key: string; vendor: string; product: string }[] = []
+
+    if (usbDevices.length > 0 && process.platform === "darwin") {
+        Logger.info(`USB passthrough: ${usbDevices.length} device(s)`)
+
+        // Verify usb redir supported
+        if (!USBRedirect.qemuSupportsUSBRedir(qemuBin!)) Logger.errorWithExit("USB passthrough requires QEMU built with usbredir support. Please rebuild QEMU with usbredir support.")
+
+        // Start USB Redir Sessions
+        sessionConfigs = USBRedirect.createUSBRedirSessionPorts(usbDevices)
+
+        sessionConfigs.forEach((config, index) => {
+
+            args.push(
+                "-chardev", `socket,host=127.0.0.1,port=${config.port},id=redir${index},server=on,wait=off`,
+                "-device", `usb-redir,chardev=redir${index},id=usbredir${index}`
+            )
+
+            Logger.info("Using usbredir for USB passthrough on macOS (QEMU as server)")
+
+        })
+    }
+
+    if (usbDevices.length > 0 && process.platform !== "darwin") {
+
+        for (const usb of usbDevices) {
+            args.push(
+                "-device", `usb-host,vendorid=0x${usb.vendor_id},productid=0x${usb.product_id}`
+            )
+        }
+
+        Logger.info(`USB passthrough: ${usbDevices.length} device(s)`)
+
+    }
+
+    const customFlags = Settings.main!.qemu!.flags! ?? []
+    args.push(...customFlags)
+
+    const fullCommand = `${qemuBin} ${args.join(" ")}`
+    Logger.info(`Running QEMU: ${fullCommand}`)
+
+
+    const proc = Bun.spawn([qemuBin!, ...args], {
+        stdio: ["inherit", "inherit", "inherit"],
+        env: process.env
+    })
+
+    if (sessionConfigs.length > 0 && process.platform === "darwin") {
+
+        await Bun.sleep(5000)
+
+        for (const config of sessionConfigs) {
+
+            if (!await waitForPort("127.0.0.1", config.port, 2000)) Logger.errorWithExit(`QEMU did not start listening on port ${config.port} for ${config.key}`)
+        }
+
+        USBRedirect.start(sessionConfigs)
+
+        await Bun.sleep(300)
+
+        const failed = USBRedirect.sessions.find((s) => s.process.exitCode !== null && s.process.exitCode !== undefined && s.process.exitCode !== 0)
+        if (failed) {
+            const stderr = decodeChunks(failed.stderrChunks)
+            const stdout = decodeChunks(failed.stdoutChunks)
+            const msg = stderr ?? stdout ?? "usbredir failed to open the device. Ensure it is connected and not claimed exclusively."
+            throw new Error(`usbredir failed for ${failed.key}: ${msg}`)
+        }
+
+    }
+
+
+    // Forward signals to QEMU process
+    const signalHandler = (signal: NodeJS.Signals) => {
+        proc.kill(signal === "SIGINT" ? 2 : 15)
+    }
+
+    // Monitor USB Redir Processes
+    const USBRedirMonitors = USBRedirect.sessions.map(async (session) => {
+
+        const code = await session.exited
+        if (code !== null && code !== 0) {
+            const stderr = decodeChunks(session.stderrChunks)
+            const stdout = decodeChunks(session.stdoutChunks)
+            const errorMsg = stderr ?? stdout ?? "usbredirect process exited unexpectedly"
+
+            // Only log non-connection-reset errors, as connection resets are expected when QEMU shuts down
+            if (!errorMsg.includes("Connection reset by peer") && !errorMsg.includes("Failed to read guest")) {
+                Logger.error(`usbredirect process for ${session.key} exited with code ${code}: ${errorMsg}`)
+            }
+        }
+        return code
+
+    })
+
+    try {
+        // Wait for QEMU or any usbredirect process to exit
+        const results = await Promise.race([
+            proc.exited.then((code) => ({ type: "qemu" as const, code })),
+            Promise.any(USBRedirMonitors).then((code) => ({ type: "usbredir" as const, code })),
+        ])
+
+        if (results.type === "qemu") {
+            const exitCode = results.code
+            if (exitCode !== 0) {
+                throw new Error(`QEMU exited with code ${exitCode}`)
+            }
+            Logger.success("QEMU emulator stopped")
+        } else {
+            // usbredirect exited - check if QEMU is still running
+            const qemuStillRunning = proc.exitCode === null
+            if (qemuStillRunning) {
+                Logger.warning("usbredirect process exited unexpectedly. USB passthrough may not work correctly.")
+            }
+            // Continue waiting for QEMU to exit
+            const exitCode = await proc.exited
+            if (exitCode !== 0) {
+                throw new Error(`QEMU exited with code ${exitCode}`)
+            }
+            Logger.success("QEMU emulator stopped")
+        }
+    } finally {
+        // Clean up signal handlers
+        process.removeAllListeners("SIGINT")
+        process.removeAllListeners("SIGTERM")
+        USBRedirect.stop()
+    }
+}
+
+function decodeChunks(chunks: Uint8Array[]): string {
+    if (chunks.length === 0) return ""
+    return chunks.map((chunk) => decoder.decode(chunk)).join("")
 }
 
 
