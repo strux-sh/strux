@@ -161,6 +161,10 @@ cp -r "$SHARED_CACHE/frontend" "$ROOTFS_DIR/strux/frontend"
 cp "$BSP_CACHE/client" "$ROOTFS_DIR/strux/client"
 chmod +x "$ROOTFS_DIR/strux/client"
 
+# Copy WPE WebKit Extension (provides JS bridge for strux.* API) - from BSP-specific cache
+mkdir -p "$ROOTFS_DIR/usr/lib/wpe-web-extensions"
+cp "$BSP_CACHE/libstrux-extension.so" "$ROOTFS_DIR/usr/lib/wpe-web-extensions/libstrux-extension.so"
+
 # If the .dev-env.json file exists, copy it to the rootfs (from BSP-specific cache)
 if [ -f "$BSP_CACHE/.dev-env.json" ]; then
     cp "$BSP_CACHE/.dev-env.json" "$ROOTFS_DIR/strux/.dev-env.json"

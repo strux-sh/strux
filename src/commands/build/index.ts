@@ -224,6 +224,20 @@ export async function build(): Promise<void> {
     // ========================================
     await runScriptsForStep("after_build", manifest)
 
+    // ========================================
+    // SAVE BUILD METADATA
+    // ========================================
+    const buildMetadata = {
+        buildMode: isDevMode ? "dev" : "production",
+        buildTime: new Date().toISOString(),
+        bspName,
+        struxVersion: Settings.struxVersion
+    }
+    await Bun.write(
+        join(Settings.projectPath, "dist", "output", bspName, ".build-info.json"),
+        JSON.stringify(buildMetadata, null, 2)
+    )
+
     Logger.success("Build completed successfully!")
 }
 

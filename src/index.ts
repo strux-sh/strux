@@ -11,6 +11,7 @@ import { Logger } from "./utils/log"
 import { init } from "./commands/init"
 import { build } from "./commands/build"
 import { run } from "./commands/run"
+import { dev } from "./commands/dev"
 
 const program = new Command()
 
@@ -107,11 +108,12 @@ program.command("build")
 
 program.command("run")
     .option("--debug", "Show console output and systemd messages")
+    .description("Run the Strux OS Image in QEMU")
     .action(async (options: {debug?: boolean}) => {
 
         try {
 
-            Logger.title("Running Strux OS Image in Production QEMU")
+            Logger.title("Running Strux OS Image in QEMU")
             Settings.qemuSystemDebug = options.debug ?? false
             await run()
 
@@ -121,6 +123,27 @@ program.command("run")
 
         }
 
+
+    })
+
+program.command("dev")
+    .description("Start the Strux OS development server")
+    .option("--remote", "Run the development server to serve the project to a remote device (skips build and QEMU running)")
+    .option("--clean", "Clean the build cache before building")
+    .action(async (options: {remote?: boolean, clean?: boolean}) => {
+
+        try {
+
+            Logger.title("Starting Strux OS Development Server")
+            Settings.isRemoteOnly = options.remote ?? false
+            Settings.clean = options.clean ?? false
+            await dev()
+
+        } catch (err) {
+
+            Logger.errorWithExit(`Dev failed: ${err instanceof Error ? err.message : String(err)}`)
+
+        }
 
     })
 

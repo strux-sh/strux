@@ -8,7 +8,7 @@
 
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
-import { stat, readdir } from "fs/promises"
+import { readdir } from "fs/promises"
 import { join } from "path"
 import { fileExists } from "../../utils/path"
 import { MainYAMLValidator } from "../../types/main-yaml"
@@ -29,11 +29,9 @@ export async function run() {
     await verifyArtifactsExist()
 
     let qemuBin: string | null = null
-    const baseQemuArgs: string[] = []
     let machineType = ""
     const consoleArgs: string[] = []
     let displayOpt = ""
-    const displayArgs: string[] = []
     let gpuDevice = ""
     const accelArgs: string[] = []
 
@@ -44,9 +42,9 @@ export async function run() {
 
     if (!qemuBin) Logger.errorWithExit("Unsupported architecture. Please use a supported architecture.")
 
-    if (Settings.targetArch === "x86_64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=tty1", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyS0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=Virtual-1:${Settings.bsp!.display!.height}x${Settings.bsp!.display!.width}@60`)
-    if (Settings.targetArch === "arm64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.height}x${Settings.bsp!.display!.width}`)
-    if (Settings.targetArch === "armhf") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.height}x${Settings.bsp!.display!.width}`)
+    if (Settings.targetArch === "x86_64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=tty1", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyS0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=Virtual-1:${Settings.bsp!.display!.width}x${Settings.bsp!.display!.height}@60`)
+    if (Settings.targetArch === "arm64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.width}x${Settings.bsp!.display!.height}`)
+    if (Settings.targetArch === "armhf") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.width}x${Settings.bsp!.display!.height}`)
 
 
     if (Settings.targetArch === "x86_64" && process.platform === "darwin") {
@@ -169,7 +167,23 @@ export async function run() {
     }
 
     const customFlags = Settings.main!.qemu!.flags! ?? []
-    args.push(...customFlags)
+
+    // Split each flag string into separate arguments (e.g., "-m 2G" becomes ["-m", "2G"])
+    const splitFlags = customFlags.flatMap(flag => flag.split(/\s+/).filter(Boolean))
+
+    // Remove built-in flags that are being overridden by custom flags
+    for (const flag of splitFlags) {
+        if (flag.startsWith("-")) {
+            const flagIndex = args.indexOf(flag)
+            if (flagIndex !== -1) {
+                // Remove the flag and its value (assumes flags have one value following them)
+                args.splice(flagIndex, 2)
+            }
+        }
+    }
+
+    // Append custom flags at the end so they take precedence
+    args.push(...splitFlags)
 
     const fullCommand = `${qemuBin} ${args.join(" ")}`
     Logger.info(`Running QEMU: ${fullCommand}`)
@@ -203,12 +217,6 @@ export async function run() {
 
     }
 
-
-    // Forward signals to QEMU process
-    const signalHandler = (signal: NodeJS.Signals) => {
-        proc.kill(signal === "SIGINT" ? 2 : 15)
-    }
-
     // Monitor USB Redir Processes
     const USBRedirMonitors = USBRedirect.sessions.map(async (session) => {
 
@@ -227,12 +235,24 @@ export async function run() {
 
     })
 
+    // Register signal handlers
+    process.on("SIGINT", () => proc.kill(2))
+    process.on("SIGTERM", () => proc.kill(15))
+
     try {
-        // Wait for QEMU or any usbredirect process to exit
-        const results = await Promise.race([
+        // Build the race promises - only include USB redirect monitoring if there are sessions
+        const racePromises: Promise<{ type: "qemu" | "usbredir"; code: number | null }>[] = [
             proc.exited.then((code) => ({ type: "qemu" as const, code })),
-            Promise.any(USBRedirMonitors).then((code) => ({ type: "usbredir" as const, code })),
-        ])
+        ]
+
+        // Only add USB redir monitoring if there are sessions (Promise.any([]) rejects immediately)
+        if (USBRedirMonitors.length > 0) {
+            racePromises.push(
+                Promise.any(USBRedirMonitors).then((code) => ({ type: "usbredir" as const, code }))
+            )
+        }
+
+        const results = await Promise.race(racePromises)
 
         if (results.type === "qemu") {
             const exitCode = results.code
@@ -344,13 +364,34 @@ async function shouldUseGL() : Promise<boolean> {
 async function verifyArtifactsExist(): Promise<void> {
 
     const artifacts = [
-        { path: "dist/cache/qemu/vmlinuz", name: "Kernel" },
-        { path: "dist/cache/qemu/initrd.img", name: "Initramfs" },
+        { path: "dist/output/qemu/vmlinuz", name: "Kernel" },
+        { path: "dist/output/qemu/initrd.img", name: "Initramfs" },
         { path: "dist/output/qemu/rootfs.ext4", name: "Root Filesystem EXT4" }
     ]
 
     for (const artifact of artifacts) {
         if (!fileExists(join(Settings.projectPath, artifact.path))) return Logger.errorWithExit(`${artifact.name} not found. Please build the project first.`)
+    }
+
+    // Check if this is a production build (not a dev build)
+    const buildInfoPath = join(Settings.projectPath, "dist/output/qemu/.build-info.json")
+    if (fileExists(buildInfoPath)) {
+        try {
+            const buildInfo = await Bun.file(buildInfoPath).json()
+            if (buildInfo.buildMode === "dev") {
+                return Logger.errorWithExit(
+                    "This image was built in development mode.\n" +
+                    "       The 'strux run' command is for running production images only.\n" +
+                    "       To run a production image, build without the --dev flag:\n" +
+                    "         strux build qemu\n" +
+                    "       To run in development mode, use:\n" +
+                    "         strux dev"
+                )
+            }
+        } catch {
+            // If we can't read the build info, continue anyway
+            Logger.warning("Could not read build info. Assuming production build.")
+        }
     }
 
 }

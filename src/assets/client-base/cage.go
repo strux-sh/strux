@@ -35,24 +35,31 @@ var CageLauncherInstance = &CageLauncher{
 
 // WaitForBackend waits for the Go backend to be ready on port 8080
 func (c *CageLauncher) WaitForBackend(timeout time.Duration) bool {
-	c.logger.Info("Waiting for backend on port 8080...")
+	c.logger.Info("Waiting for backend on port 8080 (timeout: %v)...", timeout)
 
-	client := &http.Client{Timeout: 1 * time.Second}
+	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
+	attempt := 0
 
 	for time.Now().Before(deadline) {
+		attempt++
 		resp, err := client.Head("http://localhost:8080")
-		if err == nil {
+		if err != nil {
+			if attempt%10 == 1 { // Log every 10th attempt (every 5 seconds)
+				c.logger.Info("Backend not ready yet (attempt %d): %v", attempt, err)
+			}
+		} else {
 			resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-				c.logger.Info("Backend is ready!")
+				c.logger.Info("Backend is ready! (status: %d, after %d attempts)", resp.StatusCode, attempt)
 				return true
 			}
+			c.logger.Warn("Backend returned status %d (attempt %d)", resp.StatusCode, attempt)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	c.logger.Error("Backend did not start within %v", timeout)
+	c.logger.Error("Backend did not start within %v (after %d attempts)", timeout, attempt)
 	return false
 }
 
@@ -143,6 +150,16 @@ type logWriter struct {
 }
 
 func (w *logWriter) Write(p []byte) (n int, err error) {
-	// Just log the output, don't spam
+	// Log the output from Cage/Cog to help with debugging
+	if len(p) > 0 {
+		// Trim trailing newline to avoid double newlines in log
+		output := string(p)
+		if len(output) > 0 && output[len(output)-1] == '\n' {
+			output = output[:len(output)-1]
+		}
+		if len(output) > 0 {
+			w.logger.Info("[%s] %s", w.prefix, output)
+		}
+	}
 	return len(p), nil
 }

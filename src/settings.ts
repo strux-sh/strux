@@ -34,6 +34,8 @@ export class SettingsConfig {
 
     isDevMode = false
 
+    isRemoteOnly = false
+
     // To show debug information from the QEMU system when it is running
     qemuSystemDebug = false
 

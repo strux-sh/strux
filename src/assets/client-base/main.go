@@ -123,13 +123,13 @@ func launchProduction() error {
 		splashImage = "/strux/logo.png"
 	}
 
-	// Wait for backend
+	// Wait for backend to be ready
 	cage := CageLauncherInstance
 	if !cage.WaitForBackend(60 * time.Second) {
 		return ErrBackendNotReady
 	}
 
-	// Launch Cage
+	// Launch Cage with backend URL
 	return cage.Launch("http://localhost:8080", resolution, splashImage)
 }
 

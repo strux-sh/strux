@@ -144,6 +144,14 @@ export WLR_DRM_NO_MODIFIERS=1
 export G_DEBUG=
 export G_SLICE=always-malloc
 
+# Create symlink for frontend directory
+# The backend (runtime) looks for ./frontend from / which means /frontend
+# But the frontend files are at /strux/frontend, so we symlink
+if [ -d /strux/frontend ] && [ ! -e /frontend ]; then
+    log "Creating /frontend symlink for backend..."
+    ln -sf /strux/frontend /frontend
+fi
+
 # Use /strux/main for the backend binary
 APP_BINARY="/strux/main"
 
@@ -163,6 +171,21 @@ log "Starting backend app..."
 cd / && $APP_BINARY > /tmp/strux-backend.log 2>&1 &
 BACKEND_PID=$!
 log "Backend started with PID: $BACKEND_PID"
+
+# Tail the backend log to serial console in background for debugging
+# This lets us see backend output in QEMU's terminal
+(
+    sleep 2  # Give backend a moment to start logging
+    SERIAL_DEV=""
+    if [ -e /dev/ttyS0 ]; then
+        SERIAL_DEV="/dev/ttyS0"
+    elif [ -e /dev/ttyAMA0 ]; then
+        SERIAL_DEV="/dev/ttyAMA0"
+    fi
+    if [ -n "$SERIAL_DEV" ] && [ -f /tmp/strux-backend.log ]; then
+        tail -f /tmp/strux-backend.log | sed 's/^/[BACKEND] /' > "$SERIAL_DEV" 2>/dev/null &
+    fi
+) &
 
 # Give backend a moment to start, then check if it's running
 sleep 1
