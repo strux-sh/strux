@@ -25,11 +25,15 @@ npm run build
 
 progress "Copying Built Frontend to Dist Directory..."
 
-# Remove the dist/cache/frontend directory if it exists
-rm -rf /project/dist/cache/frontend
+# Frontend is architecture-agnostic, so it goes in shared cache
+# Use SHARED_CACHE_DIR if provided, otherwise fallback to default
+CACHE_DIR="${SHARED_CACHE_DIR:-/project/dist/cache}"
 
-# Create the dist/cache/frontend directory if it doesn't exist
-mkdir -p /project/dist/cache/frontend
+# Remove the frontend directory if it exists
+rm -rf "$CACHE_DIR/frontend"
 
-# Copy the built frontend to the dist/cache/frontend directory
-cp -r dist/* /project/dist/cache/frontend
+# Create the frontend directory if it doesn't exist
+mkdir -p "$CACHE_DIR/frontend"
+
+# Copy the built frontend to the cache/frontend directory
+cp -r dist/* "$CACHE_DIR/frontend"

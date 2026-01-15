@@ -13,8 +13,10 @@ progress() {
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
 EXTENSION_SOURCE_DIR="$PROJECT_DIR/dist/extension"
-EXTENSION_BUILD_DIR="$PROJECT_DIR/dist/cache/extension_build"
-EXTENSION_BINARY="$PROJECT_DIR/dist/cache/libstrux-extension.so"
+# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
+EXTENSION_BUILD_DIR="$CACHE_DIR/extension_build"
+EXTENSION_BINARY="$CACHE_DIR/libstrux-extension.so"
 
 # ============================================================================
 # CONFIGURATION READING FROM YAML FILES
@@ -77,6 +79,13 @@ elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
     CROSS_CXX="aarch64-linux-gnu-g++"
     CROSS_STRIP="aarch64-linux-gnu-strip"
     CMAKE_SYSTEM_PROCESSOR="aarch64"
+elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+    TARGET_ARCH="arm"
+    ARCH_LABEL="ARMv7/ARMHF"
+    CROSS_CC="arm-linux-gnueabihf-gcc"
+    CROSS_CXX="arm-linux-gnueabihf-g++"
+    CROSS_STRIP="arm-linux-gnueabihf-strip"
+    CMAKE_SYSTEM_PROCESSOR="arm"
 else
     echo "Error: Unsupported architecture: $ARCH"
     exit 1
@@ -93,6 +102,9 @@ case "$HOST_ARCH" in
     arm64)
         HOST_ARCH_NORMALIZED="arm64"
         ;;
+    armhf)
+        HOST_ARCH_NORMALIZED="armhf"
+        ;;
     *)
         HOST_ARCH_NORMALIZED="$HOST_ARCH"
         ;;
@@ -101,6 +113,8 @@ esac
 # Normalize target arch for comparison
 if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
     TARGET_ARCH_NORMALIZED="x86_64"
+elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+    TARGET_ARCH_NORMALIZED="armhf"
 else
     TARGET_ARCH_NORMALIZED="arm64"
 fi
@@ -159,6 +173,9 @@ if [ "$NEED_CROSS_COMPILE" = true ]; then
     if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
         PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
         PKG_CONFIG_LIBDIR="/usr/lib/x86_64-linux-gnu/pkgconfig"
+    elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+        PKG_CONFIG_PATH="/usr/lib/arm-linux-gnueabihf/pkgconfig"
+        PKG_CONFIG_LIBDIR="/usr/lib/arm-linux-gnueabihf/pkgconfig"
     else
         PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
         PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig"
@@ -227,7 +244,7 @@ make || {
 progress "Copying WPE extension library..."
 
 # Create cache directory if it doesn't exist
-mkdir -p "$PROJECT_DIR/dist/cache"
+mkdir -p "$CACHE_DIR"
 
 # Copy the library
 cp libstrux-extension.so "$EXTENSION_BINARY" || {

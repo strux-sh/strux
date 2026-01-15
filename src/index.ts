@@ -10,6 +10,7 @@ import { STRUX_VERSION } from "./version"
 import { Logger } from "./utils/log"
 import { init } from "./commands/init"
 import { build } from "./commands/build"
+import { run } from "./commands/run"
 
 const program = new Command()
 
@@ -37,7 +38,7 @@ program.command("init")
     .description("Initialize a new Strux project")
     .argument("<project-name>", "The name of the project to create")
     .option("-t, --template <template>", "Frontend Template (vanilla, react, or vue)", "vanilla")
-    .option("-a, --arch <arch>", "Target Architecture (arm64 or x86_64)", "arm64")
+    .option("-a, --arch <arch>", "Target Architecture (arm64, x86_64, or armhf)", "arm64")
     .action(async (projectName: string, options: {template?: string, arch?: string}) => {
         try {
             Settings.template = (options.template ?? "vanilla") as TemplateType
@@ -51,8 +52,8 @@ program.command("init")
             }
 
             // Validate arch
-            if (!["arm64", "x86_64"].includes(Settings.arch)) {
-                Logger.error(`Invalid architecture: ${Settings.arch}. Must be one of: arm64, x86_64`)
+            if (!["arm64", "x86_64", "armhf"].includes(Settings.arch)) {
+                Logger.error(`Invalid architecture: ${Settings.arch}. Must be one of: arm64, x86_64, armhf`)
                 process.exit(1)
             }
 
@@ -99,6 +100,25 @@ program.command("build")
         } catch (err) {
             Logger.error(`Build failed: ${err instanceof Error ? err.message : String(err)}`)
             process.exit(1)
+        }
+
+
+    })
+
+program.command("run")
+    .option("--debug", "Show console output and systemd messages")
+    .action(async (options: {debug?: boolean}) => {
+
+        try {
+
+            Logger.title("Running Strux OS Image in Production QEMU")
+            Settings.qemuSystemDebug = options.debug ?? false
+            await run()
+
+        } catch (err) {
+
+            Logger.errorWithExit(`Run failed: ${err instanceof Error ? err.message : String(err)}`)
+
         }
 
 

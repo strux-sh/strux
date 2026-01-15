@@ -3,402 +3,273 @@
  *
  *  Build Command
  *
+ *  Main entry point for the Strux build pipeline.
+ *  Orchestrates the build process with smart caching support.
+ *
  */
 
+import { join } from "path"
+import { mkdir, rm } from "node:fs/promises"
 import { Settings } from "../../settings"
 import { Runner } from "../../utils/run"
-
-// Scripts
-// @ts-ignore
-import scriptBuildFrontend from "../../assets/scripts-base/strux-build-frontend.sh" with { type: "text" }
-// @ts-ignore
-import scriptBuildApp from "../../assets/scripts-base/strux-build-app.sh" with { type: "text" }
-// @ts-ignore
-import scriptBuildCage from "../../assets/scripts-base/strux-build-cage.sh" with { type: "text" }
-// @ts-ignore
-import scriptBuildWPE from "../../assets/scripts-base/strux-build-wpe.sh" with { type: "text" }
-// @ts-ignore
-import scriptBuildBase from "../../assets/scripts-base/strux-build-base.sh" with { type: "text" }
-// @ts-ignore
-import scriptBuildPost from "../../assets/scripts-base/strux-build-post.sh" with { type: "text" }
-// @ts-ignore
-import scriptBuildClient from "../../assets/scripts-base/strux-build-client.sh" with { type: "text" }
-
-
-// Plymouth Files
-//@ts-ignore
-import artifactPlymouthTheme from "../../assets/scripts-base/artifacts/plymouth/strux.plymouth" with { type: "file" }
-//@ts-ignore
-import artifactPlymouthScript from "../../assets/scripts-base/artifacts/plymouth/strux.script" with { type: "file" }
-//@ts-ignore
-import artifactPlymouthConf from "../../assets/scripts-base/artifacts/plymouth/plymouthd.conf" with { type: "file" }
-
-// Client-base files
-// @ts-ignore
-import clientBaseIndex from "../../assets/client-base/index.ts" with { type: "text" }
-// @ts-ignore
-import clientBaseBinary from "../../assets/client-base/binary.ts" with { type: "text" }
-// @ts-ignore
-import clientBaseCage from "../../assets/client-base/cage.ts" with { type: "text" }
-// @ts-ignore
-import clientBaseConfig from "../../assets/client-base/config.ts" with { type: "text" }
-// @ts-ignore
-import clientBaseHosts from "../../assets/client-base/hosts.ts" with { type: "text" }
-// @ts-ignore
-import clientBaseLogger from "../../assets/client-base/logger.ts" with { type: "text" }
-// @ts-ignore
-import clientBaseLogs from "../../assets/client-base/logs.ts" with { type: "text" }
-// @ts-ignore
-import clientBaseSocket from "../../assets/client-base/socket.ts" with { type: "text" }
-// @ts-ignore
-import clientBasePackageJson from "../../assets/client-base/package.json"
-// @ts-ignore
-import clientBaseTsConfig from "../../assets/client-base/tsconfig.json"
-
-
-// Init Services
-// @ts-ignore
-import initScript from "../../assets/scripts-base/artifacts/scripts/init.sh" with { type: "text" }
-//@ts-ignore
-import initNetworkScript from "../../assets/scripts-base/artifacts/scripts/strux-network.sh" with { type: "text" }
-//@ts-ignore
-import initStruxScript from "../../assets/scripts-base/artifacts/scripts/strux.sh" with { type: "text" }
-
-// Systemd Services
-// @ts-ignore
-import systemdStruxService from "../../assets/scripts-base/artifacts/systemd/strux.service" with { type: "text" }
-// @ts-ignore
-import systemdNetworkService from "../../assets/scripts-base/artifacts/systemd/strux-network.service" with { type: "text" }
-// @ts-ignore
-import systemdEthernetNetwork from "../../assets/scripts-base/artifacts/systemd/20-ethernet.network" with { type: "text" }
-
-
-// Default Logo
-// @ts-ignore
-import defaultLogoPNG from "../../assets/template-base/logo.png" with { type: "file" }
-
-
 import { fileExists, directoryExists } from "../../utils/path"
-import { join } from "path"
 import { Logger } from "../../utils/log"
-import { mkdir, rm } from "node:fs/promises"
-
-// YAML Validators
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
 
-export async function build() {
+// Build Caching System
+import {
+    loadBuildCacheManifest,
+    saveBuildCacheManifest,
+    shouldRebuildStep,
+    updateStepCache
+} from "./cache"
+import { type BuildStep } from "./cache-deps"
 
+// Build Steps
+import {
+    compileFrontend,
+    compileApplication,
+    compileCage,
+    compileWPE,
+    buildRootFS,
+    buildStruxClient,
+    postProcessRootFS
+} from "./steps"
+
+// BSP Script Execution
+import { runScriptsForStep } from "./bsp-scripts"
+
+/**
+ * Main build function - orchestrates the entire build pipeline.
+ */
+export async function build(): Promise<void> {
     const isDevMode = Settings.isDevMode
-
-    // If the clean flag is set, delete the dist/cache folder
-    if (Settings.clean) await rm(join(Settings.projectPath, "dist", "cache"), { recursive: true, force: true })
-
-    // If it doesn't exist, create the dist folder
-    if (!directoryExists(join(Settings.projectPath, "dist"))) await mkdir(join(Settings.projectPath, "dist"), { recursive: true })
-
-    // If it doesn't exist, create the dist/artifacts folder
-    if (!directoryExists(join(Settings.projectPath, "dist", "artifacts"))) await mkdir(join(Settings.projectPath, "dist", "artifacts"), { recursive: true })
-
-    // If it doesn't exist, create the dist/cache folder
-    if (!directoryExists(join(Settings.projectPath, "dist", "cache"))) await mkdir(join(Settings.projectPath, "dist", "cache"), { recursive: true })
-
-
-    // NOTE: The BSP name (Settings.bspName) is set in the index.ts file of the build command
-
-    // Compile the frontend
-    await compileFrontend()
-
-    // Compile the application
-    await compileApplication()
-
-    // Compile Cage
-    await compileCage()
-
-    // Compile WPE Extension
-    await compileWPE()
-
-    // Build strux client
-    await buildStruxClient(isDevMode)
-
-    // TODO: Build the kernel if applicable
-
-
-    // Build the root filesystem
-    await buildRootFS()
-
-    // Post process the root filesystem
-    await postProcessRootFS()
-
-
-    // TODO: Run any bundle scripts from the BSP
-
-
-}
-
-
-async function compileFrontend() {
-
-    // Use the strux types command to refresh the strux.d.ts file
-    await Runner.runCommand("strux types", {
-        message: "Generating TypeScript types...",
-        messageOnError: "Failed to generate TypeScript types. Please generate them manually.",
-        exitOnError: true,
-        cwd: Settings.projectPath
-    })
-
-
-    await Runner.runScriptInDocker(scriptBuildFrontend, {
-        message: "Compiling Frontend...",
-        messageOnError: "Failed to compile Frontend. Please check the build logs for more information.",
-        exitOnError: true,
-    })
-
-
-}
-
-
-async function compileApplication() {
-
-    await Runner.runScriptInDocker(scriptBuildApp, {
-        message: "Compiling Application...",
-        messageOnError: "Failed to compile Application. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            PRESELECTED_BSP: Settings.bspName!
-        }
-    })
-
-
-}
-
-async function compileCage() {
-
-
-    if (fileExists(join(Settings.projectPath, "dist", "cache", "cage")) && !Settings.clean) return Logger.cached("Using Cage Binary")
-
-    await Runner.runScriptInDocker(scriptBuildCage, {
-        message: "Compiling Cage...",
-        messageOnError: "Failed to compile Cage. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            PRESELECTED_BSP: Settings.bspName!
-        }
-    })
-
-}
-
-async function compileWPE() {
-
-
-    if (fileExists(join(Settings.projectPath, "dist", "cache", "libstrux-extension.so")) && !Settings.clean) return Logger.cached("Using WPE Extension Library")
-
-    await Runner.runScriptInDocker(scriptBuildWPE, {
-        message: "Compiling WPE Extension...",
-        messageOnError: "Failed to compile WPE Extension. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            PRESELECTED_BSP: Settings.bspName!
-        }
-    })
-
-
-}
-
-async function copyRootFSPlymouth() {
-
-    if (fileExists(join(Settings.projectPath, "dist", "artifacts", "strux.plymouth")) && !Settings.clean) return Logger.cached("Using Plymouth Theme and Script")
-
-    // Write the plymouth theme and script to the dist/artifacts folder
-    await Bun.write(join(Settings.projectPath, "dist", "artifacts", "plymouth", "strux.plymouth"), artifactPlymouthTheme)
-    await Bun.write(join(Settings.projectPath, "dist", "artifacts", "plymouth", "strux.script"), artifactPlymouthScript)
-    await Bun.write(join(Settings.projectPath, "dist", "artifacts", "plymouth", "plymouthd.conf"), artifactPlymouthConf)
-
-}
-
-async function copyBootSplashLogo() {
-    // Check if splash is enabled and configured
-    if (!Settings.main?.boot?.splash?.enabled) {
-        return Logger.cached("Boot splash disabled, skipping logo copy")
-    }
-
-    const logoPath = Settings.main.boot.splash.logo
-    if (!logoPath) {
-        return Logger.cached("No logo path configured, skipping logo copy")
-    }
-
-    // Resolve the logo path relative to the project directory
-    // Remove leading ./ if present
-    const normalizedLogoPath = logoPath.startsWith("./") ? logoPath.slice(2) : logoPath
-    const sourceLogoPath = join(Settings.projectPath, normalizedLogoPath)
-    const destLogoPath = join(Settings.projectPath, "dist", "artifacts", "logo.png")
-
-    // Check if already copied and not cleaning
-    if (fileExists(destLogoPath) && !Settings.clean) {
-        return Logger.cached("Using existing logo.png")
-    }
-
-    // Check if source logo file exists
-    if (!fileExists(sourceLogoPath)) {
-        Logger.error(`Logo file not found: ${sourceLogoPath}. Please check your strux.yaml configuration. Using a default logo.png instead...`)
-        await Bun.write(destLogoPath, defaultLogoPNG)
-        return Logger.success("Using default logo.png")
-    }
-
-    // Copy the logo file to dist/artifacts/logo.png
-    const logoFile = Bun.file(sourceLogoPath)
-    await Bun.write(destLogoPath, logoFile)
-
-    Logger.success("Custom Boot splash logo copied successfully")
-}
-
-
-async function buildRootFS() {
-
-
-    // ensure the strux.yaml file exists
-    if (!fileExists(join(Settings.projectPath, "strux.yaml"))) return Logger.errorWithExit("strux.yaml file not found. Please create it first.")
-
-    // Load and Validate the Strux YAML into the Settings object
-    const mainYAML = MainYAMLValidator.validateAndLoad()
-
-    // Determine the BSP we are going to use
-    const selectedBSP = Settings.bspName!
-
-    // Check if the bsp specified exists
-    if (!fileExists(join(Settings.projectPath, "bsp", selectedBSP, "bsp.yaml"))) return Logger.errorWithExit(`BSP ${selectedBSP} not found. Please create it first.`)
-
-    // Load and Validate the BSP YAML
-    const bspYAML = BSPYamlValidator.validateAndLoad(join(Settings.projectPath, "bsp", selectedBSP, "bsp.yaml"), selectedBSP)
-
-
-    if (fileExists(join(Settings.projectPath, "dist", "cache", "rootfs-base.tar.gz")) && !Settings.clean) return Logger.cached("Using RootFS Base")
-
-    // Build the root filesystem using the base script
-    await Runner.runScriptInDocker(scriptBuildBase, {
-        message: "Building root filesystem...",
-        messageOnError: "Failed to build root filesystem. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            PRESELECTED_BSP: selectedBSP
-        }
-    })
-
-    Logger.success("Root filesystem built successfully")
-
-}
-
-
-async function buildStruxClient(addDevMode = false) {
-
-
     const bspName = Settings.bspName!
 
-    // This is a folder
-    const clientSrcPath = join(Settings.projectPath, "dist", "artifacts", "client")
-
-    // This is a file (client binary)
-    const clientDestPath = join(Settings.projectPath, "dist", "cache", `client-${bspName}`)
-
-    // This is a file (dev environment config)
-    const devEnvPath = join(Settings.projectPath, "dist", "cache", ".dev-env.json")
-
-
-    // Check if already built and not cleaning
-    if (fileExists(clientDestPath) && fileExists(devEnvPath) && !Settings.clean) {
-
-        // Copy the binary over
-        const clientBinary = Bun.file(clientDestPath)
-        await Bun.write(join(Settings.projectPath, "dist", "cache", "client"), clientBinary)
-
-        return Logger.cached("Using Strux Client and Dev Environment Configuration")
+    // ========================================
+    // VALIDATE CONFIGURATION FILES
+    // ========================================
+    // Ensure the strux.yaml file exists
+    if (!fileExists(join(Settings.projectPath, "strux.yaml"))) {
+        return Logger.errorWithExit("strux.yaml file not found. Please create it first.")
     }
 
-    Logger.log("Copying Strux Client base files...")
+    // Load and validate the main Strux YAML configuration
+    MainYAMLValidator.validateAndLoad()
 
-    // If it doesn't exist, create the client folder
-    if (!directoryExists(clientSrcPath)) await mkdir(clientSrcPath, { recursive: true })
+    // Check if the BSP exists
+    const bspYamlPath = join(Settings.projectPath, "bsp", bspName, "bsp.yaml")
+    if (!fileExists(bspYamlPath)) {
+        return Logger.errorWithExit(`BSP ${bspName} not found. Please create it first.`)
+    }
 
-    // Write all client-base files
-    await Bun.write(join(clientSrcPath, "index.ts"), clientBaseIndex)
-    await Bun.write(join(clientSrcPath, "binary.ts"), clientBaseBinary)
-    await Bun.write(join(clientSrcPath, "cage.ts"), clientBaseCage)
-    await Bun.write(join(clientSrcPath, "config.ts"), clientBaseConfig)
-    await Bun.write(join(clientSrcPath, "hosts.ts"), clientBaseHosts)
-    await Bun.write(join(clientSrcPath, "logger.ts"), clientBaseLogger)
-    await Bun.write(join(clientSrcPath, "logs.ts"), clientBaseLogs)
-    await Bun.write(join(clientSrcPath, "socket.ts"), clientBaseSocket)
-    await Bun.write(join(clientSrcPath, "package.json"), JSON.stringify(clientBasePackageJson, null, 2))
-    await Bun.write(join(clientSrcPath, "tsconfig.json"), JSON.stringify(clientBaseTsConfig, null, 2))
+    // Load and validate the BSP YAML configuration
+    // This must be done early so that BSP scripts are available for all build steps
+    BSPYamlValidator.validateAndLoad(bspYamlPath, bspName)
 
-    Logger.log("Compiling Strux Client...")
+    // ========================================
+    // PREPARE BUILD DIRECTORIES
+    // ========================================
+    await prepareBuildDirectories()
 
-    if (addDevMode) {
+    // ========================================
+    // SMART BUILD CACHING SYSTEM
+    // ========================================
+    const manifest = await loadBuildCacheManifest(bspName)
+    const cacheConfig = Settings.main?.build?.cache ?? { enabled: true }
+    const cacheEnabled = cacheConfig.enabled !== false
+    const forceRebuild = cacheConfig.force_rebuild ?? []
+    const ignorePatterns = cacheConfig.ignore_patterns ?? []
 
-        const devEnvJSON = {
-            clientKey: Settings.main?.dev?.server?.client_key ?? "",
-            useMDNS: Settings.main?.dev?.server?.use_mdns_on_client ?? true,
-            fallbackHosts: Settings.main?.dev?.server?.fallback_hosts ?? [],
+    // Prepare Docker image with cache hash tracking
+    const { imageHash, rebuilt: dockerRebuilt } = await Runner.prepareDockerImage(manifest.dockerImageHash)
+
+    // If Docker image was rebuilt, invalidate all cached steps
+    if (dockerRebuilt) {
+        Logger.log("Docker image rebuilt, invalidating all cached steps...")
+        manifest.steps = {}
+    }
+
+    // Update Docker image hash in manifest
+    manifest.dockerImageHash = imageHash
+    manifest.struxVersion = Settings.struxVersion
+    await saveBuildCacheManifest(manifest, bspName)
+
+    // Helper function to check if a step should be rebuilt
+    async function checkStepCache(step: BuildStep): Promise<boolean> {
+        if (!cacheEnabled) return true
+        const result = await shouldRebuildStep(step, manifest, {
+            forceRebuild,
+            clean: Settings.clean,
+            bspName,
+            ignorePatterns
+        })
+        if (!result.rebuild) {
+            Logger.cached(`${step} (no changes detected)`)
+        } else if (result.reason) {
+            Logger.debug(`Rebuilding ${step}: ${result.reason}`)
         }
+        return result.rebuild
+    }
 
-        // Write the JSON file to dist/cache/.dev-env.json
-        await Bun.write(devEnvPath, JSON.stringify(devEnvJSON, null, 2))
+    // Helper to update cache after step completion
+    async function cacheStep(step: BuildStep): Promise<void> {
+        if (!cacheEnabled) return
+        await updateStepCache(step, manifest, { bspName, ignorePatterns })
+    }
 
+    // ========================================
+    // BUILD LIFECYCLE: before_build
+    // ========================================
+    await runScriptsForStep("before_build", manifest)
+
+    // ========================================
+    // FRONTEND COMPILATION
+    // ========================================
+    await runScriptsForStep("before_frontend", manifest)
+    if (await checkStepCache("frontend")) {
+        await compileFrontend()
+        await cacheStep("frontend")
+    }
+    await runScriptsForStep("after_frontend", manifest)
+
+    // ========================================
+    // APPLICATION COMPILATION (main.go)
+    // ========================================
+    await runScriptsForStep("before_application", manifest)
+    if (await checkStepCache("application")) {
+        await compileApplication()
+        await cacheStep("application")
+    }
+    await runScriptsForStep("after_application", manifest)
+
+    // ========================================
+    // CAGE COMPOSITOR
+    // ========================================
+    await runScriptsForStep("before_cage", manifest)
+    if (await checkStepCache("cage")) {
+        await compileCage()
+        await cacheStep("cage")
+    }
+    await runScriptsForStep("after_cage", manifest)
+
+    // ========================================
+    // WPE WEBKIT EXTENSION
+    // ========================================
+    await runScriptsForStep("before_wpe", manifest)
+    if (await checkStepCache("wpe")) {
+        await compileWPE()
+        await cacheStep("wpe")
+    }
+    await runScriptsForStep("after_wpe", manifest)
+
+    // ========================================
+    // STRUX CLIENT BINARY
+    // ========================================
+    await runScriptsForStep("before_client", manifest)
+    if (await checkStepCache("client")) {
+        await buildStruxClient(isDevMode)
+        await cacheStep("client")
     } else {
+        // Even if cached, copy the binary over
+        await copyClientBinaryIfExists(bspName)
+    }
+    await runScriptsForStep("after_client", manifest)
 
-
-        // Remove the dev environment config file if it exists
-        if (fileExists(devEnvPath)) await Bun.file(devEnvPath).delete()
-
+    // ========================================
+    // KERNEL (Conditional: only if custom_kernel is enabled)
+    // ========================================
+    if (Settings.bsp?.boot?.kernel?.custom_kernel) {
+        await runScriptsForStep("before_kernel", manifest)
+        // TODO: Implement buildKernel() when custom kernel support is added
+        await runScriptsForStep("after_kernel", manifest)
     }
 
-    // Install dependencies in the destination folder
-    await Runner.runScriptInDocker(scriptBuildClient, {
-        message: "Compiling Strux Client...",
-        messageOnError: "Failed to compile Strux Client. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName
-        }
-    })
+    // ========================================
+    // BOOTLOADER (Conditional: only if bootloader is enabled)
+    // ========================================
+    if (Settings.bsp?.boot?.bootloader?.enabled) {
+        await runScriptsForStep("before_bootloader", manifest)
+        // TODO: Implement buildBootloader() when bootloader support is added
+        await runScriptsForStep("after_bootloader", manifest)
+    }
 
+    // ========================================
+    // ROOT FILESYSTEM
+    // ========================================
+    await runScriptsForStep("before_rootfs", manifest)
+    if (await checkStepCache("rootfs-base")) {
+        await buildRootFS()
+        await cacheStep("rootfs-base")
+    }
+    await runScriptsForStep("after_rootfs", manifest)
 
-    // Copy the binary over
-    const clientBinary = Bun.file(clientDestPath)
-    await Bun.write(join(Settings.projectPath, "dist", "cache", "client"), clientBinary)
+    // ========================================
+    // ROOT FILESYSTEM POST-PROCESSING
+    // ========================================
+    if (await checkStepCache("rootfs-post")) {
+        await postProcessRootFS()
+        await cacheStep("rootfs-post")
+    }
 
-    Logger.success("Strux Client built successfully")
+    // ========================================
+    // FINAL IMAGE BUNDLING
+    // ========================================
+    await runScriptsForStep("before_bundle", manifest)
+    await runScriptsForStep("make_image", manifest)
+
+    // ========================================
+    // BUILD LIFECYCLE: after_build
+    // ========================================
+    await runScriptsForStep("after_build", manifest)
+
+    Logger.success("Build completed successfully!")
 }
 
-async function postProcessRootFS() {
+/**
+ * Prepares the build directories with BSP-specific cache and output folders.
+ * Also handles the --clean flag (cleans only the current BSP's cache).
+ */
+async function prepareBuildDirectories(): Promise<void> {
+    const bspName = Settings.bspName!
 
+    // If the clean flag is set, delete only this BSP's cache folder (preserves other BSPs)
+    if (Settings.clean) {
+        await rm(join(Settings.projectPath, "dist", "cache", bspName), { recursive: true, force: true })
+    }
 
-    // Copy init scripts to artifacts folder
-    if (!fileExists(join(Settings.projectPath, "dist", "artifacts", "scripts", "init.sh"))) await Bun.write(join(Settings.projectPath, "dist", "artifacts", "scripts", "init.sh"), initScript)
-    if (!fileExists(join(Settings.projectPath, "dist", "artifacts", "scripts", "strux-network.sh"))) await Bun.write(join(Settings.projectPath, "dist", "artifacts", "scripts", "strux-network.sh"), initNetworkScript)
-    if (!fileExists(join(Settings.projectPath, "dist", "artifacts", "scripts", "strux.sh"))) await Bun.write(join(Settings.projectPath, "dist", "artifacts", "scripts", "strux.sh"), initStruxScript)
-
-    // Copy Systemd services to artifacts folder
-    if (!fileExists(join(Settings.projectPath, "dist", "artifacts", "systemd", "strux.service"))) await Bun.write(join(Settings.projectPath, "dist", "artifacts", "systemd", "strux.service"), systemdStruxService)
-    if (!fileExists(join(Settings.projectPath, "dist", "artifacts", "systemd", "strux-network.service"))) await Bun.write(join(Settings.projectPath, "dist", "artifacts", "systemd", "strux-network.service"), systemdNetworkService)
-    if (!fileExists(join(Settings.projectPath, "dist", "artifacts", "systemd", "20-ethernet.network"))) await Bun.write(join(Settings.projectPath, "dist", "artifacts", "systemd", "20-ethernet.network"), systemdEthernetNetwork)
-
-    // Copy Plymouth files to artifacts folder
-    await copyRootFSPlymouth()
-
-    // Copy Boot Splash logo
-    await copyBootSplashLogo()
-
-    // Run post process script
-    await Runner.runScriptInDocker(scriptBuildPost, {
-        message: "Post processing rootfs...",
-        messageOnError: "Failed to post process rootfs. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            PRESELECTED_BSP: Settings.bspName!
+    // Create directories if they don't exist
+    // - dist/cache/ is the shared cache root
+    // - dist/cache/{bsp}/ is the BSP-specific cache
+    // - dist/output/{bsp}/ is the BSP-specific output
+    const dirs = [
+        "dist",
+        "dist/artifacts",
+        "dist/cache",
+        `dist/cache/${bspName}`,
+        `dist/cache/${bspName}/app`,
+        "dist/output",
+        `dist/output/${bspName}`
+    ]
+    for (const dir of dirs) {
+        const path = join(Settings.projectPath, dir)
+        if (!directoryExists(path)) {
+            await mkdir(path, { recursive: true })
         }
-    })
+    }
+}
 
-    Logger.success("RootFS post processing completed successfully")
-
+/**
+ * Copies the cached client binary to the standard location.
+ * Used when the client step is cached but we still need the binary in the right place.
+ */
+async function copyClientBinaryIfExists(bspName: string): Promise<void> {
+    // Client binary is now in BSP-specific cache folder
+    const clientSrcPath = join(Settings.projectPath, "dist", "cache", bspName, "client")
+    if (fileExists(clientSrcPath)) {
+        // No need to copy since it's already in the correct location
+        // This function now just validates the binary exists
+        Logger.debug(`Client binary exists at ${clientSrcPath}`)
+    }
 }

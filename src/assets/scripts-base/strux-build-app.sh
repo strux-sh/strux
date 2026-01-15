@@ -9,11 +9,14 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
+# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
+
 # Delete the old app directory contents if it exists (this will later be mounted [in dev mode] or copied (in build mode))
-rm -rf /project/dist/cache/app/*
+rm -rf "$CACHE_DIR/app"/*
 
 # Create the app directory if it doesn't exist
-mkdir -p /project/dist/cache/app
+mkdir -p "$CACHE_DIR/app"
 
 cd /project
 
@@ -71,6 +74,11 @@ if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
     GO_ARCH="amd64"
     ARCH_LABEL="x86_64"
     CROSS_COMPILER="x86_64-linux-gnu-gcc"
+elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+    GO_ARCH="arm"
+    GOARM="7"
+    ARCH_LABEL="ARMv7/ARMHF"
+    CROSS_COMPILER="arm-linux-gnueabihf-gcc"
 else
     GO_ARCH="arm64"
     ARCH_LABEL="ARM64"
@@ -100,8 +108,9 @@ GO_PRIVATE_ENV="${GO_PRIVATE_ENV:-}"
 CGO_ENABLED=1 \
 GOOS=linux \
 GOARCH="$GO_ARCH" \
+GOARM="${GOARM:-}" \
 CC="$CROSS_COMPILER" \
-${GO_PRIVATE_ENV}go build -o /project/dist/cache/app/main .
+${GO_PRIVATE_ENV}go build -o "$CACHE_DIR/app/main" .
 
 progress "Go application built successfully"
 

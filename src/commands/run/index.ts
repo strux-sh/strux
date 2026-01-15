@@ -18,7 +18,7 @@ import { waitForPort } from "../../utils/network"
 
 const decoder = new TextDecoder()
 
-async function run() {
+export async function run() {
 
     // Validate the Strux YAML
     MainYAMLValidator.validateAndLoad()
@@ -37,14 +37,16 @@ async function run() {
     let gpuDevice = ""
     const accelArgs: string[] = []
 
-    if (Settings.targetArch === "x86_64") {qemuBin = "qemu-system-x86_64"; machineType = "q35" }
-    if (Settings.targetArch === "arm64") {qemuBin = "qemu-system-aarch64"; machineType = "virt" }
+    if (Settings.targetArch === "x86_64") { qemuBin = "qemu-system-x86_64"; machineType = "q35" }
+    if (Settings.targetArch === "arm64") { qemuBin = "qemu-system-aarch64"; machineType = "virt" }
+    if (Settings.targetArch === "armhf") { qemuBin = "qemu-system-arm"; machineType = "virt" }
 
 
     if (!qemuBin) Logger.errorWithExit("Unsupported architecture. Please use a supported architecture.")
 
     if (Settings.targetArch === "x86_64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=tty1", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyS0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=Virtual-1:${Settings.bsp!.display!.height}x${Settings.bsp!.display!.width}@60`)
     if (Settings.targetArch === "arm64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.height}x${Settings.bsp!.display!.width}`)
+    if (Settings.targetArch === "armhf") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.height}x${Settings.bsp!.display!.width}`)
 
 
     if (Settings.targetArch === "x86_64" && process.platform === "darwin") {
@@ -87,6 +89,26 @@ async function run() {
         accelArgs.push("-cpu", "cortex-a57")
     }
 
+    // ARMHF (ARMv7) configuration
+    if (Settings.targetArch === "armhf" && process.platform === "darwin") {
+        displayOpt = "cocoa"
+        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+        // No HVF acceleration on macOS for 32-bit ARM, use TCG emulation
+        accelArgs.push("-cpu", "cortex-a15")
+    }
+    if (Settings.targetArch === "armhf" && process.platform !== "darwin") {
+
+        // Auto-detect GPU for ARMHF emulation
+        if (await shouldUseGL()) {
+            displayOpt = "gtk,gl=on"
+            gpuDevice = `virtio-gpu-gl-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+        } else {
+            displayOpt = "gtk"
+            gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+        }
+        accelArgs.push("-cpu", "cortex-a15")
+    }
+
 
     // Build the QEMU Arguments
     const args: string[] = [
@@ -97,9 +119,9 @@ async function run() {
         "-device", "qemu-xhci",
         "-device", "usb-kbd",
         "-device", "usb-tablet",
-        "-drive", "file=dist/cache/rootfs-post.ext4,format=raw,if=virtio",
-        "-kernel", "dist/cache/vmlinuz",
-        "-initrd", "dist/cache/initrd.img",
+        "-drive", "file=dist/output/qemu/rootfs.ext4,format=raw,if=virtio",
+        "-kernel", "dist/cache/qemu/vmlinuz",
+        "-initrd", "dist/cache/qemu/initrd.img",
         "-append", consoleArgs.join(" "),
         "-serial", "mon:stdio",
         ...accelArgs,
@@ -322,9 +344,9 @@ async function shouldUseGL() : Promise<boolean> {
 async function verifyArtifactsExist(): Promise<void> {
 
     const artifacts = [
-        { path: "dist/cache/vmlinuz", name: "Kernel" },
-        { path: "dist/cache/initrd.img", name: "Initramfs" },
-        { path: "dist/cache/rootfs.ext4", name: "Root Filesystem EXT4" }
+        { path: "dist/cache/qemu/vmlinuz", name: "Kernel" },
+        { path: "dist/cache/qemu/initrd.img", name: "Initramfs" },
+        { path: "dist/output/qemu/rootfs.ext4", name: "Root Filesystem EXT4" }
     ]
 
     for (const artifact of artifacts) {

@@ -16,6 +16,11 @@ PROJECT_DIR="/project"
 PROJECT_DIST_DIR="/project/dist"
 ROOTFS_DIR="/tmp/rootfs"
 
+# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+BSP_CACHE="${BSP_CACHE_DIR:-/project/dist/cache}"
+# Shared cache for architecture-agnostic artifacts like frontend
+SHARED_CACHE="${SHARED_CACHE_DIR:-/project/dist/cache}"
+
 # Function to run commands in chroot
 run_in_chroot() {
     chroot "$ROOTFS_DIR" /bin/bash -c "$1"
@@ -24,8 +29,8 @@ run_in_chroot() {
 # Create a temporary directory for the root filesystem
 mkdir -p "$ROOTFS_DIR"
 
-# Extract the root filesystem tarball into the temporary directory
-tar -xzf "$PROJECT_DIR/dist/cache/rootfs-base.tar.gz" -C "$ROOTFS_DIR"
+# Extract the root filesystem tarball into the temporary directory (from BSP-specific cache)
+tar -xzf "$BSP_CACHE/rootfs-base.tar.gz" -C "$ROOTFS_DIR"
 
 # Create the Strux Directory
 mkdir -p "$ROOTFS_DIR/strux"
@@ -141,24 +146,24 @@ chmod +x "$ROOTFS_DIR/strux/strux.sh"
 cp "$PROJECT_DIR/dist/artifacts/scripts/strux-network.sh" "$ROOTFS_DIR/usr/bin/strux-network.sh"
 chmod +x "$ROOTFS_DIR/usr/bin/strux-network.sh"
 
-# Copy the main application binary
-cp "$PROJECT_DIR/dist/cache/app/main" "$ROOTFS_DIR/strux/main"
+# Copy the main application binary (from BSP-specific cache)
+cp "$BSP_CACHE/app/main" "$ROOTFS_DIR/strux/main"
 chmod +x "$ROOTFS_DIR/strux/main"
 
-# Copy Cage (Our Custom build with Splash Support)
-cp "$PROJECT_DIR/dist/cache/cage" "$ROOTFS_DIR/usr/bin/cage"
+# Copy Cage (Our Custom build with Splash Support) - from BSP-specific cache
+cp "$BSP_CACHE/cage" "$ROOTFS_DIR/usr/bin/cage"
 chmod +x "$ROOTFS_DIR/usr/bin/cage"
 
-# Copy the Frontend
-cp -r "$PROJECT_DIR/dist/cache/frontend" "$ROOTFS_DIR/strux/frontend"
+# Copy the Frontend (from shared cache - architecture-agnostic)
+cp -r "$SHARED_CACHE/frontend" "$ROOTFS_DIR/strux/frontend"
 
-# Copy Strux Client (Handles a bunch of system services)
-cp "$PROJECT_DIR/dist/cache/client" "$ROOTFS_DIR/strux/client"
+# Copy Strux Client (Handles a bunch of system services) - from BSP-specific cache
+cp "$BSP_CACHE/client" "$ROOTFS_DIR/strux/client"
 chmod +x "$ROOTFS_DIR/strux/client"
 
-# If the .dev-env.json file exists, copy it to the rootfs
-if [ -f "$PROJECT_DIR/dist/cache/.dev-env.json" ]; then
-    cp "$PROJECT_DIR/dist/cache/.dev-env.json" "$ROOTFS_DIR/strux/.dev-env.json"
+# If the .dev-env.json file exists, copy it to the rootfs (from BSP-specific cache)
+if [ -f "$BSP_CACHE/.dev-env.json" ]; then
+    cp "$BSP_CACHE/.dev-env.json" "$ROOTFS_DIR/strux/.dev-env.json"
 fi
 
 
@@ -317,15 +322,15 @@ if [ -n "$KERNEL_VERSION" ]; then
 # Update initramfs with Plymouth
 run_in_chroot "update-initramfs -u -k $KERNEL_VERSION" || echo "Warning: initramfs update failed"
 
-# Copy updated initramfs to dist (use dev prefix in dev mode)
+# Copy updated initramfs to BSP-specific cache (use dev prefix in dev mode)
 INITRD=$(ls /tmp/rootfs/boot/initrd.img-* 2>/dev/null | head -n 1)
 if [ -n "$INITRD" ]; then
     if [ "$STRUX_DEV_MODE" = "1" ]; then
-    cp "$INITRD" /project/dist/cache/dev-initrd.img
-    echo "Updated initramfs copied to dist/cache/dev-initrd.img"
+    cp "$INITRD" "$BSP_CACHE/dev-initrd.img"
+    echo "Updated initramfs copied to $BSP_CACHE/dev-initrd.img"
     else
-    cp "$INITRD" /project/dist/cache/initrd.img
-    echo "Updated initramfs copied to dist/cache/initrd.img"
+    cp "$INITRD" "$BSP_CACHE/initrd.img"
+    echo "Updated initramfs copied to $BSP_CACHE/initrd.img"
     fi
 fi
 else
@@ -352,8 +357,8 @@ echo "Rootfs is ${ROOTFS_SIZE}MB, creating ${IMAGE_SIZE}MB ext4 image..."
 
 # Create a tarball of the rootfs like we did for the base rootfs
 progress "Creating post-processed rootfs tarball..."
-mkdir -p /project/dist/cache 
+mkdir -p "$BSP_CACHE"
 cd /tmp/rootfs
-tar -czf /project/dist/cache/rootfs-post.tar.gz .
+tar -czf "$BSP_CACHE/rootfs-post.tar.gz" .
 echo "Rootfs tarball created successfully."
-echo "  Size: $(du -h /project/dist/cache/rootfs-post.tar.gz | cut -f1)"
+echo "  Size: $(du -h "$BSP_CACHE/rootfs-post.tar.gz" | cut -f1)"

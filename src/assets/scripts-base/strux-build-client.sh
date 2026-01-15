@@ -10,13 +10,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-rm -rf /project/dist/cache/client
-
-cd /project/dist/artifacts/client
-
-progress "Installing Strux Client dependencies..."
-
-bun install
+progress "Building Strux Client (Go)..."
 
 # ============================================================================
 # CONFIGURATION READING FROM YAML FILES
@@ -28,6 +22,7 @@ progress "Reading configuration from YAML files..."
 
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
+CLIENT_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/client"
 
 # Get the active BSP name from strux.yaml
 if [ -n "$PRESELECTED_BSP" ]; then
@@ -59,47 +54,78 @@ if [ -z "$ARCH" ]; then
 fi
 
 # ============================================================================
-# ARCHITECTURE MAPPING FOR BUN CROSS-COMPILATION
+# ARCHITECTURE MAPPING FOR GO CROSS-COMPILATION
 # ============================================================================
-# Map Strux architecture to Bun target format
+# Map Strux architecture to Go GOARCH and cross-compiler
 # ============================================================================
 
-# Map architecture to Bun target
+# Map architecture to Go target
 if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
-    BUN_TARGET="bun-linux-x64"
+    GO_ARCH="amd64"
     ARCH_LABEL="x86_64"
+    CROSS_COMPILER="x86_64-linux-gnu-gcc"
 elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-    BUN_TARGET="bun-linux-arm64"
+    GO_ARCH="arm64"
     ARCH_LABEL="ARM64"
+    CROSS_COMPILER="aarch64-linux-gnu-gcc"
+elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+    GO_ARCH="arm"
+    GOARM="7"
+    ARCH_LABEL="ARMv7/ARMHF"
+    CROSS_COMPILER="arm-linux-gnueabihf-gcc"
 else
     echo "Error: Unsupported architecture: $ARCH"
     exit 1
 fi
 
-progress "Building Strux Client for $ARCH_LABEL ($BUN_TARGET)..."
+progress "Building Strux Client for $ARCH_LABEL..."
 
 # ============================================================================
-# BUN CLIENT BUILD
+# GO CLIENT BUILD
 # ============================================================================
-# Build the client binary with cross-compilation
+# Build the Go client with cross-compilation
 # ============================================================================
+
+# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
 
 # Ensure the cache directory exists
-mkdir -p /project/dist/cache
+mkdir -p "$CACHE_DIR"
 
-# Build to a temp directory inside the container (not on the mounted virtiofs volume)
-# This avoids cross-filesystem rename issues with Docker on macOS
+# Build to a temp directory inside the container
 BUILD_TMP="/tmp/strux-client-build"
 mkdir -p "$BUILD_TMP"
-cd "$BUILD_TMP"
 
-# Build the binary in the container's local filesystem
-bun build /project/dist/artifacts/client/index.ts --compile --target="$BUN_TARGET" --outfile "client-$BSP_NAME"
+# Change to client source directory
+cd "$CLIENT_SOURCE_DIR"
 
-# Copy the built binary to the project cache directory
-cp "client-$BSP_NAME" "/project/dist/cache/client-$BSP_NAME"
+# Download Go dependencies
+progress "Downloading Go dependencies..."
+
+# Always run go mod tidy first to ensure go.sum is up to date
+# This is necessary because the source files are copied fresh each build
+go mod tidy
+
+# Then download all dependencies
+go mod download
+
+# Build the client binary
+progress "Compiling Strux Client for $ARCH_LABEL..."
+
+CGO_ENABLED=1 \
+GOOS=linux \
+GOARCH="$GO_ARCH" \
+GOARM="${GOARM:-}" \
+CC="$CROSS_COMPILER" \
+go build -o "$BUILD_TMP/client-$BSP_NAME" .
+
+# Copy the built binary to the BSP-specific cache directory
+cp "$BUILD_TMP/client-$BSP_NAME" "$CACHE_DIR/client"
+
+# Make it executable
+chmod +x "$CACHE_DIR/client"
 
 # Clean up temp directory
 rm -rf "$BUILD_TMP"
 
-progress "Strux Client built successfully"
+progress "Strux Client built successfully for $ARCH_LABEL"

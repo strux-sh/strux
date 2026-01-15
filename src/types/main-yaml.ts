@@ -44,9 +44,17 @@ const QemuSchema = z.object({
     flags: z.array(z.string()).optional(),
 })
 
+// Cache configuration schema
+const CacheConfigSchema = z.object({
+    enabled: z.boolean().default(true),
+    force_rebuild: z.array(z.string()).optional(),
+    ignore_patterns: z.array(z.string()).optional(),
+})
+
 // Build configuration schema
 const BuildSchema = z.object({
     host_packages: z.array(z.string()).optional(),
+    cache: CacheConfigSchema.optional(),
 })
 
 // Dev server fallback host schema

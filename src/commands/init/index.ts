@@ -31,6 +31,8 @@ import templateBaseBSPYAML from "../../assets/template-base/bsp.yaml" with { typ
 import templateBaseGitignore from "../../assets/template-base/.gitignore" with { type: "text" }
 // @ts-ignore
 import templateBaseLogoPNG from "../../assets/template-base/logo.png" with { type: "file" }
+//@ts-ignore
+import templateBaseBSPMakeImage from "../../assets/template-base/make-image.sh" with { type: "text" }
 
 import { generateTypes } from "../types"
 
@@ -73,6 +75,9 @@ export async function init() {
 
     // Write the BSP.yaml file in the directory
     await Bun.write(join(Settings.projectPath, "bsp", "qemu", "bsp.yaml"), templateBaseBSPYAML.replace("${projectName}", Settings.projectName).replace("${version}", Settings.struxVersion).replace("${hostArch}", Settings.arch))
+
+    // Write the make-image.sh file in the scripts directory
+    await Bun.write(join(Settings.projectPath, "bsp", "qemu", "scripts", "make-image.sh"), templateBaseBSPMakeImage)
 
 
     // Create the scripts directory in the BSP directory

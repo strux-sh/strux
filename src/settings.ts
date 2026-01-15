@@ -12,7 +12,7 @@ import type { StruxYaml } from "./types/main-yaml"
 import type { BSPYaml } from "./types/bsp-yaml"
 
 export type TemplateType = "vanilla" | "react" | "vue"
-export type ArchType = "arm64" | "x86_64"
+export type ArchType = "arm64" | "x86_64" | "armhf"
 
 
 export class SettingsConfig {
@@ -47,7 +47,13 @@ export class SettingsConfig {
         this.template = "vanilla"
 
         // Default Architecture (based on the host architecture)
-        this.arch = process.arch === "arm64" ? "arm64" : "x86_64"
+        if (process.arch === "arm64") {
+            this.arch = "arm64"
+        } else if (process.arch === "arm") {
+            this.arch = "armhf"
+        } else {
+            this.arch = "x86_64"
+        }
 
         // Default Target Architecture (will be read from the project configuration, for now it will be the same as the host architecture)
         this.targetArch = this.arch

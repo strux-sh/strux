@@ -12,7 +12,9 @@ progress() {
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
 CAGE_SOURCE_DIR="$PROJECT_DIR/dist/cage"
-CAGE_BINARY="$PROJECT_DIR/dist/cache/cage"
+# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
+CAGE_BINARY="$CACHE_DIR/cage"
 
 # ============================================================================
 # CONFIGURATION READING FROM YAML FILES
@@ -77,6 +79,14 @@ elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
     CROSS_CXX="aarch64-linux-gnu-g++"
     CROSS_STRIP="aarch64-linux-gnu-strip"
     CROSS_PKG_CONFIG="aarch64-linux-gnu-pkg-config"
+elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+    TARGET_ARCH="arm"
+    MESON_CPU_FAMILY="arm"
+    ARCH_LABEL="ARMv7/ARMHF"
+    CROSS_CC="arm-linux-gnueabihf-gcc"
+    CROSS_CXX="arm-linux-gnueabihf-g++"
+    CROSS_STRIP="arm-linux-gnueabihf-strip"
+    CROSS_PKG_CONFIG="arm-linux-gnueabihf-pkg-config"
 else
     echo "Error: Unsupported architecture: $ARCH"
     exit 1
@@ -93,6 +103,9 @@ case "$HOST_ARCH" in
     arm64)
         HOST_ARCH_NORMALIZED="arm64"
         ;;
+    armhf)
+        HOST_ARCH_NORMALIZED="armhf"
+        ;;
     *)
         HOST_ARCH_NORMALIZED="$HOST_ARCH"
         ;;
@@ -101,6 +114,8 @@ esac
 # Normalize target arch for comparison
 if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
     TARGET_ARCH_NORMALIZED="x86_64"
+elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+    TARGET_ARCH_NORMALIZED="armhf"
 else
     TARGET_ARCH_NORMALIZED="arm64"
 fi
@@ -154,6 +169,8 @@ if [ "$NEED_CROSS_COMPILE" = true ]; then
     # Multiarch libraries are typically in /usr/lib/<triplet>
     if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
         PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
+    elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
+        PKG_CONFIG_PATH="/usr/lib/arm-linux-gnueabihf/pkgconfig"
     else
         PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
     fi
@@ -182,6 +199,13 @@ else
 fi
 
 progress "Configuring Cage with meson for $ARCH_LABEL..."
+
+# Fix clock skew issues by resetting file timestamps if build directory exists
+# This can happen when Docker container clock drifts from host
+if [ -d "build" ]; then
+    progress "Resetting file timestamps to fix potential clock skew..."
+    find build -type f -exec touch {} + 2>/dev/null || true
+fi
 
 # Configure with meson (with cross-file if needed)
 if [ "$NEED_CROSS_COMPILE" = true ]; then
@@ -213,7 +237,7 @@ meson compile -C build || {
 progress "Copying Cage binary..."
 
 # Create cache directory if it doesn't exist
-mkdir -p "$PROJECT_DIR/dist/cache"
+mkdir -p "$CACHE_DIR"
 
 # Copy the binary
 cp build/cage "$CAGE_BINARY" || {

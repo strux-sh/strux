@@ -13,6 +13,13 @@ import { join } from "path"
 // @ts-ignore
 import scriptsBaseDockerfile from "../assets/scripts-base/Dockerfile" with { type: "text" }
 
+/**
+ * Computes the hash of the Dockerfile content
+ */
+export function getDockerfileHash(): string {
+    return Bun.hash(scriptsBaseDockerfile).toString(16)
+}
+
 export interface RunnerOptions {
     message: string
     messageOnSuccess?: string
@@ -159,9 +166,21 @@ export class RunnerClass {
         }
     }
 
-    // Prepares the Docker Image and Folder
-    public async prepareDockerImage() {
-        // Check if Docker image already exists (silently, without spinner)
+    /**
+     * Result of Docker image preparation
+     */
+    public lastDockerImageHash = ""
+    public lastDockerImageRebuilt = false
+
+    /**
+     * Prepares the Docker Image and Folder.
+     * Returns information about whether the image was rebuilt.
+     */
+    public async prepareDockerImage(cachedDockerHash?: string): Promise<{ imageHash: string; rebuilt: boolean }> {
+        const currentHash = getDockerfileHash()
+
+        // Check if Docker image already exists
+        let imageExists = false
         try {
             const checkProc = Bun.spawn(["docker", "images", "-q", "strux-builder"], {
                 stdout: "pipe",
@@ -169,14 +188,34 @@ export class RunnerClass {
             })
             const checkOutput = await new Response(checkProc.stdout).text()
             await checkProc.exited
-
-            if (checkOutput.trim()) {
-                // Image exists, skip building
-                this.dockerImageBuilt = true
-                return
-            }
+            imageExists = checkOutput.trim() !== ""
         } catch {
             // If check fails, proceed to build
+        }
+
+        // Determine if we need to rebuild
+        const hashChanged = cachedDockerHash !== undefined && cachedDockerHash !== currentHash
+        const needsRebuild = !imageExists || hashChanged
+
+        if (!needsRebuild) {
+            // Image exists and hash hasn't changed
+            this.dockerImageBuilt = true
+            this.lastDockerImageHash = currentHash
+            this.lastDockerImageRebuilt = false
+            return { imageHash: currentHash, rebuilt: false }
+        }
+
+        // If hash changed, remove old image first
+        if (imageExists && hashChanged) {
+            Logger.log("Dockerfile changed, rebuilding Docker image...")
+            try {
+                await Bun.spawn(["docker", "rmi", "-f", "strux-builder"], {
+                    stdout: "pipe",
+                    stderr: "pipe",
+                }).exited
+            } catch {
+                // Ignore errors when removing old image
+            }
         }
 
         const spinner = new Spinner("Creating dist folder...")
@@ -206,10 +245,14 @@ export class RunnerClass {
 
         // Mark as built after successful build
         this.dockerImageBuilt = true
+        this.lastDockerImageHash = currentHash
+        this.lastDockerImageRebuilt = true
+
+        return { imageHash: currentHash, rebuilt: true }
     }
 
     public async runScriptInDocker(script: string, options: Omit<RunnerOptions, "cwd">) {
-        if (!this.dockerImageBuilt) await this.prepareDockerImage()
+        if (!this.dockerImageBuilt) await this.prepareDockerImage(undefined)
 
         const spinner = new Spinner(options.message)
         // If verbose mode is enabled, don't use spinner (it interferes with output)

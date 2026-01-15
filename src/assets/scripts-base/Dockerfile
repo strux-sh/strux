@@ -6,7 +6,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Enable multiarch support for cross-compilation
 # Add architectures if they're not already enabled (ignore errors if already added)
 RUN (dpkg --add-architecture arm64 || true) && \
-    (dpkg --add-architecture amd64 || true)
+    (dpkg --add-architecture amd64 || true) && \
+    (dpkg --add-architecture armhf || true)
 
 # Install Go for cross-compiling user applications with CGO support
 RUN apt-get update && apt-get install -y golang
@@ -23,6 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc-x86-64-linux-gnu \
     g++-x86-64-linux-gnu \
     binutils-x86-64-linux-gnu \
+    gcc-arm-linux-gnueabihf \
+    g++-arm-linux-gnueabihf \
+    binutils-arm-linux-gnueabihf \
     # Build essentials
     build-essential \
     cmake \
@@ -127,6 +131,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpewebkit-2.0-dev:amd64 \
     libjson-glib-dev:amd64 \
     libsoup-3.0-dev:amd64 \
+    # ARMHF (ARMv7) cross-architecture development libraries
+    libwlroots-0.19-dev:armhf \
+    libwayland-dev:armhf \
+    libglib2.0-dev:armhf \
+    libpixman-1-dev:armhf \
+    libpng-dev:armhf \
+    libinput-dev:armhf \
+    libxkbcommon-dev:armhf \
+    libdrm-dev:armhf \
+    libudev-dev:armhf \
+    libseat-dev:armhf \
+    libwpe-1.0-dev:armhf \
+    libwpebackend-fdo-1.0-dev:armhf \
+    libwpewebkit-2.0-dev:armhf \
+    libjson-glib-dev:armhf \
+    libsoup-3.0-dev:armhf \
     && rm -rf /var/lib/apt/lists/*
 
 # Use login shell for RUN commands so .bashrc is sourced automatically

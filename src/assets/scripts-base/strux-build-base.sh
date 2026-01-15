@@ -19,7 +19,8 @@ progress "Preparing Base Root Filesystem"
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
 PROJECT_DIST_DIR="/project/dist"
-PROJECT_CACHE_DIR="/project/dist/cache"
+# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+PROJECT_CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
 
 mkdir -p "$PROJECT_CACHE_DIR"
 
@@ -180,6 +181,9 @@ case "$ARCH" in
     amd64|x86_64)
         DEBIAN_ARCH="amd64"
         ;;
+    armhf|armv7|arm)
+        DEBIAN_ARCH="armhf"
+        ;;
     *)
         echo "Unsupported architecture: $ARCH"
         exit 1
@@ -228,6 +232,8 @@ else
     # Copy QEMU static binary for second stage
     if [ "$DEBIAN_ARCH" = "arm64" ]; then
         cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
+    elif [ "$DEBIAN_ARCH" = "armhf" ]; then
+        cp /usr/bin/qemu-arm-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
     fi
 
     # Run second stage inside chroot
@@ -442,17 +448,17 @@ if [ "${STRUX_CUSTOM_KERNEL:-false}" != "true" ]; then
     progress "Extracting kernel image..."
     VMLINUZ=$(ls "$ROOTFS_DIR/boot/vmlinuz-"* 2>/dev/null | head -n 1)
     if [ -n "$VMLINUZ" ]; then
-        mkdir -p "$PROJECT_DIST_DIR/cache"
-        cp "$VMLINUZ" "$PROJECT_DIST_DIR/cache/vmlinuz"
-        echo "Kernel copied to $PROJECT_DIST_DIR/cache/vmlinuz"
+        mkdir -p "$PROJECT_CACHE_DIR"
+        cp "$VMLINUZ" "$PROJECT_CACHE_DIR/vmlinuz"
+        echo "Kernel copied to $PROJECT_CACHE_DIR/vmlinuz"
     fi
 
     # Find and copy the initramfs
     INITRD=$(ls "$ROOTFS_DIR/boot/initrd.img-"* 2>/dev/null | head -n 1)
     if [ -n "$INITRD" ]; then
-        mkdir -p "$PROJECT_DIST_DIR/cache"
-        cp "$INITRD" "$PROJECT_DIST_DIR/cache/initrd.img"
-        echo "Initramfs copied to $PROJECT_DIST_DIR/cache/initrd.img"
+        mkdir -p "$PROJECT_CACHE_DIR"
+        cp "$INITRD" "$PROJECT_CACHE_DIR/initrd.img"
+        echo "Initramfs copied to $PROJECT_CACHE_DIR/initrd.img"
     fi
 
     # Get kernel version for depmod
@@ -466,24 +472,27 @@ else
     progress "Custom kernel enabled - installing custom kernel and generating initramfs"
     
     # Check if custom kernel compiled artifacts exist in cache
-    if [ ! -f "$PROJECT_DIST_DIR/cache/kernel/vmlinuz" ] && [ ! -f "$PROJECT_DIST_DIR/cache/kernel/Image" ] && [ ! -f "$PROJECT_DIST_DIR/cache/kernel/bzImage" ]; then
-        echo "Error: Custom kernel image not found in $PROJECT_DIST_DIR/cache/kernel/"
-        echo "Expected one of: vmlinuz, Image (ARM64), or bzImage (x86_64)"
+    if [ ! -f "$PROJECT_CACHE_DIR/kernel/vmlinuz" ] && [ ! -f "$PROJECT_CACHE_DIR/kernel/Image" ] && [ ! -f "$PROJECT_CACHE_DIR/kernel/bzImage" ]; then
+        echo "Error: Custom kernel image not found in $PROJECT_CACHE_DIR/kernel/"
+        echo "Expected one of: vmlinuz, Image (ARM64), zImage (ARMHF), or bzImage (x86_64)"
         exit 1
     fi
     
     # Determine kernel image name and architecture-specific path
     if [ "$DEBIAN_ARCH" = "arm64" ]; then
-        KERNEL_IMAGE="$PROJECT_DIST_DIR/cache/kernel/Image"
+        KERNEL_IMAGE="$PROJECT_CACHE_DIR/kernel/Image"
         KERNEL_NAME="Image"
+    elif [ "$DEBIAN_ARCH" = "armhf" ]; then
+        KERNEL_IMAGE="$PROJECT_CACHE_DIR/kernel/zImage"
+        KERNEL_NAME="zImage"
     else
-        KERNEL_IMAGE="$PROJECT_DIST_DIR/cache/kernel/bzImage"
+        KERNEL_IMAGE="$PROJECT_CACHE_DIR/kernel/bzImage"
         KERNEL_NAME="bzImage"
     fi
     
     # Fallback to vmlinuz if architecture-specific image not found
     if [ ! -f "$KERNEL_IMAGE" ]; then
-        KERNEL_IMAGE="$PROJECT_DIST_DIR/cache/kernel/vmlinuz"
+        KERNEL_IMAGE="$PROJECT_CACHE_DIR/kernel/vmlinuz"
         KERNEL_NAME="vmlinuz"
     fi
     
@@ -494,19 +503,19 @@ else
     
     # Copy kernel image to cache directory
     progress "Copying custom kernel image..."
-    mkdir -p "$PROJECT_DIST_DIR/cache"
-    cp "$KERNEL_IMAGE" "$PROJECT_DIST_DIR/cache/vmlinuz"
-    echo "Custom kernel copied to $PROJECT_DIST_DIR/cache/vmlinuz"
+    mkdir -p "$PROJECT_CACHE_DIR"
+    cp "$KERNEL_IMAGE" "$PROJECT_CACHE_DIR/vmlinuz"
+    echo "Custom kernel copied to $PROJECT_CACHE_DIR/vmlinuz"
     
     # Install kernel modules into rootfs (if they exist)
-    if [ -d "$PROJECT_DIST_DIR/cache/kernel/modules" ]; then
+    if [ -d "$PROJECT_CACHE_DIR/kernel/modules" ]; then
         progress "Installing custom kernel modules..."
-        KERNEL_VERSION=$(ls "$PROJECT_DIST_DIR/cache/kernel/modules" 2>/dev/null | head -n 1)
+        KERNEL_VERSION=$(ls "$PROJECT_CACHE_DIR/kernel/modules" 2>/dev/null | head -n 1)
         
         if [ -n "$KERNEL_VERSION" ]; then
             # Copy modules to rootfs
             mkdir -p "$ROOTFS_DIR/lib/modules"
-            cp -r "$PROJECT_DIST_DIR/cache/kernel/modules/$KERNEL_VERSION" "$ROOTFS_DIR/lib/modules/"
+            cp -r "$PROJECT_CACHE_DIR/kernel/modules/$KERNEL_VERSION" "$ROOTFS_DIR/lib/modules/"
             
             # Generate module dependencies
             progress "Generating module dependencies..."
@@ -516,7 +525,7 @@ else
             echo "Warning: No kernel version found in modules directory"
         fi
     else
-        echo "Warning: Kernel modules directory not found at $PROJECT_DIST_DIR/cache/kernel/modules"
+        echo "Warning: Kernel modules directory not found at $PROJECT_CACHE_DIR/kernel/modules"
     fi
     
     # Install initramfs-tools if not already installed
@@ -536,9 +545,9 @@ else
         # Find and copy the generated initramfs
         INITRD=$(ls "$ROOTFS_DIR/boot/initrd.img-$KERNEL_VERSION"* 2>/dev/null | head -n 1)
         if [ -n "$INITRD" ]; then
-            mkdir -p "$PROJECT_DIST_DIR/cache"
-            cp "$INITRD" "$PROJECT_DIST_DIR/cache/initrd.img"
-            echo "Initramfs copied to $PROJECT_DIST_DIR/cache/initrd.img"
+            mkdir -p "$PROJECT_CACHE_DIR"
+            cp "$INITRD" "$PROJECT_CACHE_DIR/initrd.img"
+            echo "Initramfs copied to $PROJECT_CACHE_DIR/initrd.img"
         else
             echo "Warning: Initramfs not found after generation"
         fi
@@ -567,14 +576,15 @@ umount "$ROOTFS_DIR/proc" 2>/dev/null || true
 umount "$ROOTFS_DIR/dev/pts" 2>/dev/null || true
 umount "$ROOTFS_DIR/dev" 2>/dev/null || true
 
-# Remove QEMU static binary (not needed in final image)
+# Remove QEMU static binaries (not needed in final image)
 rm -f "$ROOTFS_DIR/usr/bin/qemu-aarch64-static"
+rm -f "$ROOTFS_DIR/usr/bin/qemu-arm-static"
 
 # Save the base rootfs as a tarball for caching
 progress "Saving base rootfs cache..."
-mkdir -p /project/dist/cache
+mkdir -p "$PROJECT_CACHE_DIR"
 cd "$ROOTFS_DIR"
-tar -czf /project/dist/cache/rootfs-base.tar.gz .
+tar -czf "$PROJECT_CACHE_DIR/rootfs-base.tar.gz" .
 
 echo "Base rootfs cache created successfully."
-echo "  Size: $(du -h /project/dist/cache/rootfs-base.tar.gz | cut -f1)"
+echo "  Size: $(du -h "$PROJECT_CACHE_DIR/rootfs-base.tar.gz" | cut -f1)"
