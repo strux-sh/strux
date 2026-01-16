@@ -200,11 +200,15 @@ fi
 
 progress "Configuring Cage with meson for $ARCH_LABEL..."
 
-# Fix clock skew issues by resetting file timestamps if build directory exists
-# This can happen when Docker container clock drifts from host
+# Fix clock skew issues that can happen when Docker container clock drifts from host
+# Touch source files to ensure consistent timestamps before meson runs
+progress "Syncing file timestamps to prevent clock skew..."
+find . -type f -exec touch {} + 2>/dev/null || true
+
+# If build directory exists from a previous run, clean it to avoid stale timestamp issues
 if [ -d "build" ]; then
-    progress "Resetting file timestamps to fix potential clock skew..."
-    find build -type f -exec touch {} + 2>/dev/null || true
+    progress "Cleaning existing build directory..."
+    rm -rf build
 fi
 
 # Configure with meson (with cross-file if needed)

@@ -39,6 +39,12 @@ export class SettingsConfig {
     // To show debug information from the QEMU system when it is running
     qemuSystemDebug = false
 
+    // To show debug information from the dev server (log streams)
+    devDebug = false
+
+    // To show Vite dev server output
+    devViteDebug = false
+
 
     constructor() {
 

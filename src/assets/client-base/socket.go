@@ -53,6 +53,14 @@ type LogErrorPayload struct {
 	Error    string `json:"error"`
 }
 
+// BinaryAckPayload represents the acknowledgment of a binary update
+type BinaryAckPayload struct {
+	Status           string `json:"status"`           // "skipped", "updated", "error"
+	Message          string `json:"message"`          // Human-readable message
+	CurrentChecksum  string `json:"currentChecksum"`  // Checksum of current binary on disk
+	ReceivedChecksum string `json:"receivedChecksum"` // Checksum of received binary
+}
+
 // SocketClient handles WebSocket communication with the dev server
 type SocketClient struct {
 	ws         *WSClient
@@ -82,6 +90,11 @@ func (s *SocketClient) Connect(host Host) error {
 
 	// Create WebSocket client
 	ws := NewWSClient()
+
+	// Set the client key header for authentication
+	if s.clientKey != "" {
+		ws.SetHeader("X-Client-Key", s.clientKey)
+	}
 
 	// Set up connection lifecycle callbacks
 	ws.OnConnect(func() {
@@ -237,6 +250,24 @@ func (s *SocketClient) SendLogError(streamID string, errMsg string) {
 	}
 }
 
+// SendBinaryAck sends a binary update acknowledgment to the server
+func (s *SocketClient) SendBinaryAck(status, message, currentChecksum, receivedChecksum string) {
+	if s.ws == nil {
+		return
+	}
+
+	payload := BinaryAckPayload{
+		Status:           status,
+		Message:          message,
+		CurrentChecksum:  currentChecksum,
+		ReceivedChecksum: receivedChecksum,
+	}
+
+	if err := s.ws.Emit("binary-ack", payload); err != nil {
+		s.logger.Error("Failed to send binary ack: %v", err)
+	}
+}
+
 // handleBinaryUpdate handles a binary update from the server
 func (s *SocketClient) handleBinaryUpdate(data string) {
 	s.logger.Info("Received binary update")
@@ -245,14 +276,20 @@ func (s *SocketClient) handleBinaryUpdate(data string) {
 	decoded, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
 		s.logger.Error("Failed to decode binary data: %v", err)
+		s.SendBinaryAck("error", "Failed to decode binary data: "+err.Error(), "", "")
 		return
 	}
 
 	s.logger.Info("Decoded binary: %d bytes", len(decoded))
 
 	// Handle the binary update
-	if err := BinaryHandlerInstance.HandleUpdate(decoded); err != nil {
-		s.logger.Error("Failed to handle binary update: %v", err)
+	result := BinaryHandlerInstance.HandleUpdate(decoded)
+
+	// Send acknowledgment to server
+	s.SendBinaryAck(result.Status, result.Message, result.CurrentChecksum, result.ReceivedChecksum)
+
+	if result.Status == "error" {
+		s.logger.Error("Binary update failed: %s", result.Message)
 	}
 }
 

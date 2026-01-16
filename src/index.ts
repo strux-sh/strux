@@ -130,13 +130,17 @@ program.command("dev")
     .description("Start the Strux OS development server")
     .option("--remote", "Run the development server to serve the project to a remote device (skips build and QEMU running)")
     .option("--clean", "Clean the build cache before building")
-    .action(async (options: {remote?: boolean, clean?: boolean}) => {
+    .option("--debug", "Show device log streams")
+    .option("--vite", "Show Vite dev server output")
+    .action(async (options: {remote?: boolean, clean?: boolean, debug?: boolean, vite?: boolean}) => {
 
         try {
 
             Logger.title("Starting Strux OS Development Server")
             Settings.isRemoteOnly = options.remote ?? false
             Settings.clean = options.clean ?? false
+            Settings.devDebug = options.debug ?? false
+            Settings.devViteDebug = options.vite ?? false
             await dev()
 
         } catch (err) {

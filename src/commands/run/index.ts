@@ -18,7 +18,18 @@ import { waitForPort } from "../../utils/network"
 
 const decoder = new TextDecoder()
 
-export async function run() {
+
+interface RunOptions {
+    // Skip the production build check (for dev mode)
+    devMode?: boolean
+    // Return the QEMU process instead of waiting for it to exit
+    returnProcess?: boolean
+    // Suppress QEMU console output (useful when logs are streamed via dev server)
+    quiet?: boolean
+}
+
+
+export async function run(options: RunOptions = {}) {
 
     // Validate the Strux YAML
     MainYAMLValidator.validateAndLoad()
@@ -26,7 +37,7 @@ export async function run() {
     // Validate the BSP YAML, This auto selects the QEMU BSP
     BSPYamlValidator.validateAndLoad()
 
-    await verifyArtifactsExist()
+    await verifyArtifactsExist(options.devMode ?? false)
 
     let qemuBin: string | null = null
     let machineType = ""
@@ -190,7 +201,7 @@ export async function run() {
 
 
     const proc = Bun.spawn([qemuBin!, ...args], {
-        stdio: ["inherit", "inherit", "inherit"],
+        stdio: options.quiet ? ["inherit", "ignore", "ignore"] : ["inherit", "inherit", "inherit"],
         env: process.env
     })
 
@@ -214,6 +225,14 @@ export async function run() {
             const msg = stderr ?? stdout ?? "usbredir failed to open the device. Ensure it is connected and not claimed exclusively."
             throw new Error(`usbredir failed for ${failed.key}: ${msg}`)
         }
+
+    }
+
+    // If returnProcess is true, return the process without waiting for it to exit
+    // This is used by dev mode to run QEMU in the background
+    if (options.returnProcess) {
+
+        return proc
 
     }
 
@@ -361,7 +380,7 @@ async function shouldUseGL() : Promise<boolean> {
     }
 }
 
-async function verifyArtifactsExist(): Promise<void> {
+async function verifyArtifactsExist(devMode = false): Promise<void> {
 
     const artifacts = [
         { path: "dist/output/qemu/vmlinuz", name: "Kernel" },
@@ -372,6 +391,9 @@ async function verifyArtifactsExist(): Promise<void> {
     for (const artifact of artifacts) {
         if (!fileExists(join(Settings.projectPath, artifact.path))) return Logger.errorWithExit(`${artifact.name} not found. Please build the project first.`)
     }
+
+    // Skip the production check if we're in dev mode
+    if (devMode) return
 
     // Check if this is a production build (not a dev build)
     const buildInfoPath = join(Settings.projectPath, "dist/output/qemu/.build-info.json")

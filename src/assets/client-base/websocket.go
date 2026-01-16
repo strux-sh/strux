@@ -26,6 +26,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sync"
 	"time"
@@ -54,6 +55,7 @@ type WSClient struct {
 	// Connection state
 	connected bool
 	url       string
+	headers   http.Header
 
 	// Callbacks for connection lifecycle
 	onConnect    func()
@@ -124,6 +126,16 @@ func (w *WSClient) SetReconnect(enabled bool, delay time.Duration, maxRetries in
 	w.maxReconnectTry = maxRetries
 }
 
+// SetHeader sets a header to be sent during the WebSocket handshake
+func (w *WSClient) SetHeader(key, value string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.headers == nil {
+		w.headers = make(http.Header)
+	}
+	w.headers.Set(key, value)
+}
+
 // Connect establishes a WebSocket connection to the specified URL
 func (w *WSClient) Connect(wsURL string) error {
 	w.connMu.Lock()
@@ -150,8 +162,13 @@ func (w *WSClient) Connect(wsURL string) error {
 	w.url = u.String()
 	w.logger.Info("Connecting to %s...", w.url)
 
-	// Dial the WebSocket server
-	conn, _, err := websocket.DefaultDialer.Dial(w.url, nil)
+	// Get headers for the connection
+	w.mu.RLock()
+	headers := w.headers
+	w.mu.RUnlock()
+
+	// Dial the WebSocket server with headers
+	conn, _, err := websocket.DefaultDialer.Dial(w.url, headers)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %w", err)
 	}

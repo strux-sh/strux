@@ -74,7 +74,7 @@ export async function init() {
     await mkdir(join(Settings.projectPath, "bsp", "qemu"), { recursive: true })
 
     // Write the BSP.yaml file in the directory
-    await Bun.write(join(Settings.projectPath, "bsp", "qemu", "bsp.yaml"), templateBaseBSPYAML.replace("${projectName}", Settings.projectName).replace("${version}", Settings.struxVersion).replace("${hostArch}", Settings.arch))
+    await Bun.write(join(Settings.projectPath, "bsp", "qemu", "bsp.yaml"), templateBaseBSPYAML.replaceAll("${projectName}", Settings.projectName).replaceAll("${version}", Settings.struxVersion).replaceAll("${hostArch}", Settings.arch))
 
     // Write the make-image.sh file in the scripts directory
     await Bun.write(join(Settings.projectPath, "bsp", "qemu", "scripts", "make-image.sh"), templateBaseBSPMakeImage)
@@ -115,7 +115,7 @@ export async function init() {
 
     // Write the Strux.yaml file in the directory
     await Bun.write(join(Settings.projectPath, "strux.yaml"),
-        templateBaseYAML.replace("${projectName}", Settings.projectName).replace("${version}", Settings.struxVersion).replace("${clientKey}", clientKey)
+        templateBaseYAML.replaceAll("${projectName}", Settings.projectName).replaceAll("${version}", Settings.struxVersion).replaceAll("${clientKey}", clientKey)
     )
 
     // Generate the Strux Types by introspecting the main.go file
