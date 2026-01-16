@@ -77,84 +77,43 @@ export async function dev(): Promise<void> {
 
     await buildCommand()
 
-    // Start the Vite dev server for the frontend
-    Logger.title("Starting Vite Dev Server")
+    // Start the Vite dev server for the frontend inside Docker
+    // This ensures consistent Linux-native npm packages and proper caching
+    Logger.title("Starting Vite Dev Server (Docker)")
 
-    const frontendPath = path.join(Settings.projectPath, "frontend")
-
-    const nodeModulesPath = path.join(frontendPath, "node_modules")
-
-    const packageLockPath = path.join(frontendPath, "package-lock.json")
-
-    // Check if native modules match the host platform by looking for platform-specific rollup binary
-    const rollupNativePath = path.join(nodeModulesPath, "@rollup", `rollup-${process.platform}-${process.arch}`)
-
-    const needsReinstall = !await Bun.file(path.join(rollupNativePath, "package.json")).exists()
-
-    if (needsReinstall) {
-
-        Logger.info("Frontend dependencies need reinstall for host platform...")
-
-        // Delete node_modules and package-lock.json to force fresh install
-        try {
-
-            const { rm } = await import("fs/promises")
-
-            if (await Bun.file(packageLockPath).exists()) {
-
-                await rm(packageLockPath)
-
-            }
-
-            if (await Bun.file(path.join(nodeModulesPath, ".package-lock.json")).exists()) {
-
-                await rm(nodeModulesPath, { recursive: true, force: true })
-
-            }
-
-        } catch {
-
-            // Ignore cleanup errors
-
-        }
-
-        Logger.info("Installing frontend dependencies on host...")
-
-        const installProc = Bun.spawn(["npm", "install"], {
-            cwd: frontendPath,
-            stdio: ["inherit", "inherit", "inherit"],
-            env: process.env
-        })
-
-        const installCode = await installProc.exited
-
-        if (installCode !== 0) {
-
-            Logger.errorWithExit("Failed to install frontend dependencies")
-
-        }
-
-        Logger.success("Frontend dependencies installed")
-
-    }
+    // Build Docker command for Vite dev server
+    // Uses the same strux-builder image with port mapping for HMR
+    const viteDockerArgs: string[] = [
+        "docker", "run", "--rm",
+        "-v", `${Settings.projectPath}:/project`,
+        "-p", "5173:5173",  // Vite dev server port
+        "-w", "/project/frontend",
+        // Enable polling for file watching (Docker doesn't propagate native fs events well)
+        "-e", "CHOKIDAR_USEPOLLING=true",
+        "-e", "CHOKIDAR_INTERVAL=100",
+        "strux-builder",
+        "/bin/bash", "-c",
+        "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ]
 
     // Silence Vite output by default, show with --vite flag
     const viteStdio: ["inherit", "inherit", "inherit"] | ["pipe", "pipe", "pipe"] = Settings.devViteDebug
         ? ["inherit", "inherit", "inherit"]
         : ["pipe", "pipe", "pipe"]
 
-    viteProcess = Bun.spawn(["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"], {
-        cwd: frontendPath,
-        stdio: viteStdio,
-        env: process.env
+    viteProcess = Bun.spawn(viteDockerArgs, {
+        stdio: viteStdio
     })
 
-    Logger.success("Vite dev server started on http://0.0.0.0:5173")
+    Logger.success("Vite dev server started on http://localhost:5173 (running in Docker)")
 
     // Handle Vite process exit
     viteProcess.exited.then((code) => {
 
-        if (code !== 0 && code !== null) {
+        // Exit codes 130 (SIGINT) and 143 (SIGTERM) are expected when we kill the process
+        const isSignalExit = code === 130 || code === 143
+
+        if (code !== 0 && code !== null && !isSignalExit) {
 
             Logger.error(`Vite dev server exited with code ${code}`)
 

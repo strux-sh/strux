@@ -26,7 +26,7 @@
 
 import type { Server, ServerWebSocket } from "bun"
 
-import Bonjour, { type Service } from "bonjour-service"
+import { Bonjour, type Service } from "bonjour-service"
 
 import chalk from "chalk"
 

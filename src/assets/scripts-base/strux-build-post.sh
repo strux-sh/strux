@@ -329,13 +329,8 @@ run_in_chroot "update-initramfs -u -k $KERNEL_VERSION" || echo "Warning: initram
 # Copy updated initramfs to BSP-specific cache (use dev prefix in dev mode)
 INITRD=$(ls /tmp/rootfs/boot/initrd.img-* 2>/dev/null | head -n 1)
 if [ -n "$INITRD" ]; then
-    if [ "$STRUX_DEV_MODE" = "1" ]; then
-    cp "$INITRD" "$BSP_CACHE/dev-initrd.img"
-    echo "Updated initramfs copied to $BSP_CACHE/dev-initrd.img"
-    else
     cp "$INITRD" "$BSP_CACHE/initrd.img"
     echo "Updated initramfs copied to $BSP_CACHE/initrd.img"
-    fi
 fi
 else
 echo "Warning: No kernel modules found, skipping initramfs regeneration"
