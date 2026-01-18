@@ -1,6 +1,6 @@
 /***
  *
- *  Centralized Strux version detection
+ *  Strux Version Detection
  *
  */
 

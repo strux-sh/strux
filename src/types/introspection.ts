@@ -1,3 +1,10 @@
+
+/***
+ *
+ *
+ *  Introspection Schema
+ *
+ */
 import { z } from "zod"
 
 // Type definition for a single type (Go and TypeScript representations)

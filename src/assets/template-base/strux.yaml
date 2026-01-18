@@ -1,0 +1,73 @@
+strux_version: ${version}
+name: ${projectName}
+
+bsp: qemu
+
+hostname: ${projectName}
+
+boot:
+  # --- The splash screen configuration ---
+  splash:
+
+    # --- Whether to enable the bootsplash ---
+    enabled: true
+
+    # --- The logo to use for the bootsplash (must be a png) ---
+    logo: ./assets/logo.png
+
+    # --- The color of the web browser background to ensure a smooth transition from the bootsplash to your app ---
+    color: "000000"
+  
+
+
+# --- Global RootFS Configuration ---
+rootfs:
+  # --- The RootFS Overlay to use ---
+  overlay: ./overlay
+
+  # --- The RootFS Packages to install (can be a list of packages or locations to .deb files) ---
+  packages:
+    - curl
+    - wget
+
+# --- QEMU Specific Configuration ---
+qemu:
+
+  # Whether o rnot to use QEMU for Local Testing
+  enabled: true
+
+  # --- The QEMU Network to use ---
+  network: true
+
+  # --- The QEMU USB Devices to use ---
+  # usb:
+  #   - vendor_id: "1234"
+  #     product_id: "5678"
+
+  # --- The QEMU Flags to use ---
+  flags:
+    - -m 2G
+
+
+build:
+  # --- Dockerfile Build Environment Packages to Install (Only supports repository packages at the moment)---
+  host_packages:
+    - curl
+    - wget
+
+dev:
+  # --- The Dev Server Configuration ---
+  server:
+
+    # --- The Fallback Hosts to use ---
+    fallback_hosts:
+      # --- Replace these with your local network IP addresses or add additional hosts here as needed ---
+      # --- This will launch and bind the dev server to these hosts and ports on the local network, and add them to the dev client config ---
+      - host: 10.0.2.2
+        port: 8000
+
+    # --- Whether to use mDNS discovery ---
+    use_mdns_on_client: true
+
+    # --- The Dev Client Key to use ---
+    client_key: ${clientKey}

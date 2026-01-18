@@ -1,0 +1,12 @@
+[Unit]
+Description=Strux Network Setup
+Before=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/strux-network.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

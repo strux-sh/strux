@@ -4,11 +4,9 @@
  *
  */
 
-import { existsSync, statSync } from "fs"
+import { statSync, existsSync } from "node:fs"
 
-/**
- * Checks if a file exists
- */
+// Chceks if a File Exists
 export function fileExists(path: string): boolean {
     try {
         const stats = statSync(path)
@@ -18,9 +16,7 @@ export function fileExists(path: string): boolean {
     }
 }
 
-/**
- * Checks if a directory exists
- */
+// Checks if a directory exists
 export function directoryExists(path: string): boolean {
     try {
         const stats = statSync(path)
@@ -30,9 +26,7 @@ export function directoryExists(path: string): boolean {
     }
 }
 
-/**
- * Checks if a path exists (file or directory)
- */
+// Checks if a path exists (file or directory)
 export function pathExists(path: string): boolean {
     return existsSync(path)
 }
@@ -63,6 +57,3 @@ export function validatePathExists(path: string, fieldName: string): void {
         throw new Error(`${fieldName} path does not exist: ${path}`)
     }
 }
-
-
-

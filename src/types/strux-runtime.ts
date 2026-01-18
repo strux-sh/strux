@@ -10,4 +10,4 @@ interface Strux {
     Shutdown(): Promise<void>;
   };
 }
-`;
+`
