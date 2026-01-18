@@ -85,7 +85,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             "overlay",
             "bsp",
             "node_modules",
-            "test"
+            "test",
+            "strux.yaml"
         ],
         yamlKeys: [
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.name" }

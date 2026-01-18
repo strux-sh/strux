@@ -12,6 +12,7 @@ import { init } from "./commands/init"
 import { build } from "./commands/build"
 import { run } from "./commands/run"
 import { dev } from "./commands/dev"
+import { usb, usbAdd, usbList } from "./commands/usb"
 
 const program = new Command()
 
@@ -150,5 +151,53 @@ program.command("dev")
         }
 
     })
+
+
+const USBCommand = program.command("usb")
+    .description("Manage USB device passthrough configuration for QEMU")
+
+USBCommand.command("add")
+    .description("Auto-detect USB devices and add selected devices to strux.yaml")
+    .action(async () => {
+
+        try {
+
+            Logger.title("Auto-detecting USB Devices for QEMU")
+            await usbAdd()
+
+
+        } catch (err) {
+
+            Logger.errorWithExit(`USB add/detection failed: ${err instanceof Error ? err.message : String(err)}`)
+
+        }
+
+
+    })
+
+USBCommand.command("list")
+    .description("List configured USB devices and optionally remove selected devices")
+    .action(async () => {
+        try {
+            Logger.title("Listing Configured USB Devices for QEMU")
+            await usbList()
+        } catch (err) {
+            Logger.errorWithExit(`USB list failed: ${err instanceof Error ? err.message : String(err)}`)
+        }
+    })
+
+USBCommand.action(async () => {
+
+    try {
+
+
+        Logger.title("Managing USB Devices for QEMU")
+        await usb()
+
+    } catch (err) {
+        Logger.errorWithExit(`USB command failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+
+})
 
 program.parse()
