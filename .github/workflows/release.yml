@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.0.0)'
-        required: true
+        description: 'Version override (leave empty to use package.json)'
+        required: false
         type: string
 
 env:
@@ -16,10 +16,34 @@ env:
   BUN_VERSION: '1.3.6'
 
 jobs:
+  # Extract version from package.json (single source of truth)
+  get-version:
+    name: Get Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from package.json
+        id: version
+        run: |
+          # Use workflow input if provided, otherwise read from package.json
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(jq -r '.version' package.json)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Release version: $VERSION"
+
   # Generate runtime types first
   generate-types:
     name: Generate Types
     runs-on: ubuntu-latest
+    needs: get-version
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +67,7 @@ jobs:
   build-go:
     name: Build Go (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ubuntu-latest
-    needs: generate-types
+    needs: [get-version, generate-types]
     strategy:
       matrix:
         include:
@@ -88,7 +112,7 @@ jobs:
   build-bun:
     name: Build Bun CLI (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    needs: generate-types
+    needs: [get-version, generate-types]
     strategy:
       matrix:
         include:
@@ -112,18 +136,10 @@ jobs:
             runner: windows-latest
             os: windows
             arch: amd64
+    env:
+      STRUX_VERSION: ${{ needs.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set CLI version
-        shell: bash
-        run: |
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          echo "STRUX_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -154,7 +170,9 @@ jobs:
   build-deb:
     name: Build .deb Package
     runs-on: ubuntu-latest
-    needs: [build-go, build-bun]
+    needs: [get-version, build-go, build-bun]
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -164,15 +182,6 @@ jobs:
           pattern: '*linux*'
           path: binaries/
           merge-multiple: true
-
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Create .deb package structure
         run: |
@@ -189,7 +198,7 @@ jobs:
           # Create control file
           cat > deb/DEBIAN/control << EOF
           Package: strux
-          Version: ${{ steps.version.outputs.version }}
+          Version: ${VERSION}
           Section: devel
           Priority: optional
           Architecture: amd64
@@ -207,7 +216,7 @@ jobs:
 
       - name: Build .deb
         run: |
-          dpkg-deb --build deb strux_${{ steps.version.outputs.version }}_amd64.deb
+          dpkg-deb --build deb strux_${VERSION}_amd64.deb
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
@@ -219,7 +228,9 @@ jobs:
   build-rpm:
     name: Build .rpm Package
     runs-on: ubuntu-latest
-    needs: [build-go, build-bun]
+    needs: [get-version, build-go, build-bun]
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -233,29 +244,20 @@ jobs:
           path: binaries/
           merge-multiple: true
 
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Create RPM structure
         run: |
           mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          mkdir -p rpmbuild/SOURCES/strux-${{ steps.version.outputs.version }}
+          mkdir -p rpmbuild/SOURCES/strux-${VERSION}
 
-          cp binaries/strux-linux-x64 rpmbuild/SOURCES/strux-${{ steps.version.outputs.version }}/strux || \
-          cp binaries/strux-linux-amd64 rpmbuild/SOURCES/strux-${{ steps.version.outputs.version }}/strux
-          cp binaries/strux-introspect-linux-amd64 rpmbuild/SOURCES/strux-${{ steps.version.outputs.version }}/strux-introspect
+          cp binaries/strux-linux-x64 rpmbuild/SOURCES/strux-${VERSION}/strux || \
+          cp binaries/strux-linux-amd64 rpmbuild/SOURCES/strux-${VERSION}/strux
+          cp binaries/strux-introspect-linux-amd64 rpmbuild/SOURCES/strux-${VERSION}/strux-introspect
 
-          cd rpmbuild/SOURCES && tar -czvf strux-${{ steps.version.outputs.version }}.tar.gz strux-${{ steps.version.outputs.version }}
+          cd rpmbuild/SOURCES && tar -czvf strux-${VERSION}.tar.gz strux-${VERSION}
 
           cat > ../SPECS/strux.spec << EOF
           Name: strux
-          Version: ${{ steps.version.outputs.version }}
+          Version: ${VERSION}
           Release: 1
           Summary: Strux OS CLI
           License: MIT
@@ -294,7 +296,9 @@ jobs:
   build-nsis:
     name: Build Windows Installer
     runs-on: windows-latest
-    needs: [build-go, build-bun]
+    needs: [get-version, build-go, build-bun]
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -304,16 +308,6 @@ jobs:
           pattern: '*windows*'
           path: binaries/
           merge-multiple: true
-
-      - name: Get version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Install NSIS
         run: choco install nsis -y
@@ -397,7 +391,9 @@ jobs:
   build-homebrew:
     name: Generate Homebrew Formula
     runs-on: ubuntu-latest
-    needs: [build-go, build-bun]
+    needs: [get-version, build-go, build-bun]
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -408,20 +404,9 @@ jobs:
           path: binaries/
           merge-multiple: true
 
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Create tarballs and get SHAs
         id: tarball
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
           # Create ARM64 tarball
           mkdir -p strux-arm64
           cp binaries/strux-darwin-arm64 strux-arm64/strux || true
@@ -446,24 +431,24 @@ jobs:
           class Strux < Formula
             desc "A framework for building kiosk-style operating systems"
             homepage "https://github.com/strux-dev/strux"
-            version "${{ steps.version.outputs.version }}"
+            version "${VERSION}"
             license "MIT"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz"
+                url "https://github.com/strux-dev/strux/releases/download/v${VERSION}/strux-${VERSION}-darwin-arm64.tar.gz"
                 sha256 "${{ steps.tarball.outputs.sha256_arm64 }}"
               else
-                url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-${{ steps.version.outputs.version }}-darwin-x64.tar.gz"
+                url "https://github.com/strux-dev/strux/releases/download/v${VERSION}/strux-${VERSION}-darwin-x64.tar.gz"
                 sha256 "${{ steps.tarball.outputs.sha256_x64 }}"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-linux-arm64"
+                url "https://github.com/strux-dev/strux/releases/download/v${VERSION}/strux-linux-arm64"
               else
-                url "https://github.com/strux-dev/strux/releases/download/v${{ steps.version.outputs.version }}/strux-linux-x64"
+                url "https://github.com/strux-dev/strux/releases/download/v${VERSION}/strux-linux-x64"
               end
             end
 
@@ -504,9 +489,12 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build-deb, build-rpm, build-nsis, build-homebrew]
+    needs: [get-version, build-deb, build-rpm, build-nsis, build-homebrew]
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+      TAG: ${{ needs.get-version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -515,17 +503,6 @@ jobs:
         with:
           path: artifacts/
           merge-multiple: false
-
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-            echo "tag=v${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Prepare release assets
         run: |
@@ -544,13 +521,13 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Strux ${{ steps.version.outputs.version }}
+          tag_name: ${{ env.TAG }}
+          name: Strux ${{ env.VERSION }}
           draft: false
           prerelease: false
           files: release/*
           body: |
-            ## Strux ${{ steps.version.outputs.version }}
+            ## Strux ${{ env.VERSION }}
 
             ### Installation
 
@@ -562,14 +539,14 @@ jobs:
 
             **Linux (Debian/Ubuntu):**
             ```bash
-            wget https://github.com/strux-dev/strux/releases/download/${{ steps.version.outputs.tag }}/strux_${{ steps.version.outputs.version }}_amd64.deb
-            sudo dpkg -i strux_${{ steps.version.outputs.version }}_amd64.deb
+            wget https://github.com/strux-dev/strux/releases/download/${{ env.TAG }}/strux_${{ env.VERSION }}_amd64.deb
+            sudo dpkg -i strux_${{ env.VERSION }}_amd64.deb
             ```
 
             **Linux (Fedora/RHEL):**
             ```bash
-            wget https://github.com/strux-dev/strux/releases/download/${{ steps.version.outputs.tag }}/strux-${{ steps.version.outputs.version }}-1.x86_64.rpm
-            sudo rpm -i strux-${{ steps.version.outputs.version }}-1.x86_64.rpm
+            wget https://github.com/strux-dev/strux/releases/download/${{ env.TAG }}/strux-${{ env.VERSION }}-1.x86_64.rpm
+            sudo rpm -i strux-${{ env.VERSION }}-1.x86_64.rpm
             ```
 
             **Windows:**
@@ -589,22 +566,15 @@ jobs:
   publish-homebrew:
     name: Publish to Homebrew Tap
     runs-on: ubuntu-latest
-    needs: [release]
+    needs: [get-version, release]
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
     steps:
       - name: Download Homebrew formula
         uses: actions/download-artifact@v4
         with:
           name: homebrew-formula
           path: .
-
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Push to Homebrew tap
         env:
@@ -621,5 +591,5 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add Formula/strux.rb
-          git commit -m "Update strux to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git commit -m "Update strux to ${VERSION}" || echo "No changes to commit"
           git push
