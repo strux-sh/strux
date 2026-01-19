@@ -25,11 +25,34 @@ function getStruxBinaryDir(): string {
 }
 
 /**
- * Get the path to strux-introspect binary (in same directory as strux binary)
+ * Get the path to strux-introspect binary
+ * First checks in the same directory as strux binary, then checks OS PATH
  */
-function getIntrospectBinaryPath(): string {
+async function getIntrospectBinaryPath(): Promise<string> {
     const binaryDir = getStruxBinaryDir()
-    return join(binaryDir, "strux-introspect")
+    const localPath = join(binaryDir, "strux-introspect")
+
+    // Check if binary exists in same directory as strux
+    const localFile = Bun.file(localPath)
+    if (await localFile.exists()) {
+        return localPath
+    }
+
+    // If not found locally, check OS PATH
+    try {
+        const result = await $`which strux-introspect`.quiet()
+        if (result.exitCode === 0) {
+            const pathInEnv = result.stdout.toString().trim()
+            if (pathInEnv) {
+                return pathInEnv
+            }
+        }
+    } catch {
+        // If which fails, fall through to return local path anyway
+    }
+
+    // Return local path even if not found (will fail with better error message later)
+    return localPath
 }
 
 // Runtime types JSON structure from gen-runtime-types
@@ -83,7 +106,7 @@ export async function runIntrospection(
     mainGoPath: string,
     binaryPath?: string
 ): Promise<IntrospectionOutput> {
-    const binary = binaryPath ?? getIntrospectBinaryPath()
+    const binary = binaryPath ?? await getIntrospectBinaryPath()
 
     try {
         const result = await $`${binary} ${mainGoPath}`.quiet()
