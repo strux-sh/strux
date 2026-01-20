@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -75,9 +76,80 @@ func (c *CageLauncher) WaitForBackend(timeout time.Duration) bool {
 	return false
 }
 
+// WaitForNetworkReady waits for the network interface to be ready to bind to 0.0.0.0
+// This is critical for WebKit Inspector which binds to 0.0.0.0:<port>
+func (c *CageLauncher) WaitForNetworkReady(timeout time.Duration) bool {
+	c.logger.Info("Waiting for network interface to be ready (timeout: %v)...", timeout)
+
+	deadline := time.Now().Add(timeout)
+	attempt := 0
+
+	for time.Now().Before(deadline) {
+		attempt++
+
+		// Try to bind to 0.0.0.0 on a test port to verify network is ready
+		// This is the same binding that WebKit Inspector will attempt
+		testListener, err := net.Listen("tcp", "0.0.0.0:0")
+		if err != nil {
+			if attempt%10 == 1 { // Log every 10th attempt (every 5 seconds)
+				c.logger.Info("Network not ready yet (attempt %d): %v", attempt, err)
+			}
+		} else {
+			// Successfully bound - network is ready
+			testListener.Close()
+			c.logger.Info("Network interface is ready! (after %d attempts)", attempt)
+			return true
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	c.logger.Error("Network interface did not become ready within %v (after %d attempts)", timeout, attempt)
+	return false
+}
+
+// WaitForDevServer waits for the dev server (Vite) to be reachable at the specified URL
+func (c *CageLauncher) WaitForDevServer(url string, timeout time.Duration) bool {
+	c.logger.Info("Waiting for dev server at %s (timeout: %v)...", url, timeout)
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(timeout)
+	attempt := 0
+
+	for time.Now().Before(deadline) {
+		attempt++
+		resp, err := client.Get(url)
+		if err != nil {
+			if attempt%10 == 1 { // Log every 10th attempt (every 5 seconds)
+				c.logger.Info("Dev server not reachable yet (attempt %d): %v", attempt, err)
+			}
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				c.logger.Info("Dev server is reachable! (status: %d, after %d attempts)", resp.StatusCode, attempt)
+				return true
+			}
+			c.logger.Warn("Dev server returned status %d (attempt %d)", resp.StatusCode, attempt)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	c.logger.Error("Dev server did not become reachable within %v (after %d attempts)", timeout, attempt)
+	return false
+}
+
 // Launch starts Cage compositor with Cog browser
 func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	c.logger.Info("Launching Cage and Cog with URL: %s", opts.CogURL)
+
+	// If WebKit Inspector is enabled, we must wait for network to be ready
+	// because Inspector binds to 0.0.0.0 which requires network interface to be up
+	if opts.Inspector != nil && opts.Inspector.Enabled {
+		c.logger.Info("WebKit Inspector enabled - waiting for network interface to be ready...")
+		if !c.WaitForNetworkReady(30 * time.Second) {
+			return fmt.Errorf("network interface not ready - cannot bind WebKit Inspector to 0.0.0.0")
+		}
+	}
 
 	// Build Cage arguments
 	args := []string{}

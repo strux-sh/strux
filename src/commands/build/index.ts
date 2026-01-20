@@ -34,7 +34,8 @@ import {
     compileWPE,
     buildRootFS,
     buildStruxClient,
-    postProcessRootFS
+    postProcessRootFS,
+    updateDevEnvConfig
 } from "./steps"
 
 // BSP Script Execution
@@ -174,6 +175,11 @@ export async function build(): Promise<void> {
     } else {
         // Even if cached, copy the binary over
         await copyClientBinaryIfExists(bspName)
+        // In dev mode, always update .dev-env.json even if client step is cached
+        // This ensures inspector and other dev config changes are reflected immediately
+        if (isDevMode) {
+            await updateDevEnvConfig(bspName)
+        }
     }
     await runScriptsForStep("after_client", manifest)
 

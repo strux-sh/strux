@@ -125,6 +125,27 @@ export async function buildRootFS(): Promise<void> {
 }
 
 /**
+ * Updates the .dev-env.json file with current configuration from strux.yaml.
+ * This is called separately to ensure dev config is always up-to-date even when client step is cached.
+ */
+export async function updateDevEnvConfig(bspName: string): Promise<void> {
+    const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
+    const devEnvPath = join(bspCacheDir, ".dev-env.json")
+
+    const devEnvJSON = {
+        clientKey: Settings.main?.dev?.server?.client_key ?? "",
+        useMDNS: Settings.main?.dev?.server?.use_mdns_on_client ?? true,
+        fallbackHosts: Settings.main?.dev?.server?.fallback_hosts ?? [],
+        inspector: {
+            // Default to disabled - user must explicitly enable in strux.yaml
+            enabled: Settings.main?.dev?.inspector?.enabled ?? false,
+            port: Settings.main?.dev?.inspector?.port ?? 9223,
+        },
+    }
+    await Bun.write(devEnvPath, JSON.stringify(devEnvJSON, null, 2))
+}
+
+/**
  * Builds the Strux client binary for the target architecture.
  * Also handles dev mode configuration.
  */
@@ -148,17 +169,7 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
 
     // Handle dev mode configuration
     if (addDevMode) {
-        const devEnvJSON = {
-            clientKey: Settings.main?.dev?.server?.client_key ?? "",
-            useMDNS: Settings.main?.dev?.server?.use_mdns_on_client ?? true,
-            fallbackHosts: Settings.main?.dev?.server?.fallback_hosts ?? [],
-            inspector: {
-                // Default to disabled - user must explicitly enable in strux.yaml
-                enabled: Settings.main?.dev?.inspector?.enabled ?? false,
-                port: Settings.main?.dev?.inspector?.port ?? 9223,
-            },
-        }
-        await Bun.write(devEnvPath, JSON.stringify(devEnvJSON, null, 2))
+        await updateDevEnvConfig(bspName)
     } else {
         // Remove the dev environment config file if it exists
         if (fileExists(devEnvPath)) await Bun.file(devEnvPath).delete()

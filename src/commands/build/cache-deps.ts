@@ -130,6 +130,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         directories: ["dist/artifacts/client/"],
         yamlKeys: [
             { file: "strux.yaml", keyPath: "dev.server" },
+            { file: "strux.yaml", keyPath: "dev.inspector" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
         ],
         // Build script is internal, but client sources come from dist/artifacts/client/

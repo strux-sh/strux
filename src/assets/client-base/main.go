@@ -88,6 +88,17 @@ func main() {
 	cogURL := "http://" + connectedHost.Host + ":5173"
 	logger.Info("Using dev server URL: %s", cogURL)
 
+	// Wait for dev server to be reachable before launching Cage
+	// This ensures network is fully ready and the Vite dev server is accessible
+	cage := CageLauncherInstance
+	if !cage.WaitForDevServer(cogURL, 30*time.Second) {
+		logger.Error("Dev server not reachable, falling back to production mode")
+		socket.Disconnect()
+		launchProduction()
+		waitForShutdown()
+		return
+	}
+
 	// Launch Cage and Cog with inspector if enabled
 	if err := launchDevMode(cogURL, &config.Inspector); err != nil {
 		logger.Error("Failed to launch dev mode: %v", err)
