@@ -213,8 +213,11 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	// Build the shell command to run inside Cage
 	// 1. Set display resolution using wlr-randr
 	// 2. Launch Cog browser with the specified URL
+	// Note: We use tee to capture Cog's output to /tmp/strux-cog.log while also sending
+	// it to stdout. The 2>&1 ensures stderr is also captured. This is important because
+	// Cage (as a Wayland compositor) doesn't forward child process stdout/stderr by default.
 	shellCmd := fmt.Sprintf(
-		`wlr-randr --output Virtual-1 --mode "%s" 2>/dev/null || true; exec cog "%s" --web-extensions-dir=/usr/lib/wpe-web-extensions --enable-developer-extras=1`,
+		`wlr-randr --output Virtual-1 --mode "%s" 2>/dev/null || true; cog "%s" --web-extensions-dir=/usr/lib/wpe-web-extensions --enable-developer-extras=1 2>&1 | tee /tmp/strux-cog.log`,
 		opts.Resolution, opts.CogURL,
 	)
 

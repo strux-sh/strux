@@ -56,7 +56,7 @@ tar -xzf "$PROJECT_DIST_CACHE_FOLDER/rootfs-post.tar.gz" -C "$ROOTFS_DIR"
 
 echo "Calculating rootfs size..."
 ROOTFS_SIZE=$(du -sm /tmp/rootfs | cut -f1)
-IMAGE_SIZE=$((ROOTFS_SIZE + ROOTFS_SIZE / 5 + 50))  # Add 20% + 50MB buffer
+IMAGE_SIZE=$((ROOTFS_SIZE + ROOTFS_SIZE / 5 + 200))  # Add 20% + 200MB free space
 echo "Rootfs is ${ROOTFS_SIZE}MB, creating ${IMAGE_SIZE}MB ext4 image..."
 
 # Create ext4 disk image (use dev prefix in dev mode)

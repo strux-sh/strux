@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Box, Text, render, useInput, useStdin, useStdout } from "ink"
 import { Terminal } from "@xterm/headless"
-import readline from "readline"
+import { STRUX_VERSION } from "../../version"
 
 type TabId = "build" | "vite" | "app" | "cage" | "system" | "qemu" | "console"
 
@@ -195,7 +195,7 @@ class DevUIStore {
 function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: (data: string) => void }) {
     const { store, onExit, onConsoleInput } = props
     const [state, setState] = useState(store.getState())
-    const { stdin, setRawMode } = useStdin()
+    useStdin() // Keep Ink's stdin handling active
     const { stdout } = useStdout()
     const consoleTerminal = store.getConsoleTerminal()
 
@@ -209,41 +209,14 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
 
     useEffect(() => store.subscribe(setState), [store])
 
-    // Console input mode handler - only active when in console input mode
-    useEffect(() => {
-        if (!stdin || !setRawMode) return
-        if (!state.consoleInputMode || state.activeTab !== "console") return
-
-        // Explicitly ensure raw mode is enabled to prevent local echo
-        setRawMode(true)
-
-        // Use readline to properly intercept keypress events
-        readline.emitKeypressEvents(stdin)
-
-        const keypressHandler = (_char: string | undefined, key: readline.Key | undefined) => {
-            if (!key) return
-
-            // Check for CTRL+J (which sends ctrl: true, name: 'j')
-            if (key.ctrl && key.name === "j") {
-                store.setConsoleInputMode(false)
-                return
-            }
-
-            // For other keys, reconstruct the character sequence to send
-            if (key.sequence) {
-                onConsoleInput(key.sequence)
-            }
-        }
-
-        stdin.on("keypress", keypressHandler)
-
-        return () => {
-            stdin.off("keypress", keypressHandler)
-        }
-    }, [stdin, setRawMode, state.consoleInputMode, state.activeTab, store, onConsoleInput])
+    // Ref to track console input mode for the input handler
+    const consoleInputModeRef = useRef(state.consoleInputMode)
+    const onConsoleInputRef = useRef(onConsoleInput)
+    consoleInputModeRef.current = state.consoleInputMode
+    onConsoleInputRef.current = onConsoleInput
 
     const spinnerVisible = state.activeTab === "build" && state.spinnerLine
-    const chromeHeight = 3
+    const chromeHeight = 6  // 1 title + 1 tabs + 1 top spacer + 1 bottom spacer + 2 footer
     const rows = stdout?.rows ?? 24
     const viewHeight = Math.max(5, rows - chromeHeight - (spinnerVisible ? 1 : 0))
     const cols = stdout?.columns ?? 80
@@ -273,14 +246,58 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
         return lines
     }, [allLogs, start, viewHeight, isConsole, consoleTerminal, state.consoleRevision])
 
-    // Memoize input options to prevent unnecessary re-attachments
-    const inputActive = useMemo(() => ({ isActive: !state.consoleInputMode }), [state.consoleInputMode])
+    // Keep input always active - we handle console input mode in the handler
+    const inputActive = useMemo(() => ({ isActive: true }), [])
 
     // Stable navigation input handler - uses refs for all dynamic values
     const handleInput = useCallback((input: string, key: Record<string, boolean>) => {
         const s = storeRef.current.getState()
         const tabs = s.tabs
         const activeTab = s.activeTab
+
+        // Handle console input mode - forward all input except CTRL+J to remote
+        if (consoleInputModeRef.current && activeTab === "console") {
+            // CTRL+J exits input mode (J = 0x6A, CTRL+J = 0x0A = LF = newline)
+            // In Ink, when you press CTRL+letter, input will be the letter and key.ctrl will be true
+            // However, CTRL+J produces a newline character, so we check for that too
+            if ((key.ctrl && input === "j") || input === "\n") {
+                storeRef.current.setConsoleInputMode(false)
+                return
+            }
+
+            // Reconstruct the actual key sequence to send
+            let sequence = input
+
+            // Handle special keys that need escape sequences
+            if (key.return) {
+                sequence = "\r"  // Carriage return
+            } else if (key.escape) {
+                sequence = "\x1b"
+            } else if (key.backspace || key.delete) {
+                sequence = "\x7f"
+            } else if (key.upArrow) {
+                sequence = "\x1b[A"
+            } else if (key.downArrow) {
+                sequence = "\x1b[B"
+            } else if (key.rightArrow) {
+                sequence = "\x1b[C"
+            } else if (key.leftArrow) {
+                sequence = "\x1b[D"
+            } else if (key.tab) {
+                sequence = "\t"
+            } else if (key.ctrl && input) {
+                // Convert CTRL+letter to control character
+                const charCode = input.toUpperCase().charCodeAt(0)
+                if (charCode >= 65 && charCode <= 90) {
+                    sequence = String.fromCharCode(charCode - 64)
+                }
+            }
+
+            if (sequence) {
+                onConsoleInputRef.current(sequence)
+            }
+            return
+        }
 
         if (key.leftArrow) {
             const idx = tabs.findIndex((t) => t.id === activeTab)
@@ -359,6 +376,9 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
 
     return (
         <Box flexDirection="column" height={rows}>
+            <Box backgroundColor="black" paddingX={1} height={1} flexShrink={0} justifyContent="center">
+                <Text color="white" bold>Strux CLI v{STRUX_VERSION}</Text>
+            </Box>
             <Box backgroundColor="blue" paddingX={1} height={1} flexShrink={0}>
                 {state.tabs.map((tab) => (
                     <Box key={tab.id} marginRight={1}>
@@ -371,6 +391,7 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
                     </Box>
                 ))}
             </Box>
+            <Box height={1} flexShrink={0} />
             <Box flexDirection="column" height={viewHeight + (spinnerVisible ? 1 : 0)} flexGrow={1}>
                 {activeLogs.map((line, index) => (
                     <Text key={`${index}-${line}`}>{line}</Text>
@@ -379,6 +400,7 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
                     <Text color="cyanBright">{state.spinnerLine}</Text>
                 ) : null}
             </Box>
+            <Box height={1} flexShrink={0} />
             <Box backgroundColor="gray" paddingX={1} height={2} flexShrink={0} flexDirection="column">
                 <Text color="black">{statusLine}</Text>
                 <Text color="black">{controlsLine}</Text>
