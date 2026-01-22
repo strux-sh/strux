@@ -84,8 +84,12 @@ export class RunnerClass {
 
                 // In verbose mode, output everything immediately
                 if (Settings.verbose) {
-                    // Write directly to stdout - this should output all process output
-                    process.stdout.write(text)
+                    // Route through Logger when UI is active, otherwise write directly
+                    if (Logger.hasSink()) {
+                        Logger.raw(text)
+                    } else {
+                        process.stdout.write(text)
+                    }
                 }
 
                 // Parse for progress markers line by line
@@ -117,8 +121,12 @@ export class RunnerClass {
 
                 // Output stderr if verbose is enabled
                 if (Settings.verbose) {
-                    // Write directly to stderr - this should output all process errors
-                    process.stderr.write(text)
+                    // Route through Logger when UI is active, otherwise write directly
+                    if (Logger.hasSink()) {
+                        Logger.raw(text)
+                    } else {
+                        process.stderr.write(text)
+                    }
                 }
             }
         })()
@@ -313,9 +321,10 @@ export class RunnerClass {
         let stdout = ""
         let stderr = ""
 
-        // In verbose mode, use inherit stdio so output goes directly to terminal
+        // In verbose mode without UI, use inherit stdio so output goes directly to terminal
         // This avoids buffering issues and matches the old working implementation
-        if (Settings.verbose) {
+        // When UI is active, we need to capture output and route it through the Logger
+        if (Settings.verbose && !Logger.hasSink()) {
             const proc = Bun.spawn(args, {
                 stdout: "inherit",
                 stderr: "inherit",
@@ -330,12 +339,6 @@ export class RunnerClass {
                 const errorMessage = options.messageOnError ?? `Command failed with exit code ${exitCode}`
                 Logger.error(errorMessage)
                 if (options.exitOnError) {
-                    // If we have a UI sink, throw an error to let the UI handle it gracefully
-                    if (Logger.hasSink()) {
-                        const exitError = new Error(errorMessage)
-                        exitError.name = "StruxExitError"
-                        throw exitError
-                    }
                     process.exit(exitCode)
                 }
             }
@@ -347,11 +350,14 @@ export class RunnerClass {
             }
         }
 
-        // Non-verbose mode: capture output for spinner and error display
+        // Capture output for spinner, error display, and verbose output to UI
         const proc = Bun.spawn(args, {
             stdout: "pipe",
             stderr: "pipe",
         })
+
+        // Check if we're in verbose mode with UI active
+        const verboseWithUi = Settings.verbose && Logger.hasSink()
 
         // Process stdout stream
         const stdoutPromise = (async () => {
@@ -360,6 +366,11 @@ export class RunnerClass {
                 const text = decoder.decode(chunk, { stream: true })
                 stdout += text
 
+                // In verbose mode with UI, output everything immediately
+                if (verboseWithUi) {
+                    Logger.raw(text)
+                }
+
                 // Parse for progress markers line by line
                 const lines = text.split("\n")
                 for (const line of lines) {
@@ -367,7 +378,7 @@ export class RunnerClass {
                     const idx = line.indexOf(marker)
                     if (idx >= 0) {
                         const msg = line.substring(idx + marker.length).trim()
-                        if (msg) {
+                        if (msg && !verboseWithUi) {
                             spinner.updateMessage(msg)
                         }
                     }
@@ -381,6 +392,11 @@ export class RunnerClass {
             for await (const chunk of proc.stderr) {
                 const text = decoder.decode(chunk, { stream: true })
                 stderr += text
+
+                // In verbose mode with UI, output stderr immediately
+                if (verboseWithUi) {
+                    Logger.raw(text)
+                }
             }
         })()
 
@@ -390,23 +406,32 @@ export class RunnerClass {
 
         if (exitCode === 0) {
             const successMessage = options.messageOnSuccess ?? options.message
-            spinner.stopWithSuccess(successMessage)
+            if (verboseWithUi) {
+                Logger.success(successMessage)
+            } else {
+                spinner.stopWithSuccess(successMessage)
+            }
         } else {
             const errorMessage = options.messageOnError ?? `Command failed with exit code ${exitCode}`
-            spinner.stop()
-            Logger.error(errorMessage)
-            // Always show stderr if available
-            if (stderr?.trim()) {
-                Logger.raw(stderr)
+            if (!verboseWithUi) {
+                spinner.stop()
             }
-            // Also show stdout if it might contain error information (but filter out progress messages)
-            if (stdout?.trim()) {
-                const filteredStdout = stdout
-                    .split("\n")
-                    .filter(line => !line.includes("STRUX_PROGRESS:"))
-                    .join("\n")
-                if (filteredStdout.trim()) {
-                    Logger.raw(filteredStdout)
+            Logger.error(errorMessage)
+            // In verbose+UI mode, output was already streamed, so only show on error in non-verbose mode
+            if (!verboseWithUi) {
+                // Always show stderr if available
+                if (stderr?.trim()) {
+                    Logger.raw(stderr)
+                }
+                // Also show stdout if it might contain error information (but filter out progress messages)
+                if (stdout?.trim()) {
+                    const filteredStdout = stdout
+                        .split("\n")
+                        .filter(line => !line.includes("STRUX_PROGRESS:"))
+                        .join("\n")
+                    if (filteredStdout.trim()) {
+                        Logger.raw(filteredStdout)
+                    }
                 }
             }
             if (options.exitOnError) {
