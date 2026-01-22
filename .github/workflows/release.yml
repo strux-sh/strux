@@ -518,6 +518,74 @@ jobs:
 
           ls -la release/
 
+      - name: Prepare release notes
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            # Prefer the section matching the release version, fall back to the first section.
+            awk -v version="${VERSION}" '
+              BEGIN { in=0 }
+              $0 ~ "^##[[:space:]]+v?" version "([[:space:]]|$)" { in=1 }
+              $0 ~ /^##[[:space:]]+/ && in==1 && $0 !~ "^##[[:space:]]+v?" version "([[:space:]]|$)" { exit }
+              in==1 { print }
+            ' CHANGELOG.md > release-notes.md
+
+            if [ ! -s release-notes.md ]; then
+              awk '
+                BEGIN { in=0 }
+                /^##[[:space:]]+/ {
+                  if (in==0) { in=1 } else { exit }
+                }
+                in==1 { print }
+              ' CHANGELOG.md > release-notes.md
+            fi
+
+            if [ -s release-notes.md ]; then
+              cat release-notes.md > release-body.md
+              echo "" >> release-body.md
+            else
+              : > release-body.md
+            fi
+          else
+            : > release-body.md
+          fi
+
+          cat >> release-body.md << EOF
+          ## Strux ${VERSION}
+
+          ### Installation
+
+          **macOS (Homebrew):**
+          \`\`\`bash
+          brew tap strux-dev/strux
+          brew install strux
+          \`\`\`
+
+          **Linux (Debian/Ubuntu):**
+          \`\`\`bash
+          wget https://github.com/strux-dev/strux/releases/download/${TAG}/strux_${VERSION}_amd64.deb
+          sudo dpkg -i strux_${VERSION}_amd64.deb
+          \`\`\`
+
+          **Linux (Fedora/RHEL):**
+          \`\`\`bash
+          wget https://github.com/strux-dev/strux/releases/download/${TAG}/strux-${VERSION}-1.x86_64.rpm
+          sudo rpm -i strux-${VERSION}-1.x86_64.rpm
+          \`\`\`
+
+          **Windows:**
+          Download and run \`strux-setup.exe\`
+
+          ### Binaries
+
+          | Platform | Architecture | File |
+          |----------|--------------|------|
+          | Linux | x64 | \`strux-linux-x64\` |
+          | Linux | arm64 | \`strux-linux-arm64\` |
+          | macOS | x64 | \`strux-darwin-x64\` |
+          | macOS | arm64 (Apple Silicon) | \`strux-darwin-arm64\` |
+          | Windows | x64 | \`strux-windows-x64.exe\` |
+          EOF
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -526,41 +594,7 @@ jobs:
           draft: false
           prerelease: false
           files: release/*
-          body: |
-            ## Strux ${{ env.VERSION }}
-
-            ### Installation
-
-            **macOS (Homebrew):**
-            ```bash
-            brew tap strux-dev/strux
-            brew install strux
-            ```
-
-            **Linux (Debian/Ubuntu):**
-            ```bash
-            wget https://github.com/strux-dev/strux/releases/download/${{ env.TAG }}/strux_${{ env.VERSION }}_amd64.deb
-            sudo dpkg -i strux_${{ env.VERSION }}_amd64.deb
-            ```
-
-            **Linux (Fedora/RHEL):**
-            ```bash
-            wget https://github.com/strux-dev/strux/releases/download/${{ env.TAG }}/strux-${{ env.VERSION }}-1.x86_64.rpm
-            sudo rpm -i strux-${{ env.VERSION }}-1.x86_64.rpm
-            ```
-
-            **Windows:**
-            Download and run `strux-setup.exe`
-
-            ### Binaries
-
-            | Platform | Architecture | File |
-            |----------|--------------|------|
-            | Linux | x64 | `strux-linux-x64` |
-            | Linux | arm64 | `strux-linux-arm64` |
-            | macOS | x64 | `strux-darwin-x64` |
-            | macOS | arm64 (Apple Silicon) | `strux-darwin-arm64` |
-            | Windows | x64 | `strux-windows-x64.exe` |
+          body_path: release-body.md
 
   # Publish Homebrew formula to tap repository
   publish-homebrew:
