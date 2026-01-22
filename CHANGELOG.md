@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.0.18
+We fixed issues with the Docker runner and shell running logic that caused the project to exit before outputting errors to the console. 
+This prevented users from seeing build errors in the build process when running `strux dev`.
+
+There was also an error in the default .gitignore in the main image, where go.sum files were excluded from git. Go.sum files should always be added.
+
 ## v0.0.17
 In this version, we attempt to fix an issue (#5) where Cog doesn't launch in Strux OS. It appears that the issue is related to system proxy mode settings and dbus. 
 
