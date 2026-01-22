@@ -71,7 +71,7 @@ export async function run(options: RunOptions = {}) {
         if (await shouldUseGL()) {
             // Use virtio-vga-gl with SDL (more reliable GL context than GTK)
             displayOpt = "sdl,gl=on"
-            gpuDevice = "virtio-vga-gl"
+            gpuDevice = `virtio-vga-gl,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
         } else {
             // QXL for NVIDIA/unknown (software rendering but correct resolution)
             displayOpt = "gtk"

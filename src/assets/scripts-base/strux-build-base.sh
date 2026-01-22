@@ -257,6 +257,30 @@ cat > "$ROOTFS_DIR/etc/apt/sources.list" << 'EOF'
 deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
 EOF
 
+# Add Forky repository for cog 0.18.5 (fixes issues present in Trixie's version)
+cat > "$ROOTFS_DIR/etc/apt/sources.list.d/forky.list" << 'EOF'
+deb http://deb.debian.org/debian forky main contrib non-free non-free-firmware
+EOF
+
+# Pin Forky packages to low priority (only use when explicitly requested)
+# This prevents Forky from upgrading other packages automatically
+cat > "$ROOTFS_DIR/etc/apt/preferences.d/forky-pinning" << 'EOF'
+# Default: prefer Trixie packages
+Package: *
+Pin: release n=trixie
+Pin-Priority: 900
+
+# Forky packages have lower priority by default
+Package: *
+Pin: release n=forky
+Pin-Priority: 100
+
+# Allow cog and its dependencies from Forky
+Package: cog
+Pin: release n=forky
+Pin-Priority: 990
+EOF
+
 progress "Mounting root filesystem for chroot..."
 
 # Mount necessary filesystems for chroot
@@ -326,11 +350,14 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     wayland-protocols \
     libwayland-client0 \
     libwayland-server0 \
-    cog \
     libwpewebkit-2.0-1 \
     libwpe-1.0-1 \
     libwpebackend-fdo-1.0-1" \
     shared-mime-info
+
+# Install cog from Forky (v0.18.5 fixes issues present in Trixie's version)
+progress "Installing cog 0.18.5 from Debian Forky..."
+run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y -t forky cog"
 
 # Install fonts and media support
 progress "Installing fonts and media support..."
@@ -353,7 +380,9 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     libjson-glib-1.0-0 \
     wlr-randr \
     xwayland \
-    systemd-resolved"
+    systemd-resolved \
+    libinput10 \
+    libseat1"
 
 # ============================================================================
 # SECTION 8: CUSTOM PACKAGE INSTALLATION

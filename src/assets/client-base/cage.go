@@ -237,6 +237,7 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 		"WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
 		"WEBKIT_FORCE_SANDBOX=0",
 		"WLR_DRM_NO_MODIFIERS=1",
+		"WLR_NO_HARDWARE_CURSORS=1",
 
 		// Prevent GIO/libproxy from blocking on DBus during early init
 		"LIBPROXY_IGNORE_SETTINGS=1",

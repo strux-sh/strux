@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.0.19
+This version contains a major overhaul:
+
+### Major Changes
+We've moved away from the testing branch, Debian Forky as there were too many issues with it. Instead, we're basing Strux on Debian 13 Trixie, the latest stable branch
+that has support until 2030.
+
+In order to take advantage of this build, you'll need to remove the old `strux-builder` docker image, as we now use Debian Trixie for building as well
+
+```
+# docker image rm strux-builder
+```
+
+### Additional Changes
+- We fixed an issue where verbose mode did not output to the new `strux dev` terminal interface
+- This fixes the issue related to #6, where intel 
+- We now bundle the version of Cage (custom version) and our WPE extension directly into our CLI tool and have it copied over during `strux init`
+- We downgraded Cage to use version 0.2.0, as Debian trixie uses wlroots 0.18, which that version of Cage is compatible with
+
 ## v0.0.18
 We fixed issues with the Docker runner and shell running logic that caused the project to exit before outputting errors to the console. 
 This prevented users from seeing build errors in the build process when running `strux dev`.
