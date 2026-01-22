@@ -217,7 +217,11 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	// it to stdout. The 2>&1 ensures stderr is also captured. This is important because
 	// Cage (as a Wayland compositor) doesn't forward child process stdout/stderr by default.
 	shellCmd := fmt.Sprintf(
-		`wlr-randr --output Virtual-1 --mode "%s" 2>/dev/null || true; cog "%s" --web-extensions-dir=/usr/lib/wpe-web-extensions --enable-developer-extras=1 2>&1 | tee /tmp/strux-cog.log`,
+		`set -eu;
+		 echo "[strux] starting wlr-randr";
+		 timeout 2s wlr-randr --output Virtual-1 --mode "%s" 2>/dev/null || echo "[strux] wlr-randr skipped/failed";
+		 echo "[strux] starting cog";
+		 exec cog --web-extensions-dir=/usr/lib/wpe-web-extensions --enable-developer-extras=1 "%s"`,
 		opts.Resolution, opts.CogURL,
 	)
 
@@ -232,6 +236,11 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 		"SEATD_SOCK=/run/seatd.sock",
 		"WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
 		"WEBKIT_FORCE_SANDBOX=0",
+
+		// Prevent GIO/libproxy from blocking on DBus during early init
+		"LIBPROXY_IGNORE_SETTINGS=1",
+		"GIO_USE_PROXY_RESOLVER=direct",
+		"GSETTINGS_BACKEND=memory",
 	)
 
 	// Add WebKit Inspector HTTP server if enabled (dev mode)

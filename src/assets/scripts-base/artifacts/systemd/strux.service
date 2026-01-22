@@ -1,9 +1,7 @@
 [Unit]
 Description=Strux Kiosk Service
-# Use network-online.target to ensure network is fully up with IP addresses
-# This is critical for WebKit Inspector which binds to 0.0.0.0
-After=network-online.target seatd.service dbus.service systemd-logind.service plymouth-start.service strux-dev-watcher.path strux-mount-setup.service
-Wants=network-online.target seatd.service dbus.service plymouth-start.service strux-dev-watcher.path strux-mount-setup.service
+After=network-online.target seatd.service dbus.socket dbus.service systemd-logind.service plymouth-start.service
+Wants=network-online.target seatd.service dbus.socket dbus.service plymouth-start.service
 Requires=seatd.service
 
 [Service]
@@ -14,13 +12,20 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
+# Let systemd create a stable runtime dir (better than /tmp/run for GLib/GIO)
+RuntimeDirectory=strux
+Environment=XDG_RUNTIME_DIR=%t/strux
+
 # Environment
-Environment=XDG_RUNTIME_DIR=/tmp/run
 Environment=WPE_WEB_EXTENSION_PATH=/usr/lib/wpe-web-extensions
 Environment=SEATD_SOCK=/run/seatd.sock
 Environment=WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 Environment=WEBKIT_FORCE_SANDBOX=0
 Environment=WLR_DRM_NO_MODIFIERS=1
+
+# Avoid GIO/libproxy -> DBus sync stalls (matches your gdb backtrace)
+Environment=LIBPROXY_IGNORE_SETTINGS=1
+Environment=GIO_USE_PROXY_RESOLVER=direct
 
 [Install]
 WantedBy=multi-user.target
