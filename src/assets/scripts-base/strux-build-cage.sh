@@ -158,14 +158,116 @@ if [ "$NEED_CROSS_COMPILE" = true ]; then
     # Create a temporary cross-file
     MESON_CROSS_FILE="/tmp/meson-cross-${TARGET_ARCH}.ini"
     
-    # Determine PKG_CONFIG_PATH for cross-architecture libraries
+    # Determine PKG_CONFIG_PATH and PKG_CONFIG_LIBDIR for cross-architecture libraries
     # Multiarch libraries are typically in /usr/lib/<triplet>
+    # We also need /usr/share/pkgconfig for arch-independent packages (xproto, etc.)
     if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
-        PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig"
+        ARCH_PKG_CONFIG_DIR="/usr/lib/x86_64-linux-gnu/pkgconfig"
     elif [ "$ARCH" = "armhf" ] || [ "$ARCH" = "armv7" ] || [ "$ARCH" = "arm" ]; then
-        PKG_CONFIG_PATH="/usr/lib/arm-linux-gnueabihf/pkgconfig"
+        ARCH_PKG_CONFIG_DIR="/usr/lib/arm-linux-gnueabihf/pkgconfig"
     else
-        PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
+        ARCH_PKG_CONFIG_DIR="/usr/lib/aarch64-linux-gnu/pkgconfig"
+    fi
+    
+    # PKG_CONFIG_PATH includes both arch-specific and arch-independent directories
+    # /usr/share/pkgconfig contains arch-independent .pc files (xproto, xau, xdmcp, etc.)
+    PKG_CONFIG_PATH="${ARCH_PKG_CONFIG_DIR}:/usr/share/pkgconfig"
+    # PKG_CONFIG_LIBDIR should only contain the target architecture libraries
+    PKG_CONFIG_LIBDIR="${ARCH_PKG_CONFIG_DIR}:/usr/share/pkgconfig"
+    
+    # Verify the pkg-config directories exist
+    if [ ! -d "$ARCH_PKG_CONFIG_DIR" ]; then
+        echo "Error: Architecture-specific pkgconfig dir does not exist: $ARCH_PKG_CONFIG_DIR"
+        echo "Cross-architecture libraries may not be installed correctly."
+        exit 1
+    fi
+    
+    if [ ! -d "/usr/share/pkgconfig" ]; then
+        echo "Warning: /usr/share/pkgconfig does not exist"
+        echo "Architecture-independent packages (xproto, etc.) may not be found."
+    fi
+    
+    # Check if wlroots .pc file exists
+    if [ ! -f "$ARCH_PKG_CONFIG_DIR/wlroots-0.18.pc" ]; then
+        echo "Warning: wlroots-0.18.pc not found in $ARCH_PKG_CONFIG_DIR"
+        echo "Available .pc files:"
+        ls -la "$ARCH_PKG_CONFIG_DIR"/*.pc 2>/dev/null | head -10 || echo "No .pc files found"
+        echo ""
+        echo "This may indicate that libwlroots-0.18-dev:${ARCH} is not installed."
+        echo "Please verify the Dockerfile includes this package for ${ARCH_LABEL}."
+    fi
+    
+    # Check if xproto.pc exists (common dependency issue)
+    if [ ! -f "/usr/share/pkgconfig/xproto.pc" ]; then
+        echo "Warning: xproto.pc not found in /usr/share/pkgconfig"
+        echo "This package is required by X11 libraries. Install x11proto-dev."
+    fi
+    
+    # Create a pkg-config wrapper script that hardcodes the correct paths
+    # This is necessary because meson doesn't properly pass PKG_CONFIG_LIBDIR 
+    # to pkg-config during cross-compilation
+    PKG_CONFIG_WRAPPER="/tmp/pkg-config-cross-${TARGET_ARCH}.sh"
+    cat > "$PKG_CONFIG_WRAPPER" <<'WRAPPER_START'
+#!/bin/bash
+# Wrapper script for cross-compilation pkg-config
+# Forces pkg-config to look in the correct cross-architecture directories
+WRAPPER_START
+    cat >> "$PKG_CONFIG_WRAPPER" <<WRAPPER_VARS
+export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}"
+export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR}"
+# Critical: Clear sysroot so pkg-config doesn't prefix paths
+export PKG_CONFIG_SYSROOT_DIR=""
+# Allow system flags for cross-compilation
+export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
+export PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
+WRAPPER_VARS
+    cat >> "$PKG_CONFIG_WRAPPER" <<'WRAPPER_END'
+
+# Debug: Log invocations to help troubleshoot
+echo "[pkg-config-wrapper] args: $@" >> /tmp/pkg-config-debug.log
+echo "[pkg-config-wrapper] PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR" >> /tmp/pkg-config-debug.log
+
+# Execute pkg-config
+result=$(/usr/bin/pkg-config "$@" 2>&1)
+exitcode=$?
+
+echo "[pkg-config-wrapper] exit=$exitcode result=$result" >> /tmp/pkg-config-debug.log
+echo "" >> /tmp/pkg-config-debug.log
+
+if [ $exitcode -eq 0 ]; then
+    echo "$result"
+fi
+exit $exitcode
+WRAPPER_END
+    chmod +x "$PKG_CONFIG_WRAPPER"
+    
+    progress "Created pkg-config wrapper: $PKG_CONFIG_WRAPPER"
+    
+    # Debug: Show wrapper contents and test it
+    progress "Wrapper script contents:"
+    cat "$PKG_CONFIG_WRAPPER"
+    echo ""
+    
+    # Test the wrapper directly
+    progress "Testing wrapper with 'pkg-config --exists wlroots-0.18'..."
+    if "$PKG_CONFIG_WRAPPER" --exists wlroots-0.18; then
+        progress "Wrapper test PASSED: wlroots-0.18 found"
+        progress "wlroots-0.18 version: $("$PKG_CONFIG_WRAPPER" --modversion wlroots-0.18)"
+        # Also test --cflags to catch dependency issues early
+        progress "Testing wrapper with 'pkg-config --cflags wlroots-0.18'..."
+        if "$PKG_CONFIG_WRAPPER" --cflags wlroots-0.18 >/dev/null 2>&1; then
+            progress "Wrapper cflags test PASSED"
+        else
+            echo "WARNING: pkg-config --cflags failed. Checking dependencies..."
+            "$PKG_CONFIG_WRAPPER" --cflags wlroots-0.18 2>&1 || true
+        fi
+    else
+        echo "ERROR: Wrapper test FAILED: wlroots-0.18 not found"
+        echo "Debug log:"
+        cat /tmp/pkg-config-debug.log 2>/dev/null || echo "No debug log"
+        echo ""
+        echo "Checking .pc file directly:"
+        cat "${ARCH_PKG_CONFIG_DIR}/wlroots-0.18.pc" 2>/dev/null || echo "Cannot read .pc file"
     fi
     
     cat > "$MESON_CROSS_FILE" <<EOF
@@ -173,7 +275,7 @@ if [ "$NEED_CROSS_COMPILE" = true ]; then
 c = '${CROSS_CC}'
 cpp = '${CROSS_CXX}'
 strip = '${CROSS_STRIP}'
-pkgconfig = 'pkg-config'
+pkg-config = '${PKG_CONFIG_WRAPPER}'
 
 [host_machine]
 system = 'linux'
@@ -183,7 +285,6 @@ endian = 'little'
 
 [properties]
 needs_exe_wrapper = true
-pkg_config_libdir = '${PKG_CONFIG_PATH}'
 EOF
     
     progress "Cross-compilation file created: $MESON_CROSS_FILE"
@@ -208,6 +309,18 @@ fi
 if [ "$NEED_CROSS_COMPILE" = true ]; then
     meson setup build --buildtype=release --cross-file="$MESON_CROSS_FILE" || {
         echo "Error: Failed to configure Cage with meson cross-compilation"
+        echo ""
+        echo "=== Debug Info ==="
+        echo "PKG_CONFIG_WRAPPER: $PKG_CONFIG_WRAPPER"
+        echo ""
+        echo "Cross-file contents:"
+        cat "$MESON_CROSS_FILE"
+        echo ""
+        echo "pkg-config debug log:"
+        cat /tmp/pkg-config-debug.log 2>/dev/null || echo "No debug log"
+        echo ""
+        echo "Meson log (last 50 lines):"
+        tail -50 /project/dist/artifacts/cage/build/meson-logs/meson-log.txt 2>/dev/null || echo "No meson log"
         exit 1
     }
 else

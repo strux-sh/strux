@@ -501,12 +501,7 @@ if [ "${STRUX_CUSTOM_KERNEL:-false}" != "true" ]; then
 else
     progress "Custom kernel enabled - installing custom kernel and generating initramfs"
     
-    # Check if custom kernel compiled artifacts exist in cache
-    if [ ! -f "$PROJECT_CACHE_DIR/kernel/vmlinuz" ] && [ ! -f "$PROJECT_CACHE_DIR/kernel/Image" ] && [ ! -f "$PROJECT_CACHE_DIR/kernel/bzImage" ]; then
-        echo "Error: Custom kernel image not found in $PROJECT_CACHE_DIR/kernel/"
-        echo "Expected one of: vmlinuz, Image (ARM64), zImage (ARMHF), or bzImage (x86_64)"
-        exit 1
-    fi
+
     
     # Determine kernel image name and architecture-specific path
     if [ "$DEBIAN_ARCH" = "arm64" ]; then
@@ -537,15 +532,27 @@ else
     cp "$KERNEL_IMAGE" "$PROJECT_CACHE_DIR/vmlinuz"
     echo "Custom kernel copied to $PROJECT_CACHE_DIR/vmlinuz"
     
+    # Also install to rootfs /boot/ for consistency with standard kernel
+    if [ -n "$KERNEL_VERSION" ]; then
+        progress "Installing custom kernel to rootfs /boot/..."
+        mkdir -p "$ROOTFS_DIR/boot"
+        cp "$KERNEL_IMAGE" "$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VERSION"
+        ln -sf "vmlinuz-$KERNEL_VERSION" "$ROOTFS_DIR/boot/vmlinuz"
+        echo "Custom kernel installed to $ROOTFS_DIR/boot/vmlinuz-$KERNEL_VERSION"
+    fi
+    
     # Install kernel modules into rootfs (if they exist)
-    if [ -d "$PROJECT_CACHE_DIR/kernel/modules" ]; then
+    # Note: make modules_install with INSTALL_MOD_PATH creates lib/modules/<version>/ under that path
+    KERNEL_MODULES_PATH="$PROJECT_CACHE_DIR/kernel/modules/lib/modules"
+    
+    if [ -d "$KERNEL_MODULES_PATH" ]; then
         progress "Installing custom kernel modules..."
-        KERNEL_VERSION=$(ls "$PROJECT_CACHE_DIR/kernel/modules" 2>/dev/null | head -n 1)
+        KERNEL_VERSION=$(ls "$KERNEL_MODULES_PATH" 2>/dev/null | head -n 1)
         
         if [ -n "$KERNEL_VERSION" ]; then
             # Copy modules to rootfs
             mkdir -p "$ROOTFS_DIR/lib/modules"
-            cp -r "$PROJECT_CACHE_DIR/kernel/modules/$KERNEL_VERSION" "$ROOTFS_DIR/lib/modules/"
+            cp -r "$KERNEL_MODULES_PATH/$KERNEL_VERSION" "$ROOTFS_DIR/lib/modules/"
             
             # Generate module dependencies
             progress "Generating module dependencies..."
@@ -555,7 +562,8 @@ else
             echo "Warning: No kernel version found in modules directory"
         fi
     else
-        echo "Warning: Kernel modules directory not found at $PROJECT_CACHE_DIR/kernel/modules"
+        echo "Warning: Kernel modules directory not found at $KERNEL_MODULES_PATH"
+        echo "  (Expected path: $PROJECT_CACHE_DIR/kernel/modules/lib/modules/<version>)"
     fi
     
     # Install initramfs-tools if not already installed
@@ -578,8 +586,21 @@ else
             mkdir -p "$PROJECT_CACHE_DIR"
             cp "$INITRD" "$PROJECT_CACHE_DIR/initrd.img"
             echo "Initramfs copied to $PROJECT_CACHE_DIR/initrd.img"
+            
+            # Also create symlink in rootfs for consistency
+            ln -sf "initrd.img-$KERNEL_VERSION" "$ROOTFS_DIR/boot/initrd.img"
+            echo "Initramfs symlink created in rootfs /boot/initrd.img"
         else
             echo "Warning: Initramfs not found after generation"
+        fi
+        
+        # Copy DTBs to rootfs /boot/dtbs/ if they exist
+        DTB_SOURCE_DIR="$PROJECT_CACHE_DIR/kernel/dtbs"
+        if [ -d "$DTB_SOURCE_DIR" ] && [ -n "$(ls -A "$DTB_SOURCE_DIR" 2>/dev/null)" ]; then
+            progress "Copying device tree blobs to rootfs /boot/dtbs/..."
+            mkdir -p "$ROOTFS_DIR/boot/dtbs"
+            cp -r "$DTB_SOURCE_DIR"/* "$ROOTFS_DIR/boot/dtbs/" 2>/dev/null || true
+            echo "Device tree blobs copied to $ROOTFS_DIR/boot/dtbs/"
         fi
     else
         echo "Warning: Cannot generate initramfs without kernel version"

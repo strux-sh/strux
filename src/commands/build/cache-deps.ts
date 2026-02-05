@@ -17,6 +17,8 @@ export type BuildStep =
     | "cage"
     | "wpe"
     | "client"
+    | "kernel"
+    | "bootloader"
     | "rootfs-base"
     | "rootfs-post"
 
@@ -139,6 +141,56 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         fallbackInternalAssets: ["@client-base"],
         // BSP-specific cache (architecture-dependent binary)
         artifacts: ["cache/{bsp}/client"]
+    },
+
+    kernel: {
+        // Kernel sources are cached in dist/cache/{bsp}/kernel-source/
+        // Track kernel configuration files and patches
+        directories: [
+            "bsp/{bsp}/configs/",
+            "bsp/{bsp}/patches/",
+            "bsp/{bsp}/dts/"
+        ],
+        yamlKeys: [
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.source" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.version" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.defconfig" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.fragments" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.patches" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.device_tree" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
+        ],
+        internalAssets: ["@build-kernel-script"],
+        // BSP-specific cache (architecture-dependent kernel artifacts)
+        artifacts: [
+            "cache/{bsp}/kernel/Image",
+            "cache/{bsp}/kernel/bzImage",
+            "cache/{bsp}/kernel/zImage",
+            "cache/{bsp}/kernel/modules/",
+            "cache/{bsp}/kernel/dtbs/",
+            "cache/{bsp}/kernel/.config"
+        ]
+    },
+
+    bootloader: {
+        directories: [
+            "bsp/{bsp}/configs/",
+            "bsp/{bsp}/patches/",
+        ],
+        yamlKeys: [
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.type" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.source" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.version" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.defconfig" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.fragments" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.patches" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.stages" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
+        ],
+        internalAssets: ["@build-bootloader-script"],
+        artifacts: [
+            "cache/{bsp}/bootloader/",
+        ]
     },
 
     "rootfs-base": {

@@ -96,12 +96,19 @@ export type BSPScript = z.infer<typeof ScriptSchema>
 // Bootloader configuration schema
 const BootloaderSchema = z.object({
     enabled: z.boolean(),
-    type: z.enum(["grub", "u-boot"]).optional(),
+    // Extended type options including 'custom' and 'none'
+    type: z.enum(["grub", "u-boot", "systemd-boot", "custom", "none"]).optional(),
     version: z.string().optional(),
     source: z.string().optional(),
     defconfig: z.string().optional(),
     fragments: z.array(z.string()).optional(),
     patches: z.array(z.string()).optional(),
+    
+    // Boot method - how kernel is loaded
+    boot_method: z.enum(["extlinux", "script", "direct"]).optional(),
+    
+    // Boot script/config template path
+    boot_config: z.string().optional(),
 })
 
 // Device tree configuration schema

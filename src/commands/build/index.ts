@@ -34,6 +34,8 @@ import {
     compileWPE,
     buildRootFS,
     buildStruxClient,
+    buildKernel,
+    buildBootloader,
     postProcessRootFS,
     updateDevEnvConfig
 } from "./steps"
@@ -188,7 +190,10 @@ export async function build(): Promise<void> {
     // ========================================
     if (Settings.bsp?.boot?.kernel?.custom_kernel) {
         await runScriptsForStep("before_kernel", manifest)
-        // TODO: Implement buildKernel() when custom kernel support is added
+        if (await checkStepCache("kernel")) {
+            await buildKernel()
+            await cacheStep("kernel")
+        }
         await runScriptsForStep("after_kernel", manifest)
     }
 
@@ -197,7 +202,16 @@ export async function build(): Promise<void> {
     // ========================================
     if (Settings.bsp?.boot?.bootloader?.enabled) {
         await runScriptsForStep("before_bootloader", manifest)
-        // TODO: Implement buildBootloader() when bootloader support is added
+        
+        const bootloaderType = Settings.bsp?.boot?.bootloader?.type
+        // Only run built-in build for u-boot and grub; custom/none skip
+        if (bootloaderType && bootloaderType !== "custom" && bootloaderType !== "none") {
+            if (await checkStepCache("bootloader")) {
+                await buildBootloader()
+                await cacheStep("bootloader")
+            }
+        }
+        
         await runScriptsForStep("after_bootloader", manifest)
     }
 
@@ -223,6 +237,8 @@ export async function build(): Promise<void> {
     // FINAL IMAGE BUNDLING
     // ========================================
     await runScriptsForStep("before_bundle", manifest)
+    
+    // Run BSP's make_image script(s)
     await runScriptsForStep("make_image", manifest)
 
     // ========================================

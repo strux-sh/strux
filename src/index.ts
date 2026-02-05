@@ -5,14 +5,17 @@
  */
 
 import { Command } from "commander"
+import { join } from "path"
 import { Settings, type ArchType, type TemplateType } from "./settings"
 import { STRUX_VERSION } from "./version"
 import { Logger } from "./utils/log"
+import { fileExists } from "./utils/path"
 import { init } from "./commands/init"
 import { build } from "./commands/build"
 import { run } from "./commands/run"
 import { dev } from "./commands/dev"
 import { usb, usbAdd, usbList } from "./commands/usb"
+import { kernelMenuconfig, kernelClean } from "./commands/kernel"
 
 const program = new Command()
 
@@ -201,5 +204,67 @@ USBCommand.action(async () => {
     }
 
 })
+
+const KernelCommand = program.command("kernel")
+    .description("Kernel configuration and management commands")
+
+KernelCommand.command("menuconfig")
+    .description("Open interactive kernel configuration menu (make menuconfig)")
+    .option("--save", "Save the configuration as a fragment file")
+    .action(async (options: { save?: boolean }) => {
+        try {
+            // Get BSP name from strux.yaml or require it as argument
+            const { readFileSync } = await import("fs")
+            const struxYamlPath = join(process.cwd(), "strux.yaml")
+            if (fileExists(struxYamlPath)) {
+                const struxYaml = Bun.YAML.parse(readFileSync(struxYamlPath, "utf-8")) as { bsp?: string }
+                if (struxYaml.bsp) {
+                    Settings.bspName = struxYaml.bsp
+                }
+            }
+
+            if (!Settings.bspName) {
+                Logger.errorWithExit("BSP name not found. Please specify in strux.yaml or use 'strux build <bsp>' first.")
+            }
+
+            Logger.title("Opening Kernel Menuconfig")
+            await kernelMenuconfig({ save: options.save ?? false })
+        } catch (err) {
+            Logger.errorWithExit(`Kernel menuconfig failed: ${err instanceof Error ? err.message : String(err)}`)
+        }
+    })
+
+KernelCommand.command("clean")
+    .description("Clean kernel build artifacts")
+    .option("--mode <mode>", "Clean mode: mrproper (default), clean, or full", "mrproper")
+    .action(async (options: { mode?: string }) => {
+        try {
+            // Get BSP name from strux.yaml
+            const { readFileSync } = await import("fs")
+            const struxYamlPath = join(process.cwd(), "strux.yaml")
+            if (fileExists(struxYamlPath)) {
+                const struxYaml = Bun.YAML.parse(readFileSync(struxYamlPath, "utf-8")) as { bsp?: string }
+                if (struxYaml.bsp) {
+                    Settings.bspName = struxYaml.bsp
+                }
+            }
+
+            if (!Settings.bspName) {
+                Logger.errorWithExit("BSP name not found. Please specify in strux.yaml or use 'strux build <bsp>' first.")
+            }
+
+            // Validate mode
+            const validModes = ["mrproper", "clean", "full"]
+            const mode = options.mode ?? "mrproper"
+            if (!validModes.includes(mode)) {
+                Logger.errorWithExit(`Invalid clean mode: ${mode}. Must be one of: ${validModes.join(", ")}`)
+            }
+
+            Logger.title("Cleaning Kernel Build")
+            await kernelClean({ mode: mode as "mrproper" | "clean" | "full" })
+        } catch (err) {
+            Logger.errorWithExit(`Kernel clean failed: ${err instanceof Error ? err.message : String(err)}`)
+        }
+    })
 
 program.parse()

@@ -30,6 +30,10 @@ import scriptBuildBase from "../../assets/scripts-base/strux-build-base.sh" with
 import scriptBuildPost from "../../assets/scripts-base/strux-build-post.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildClient from "../../assets/scripts-base/strux-build-client.sh" with { type: "text" }
+// @ts-ignore
+import scriptBuildKernel from "../../assets/scripts-base/strux-build-kernel.sh" with { type: "text" }
+// @ts-ignore
+import scriptBuildBootloader from "../../assets/scripts-base/strux-build-bootloader.sh" with { type: "text" }
 
 /**
  * Compiles the frontend application (Vue/React/vanilla JS).
@@ -207,6 +211,46 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
     })
 
     Logger.success("Strux Client built successfully")
+}
+
+/**
+ * Builds the Linux kernel for the target architecture.
+ * Handles source fetching, patching, configuration, and cross-compilation.
+ */
+export async function buildKernel(): Promise<void> {
+    const bspName = Settings.bspName!
+
+    await Runner.runScriptInDocker(scriptBuildKernel, {
+        message: "Building Linux Kernel...",
+        messageOnError: "Failed to build Linux Kernel. Please check the build logs for more information.",
+        exitOnError: true,
+        env: {
+            PRESELECTED_BSP: bspName,
+            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
+        }
+    })
+
+    Logger.success("Linux Kernel built successfully")
+}
+
+/**
+ * Builds the bootloader (U-Boot, GRUB, etc.) for the target architecture.
+ * Skips if bootloader type is 'custom' or 'none'.
+ */
+export async function buildBootloader(): Promise<void> {
+    const bspName = Settings.bspName!
+
+    await Runner.runScriptInDocker(scriptBuildBootloader, {
+        message: "Building Bootloader...",
+        messageOnError: "Failed to build Bootloader. Please check the build logs for more information.",
+        exitOnError: true,
+        env: {
+            PRESELECTED_BSP: bspName,
+            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
+        }
+    })
+
+    Logger.success("Bootloader built successfully")
 }
 
 /**

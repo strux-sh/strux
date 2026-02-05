@@ -136,7 +136,12 @@ bsp:
       # --- Whether to use a bootloader (Defaults to False) (Set to true if using a custom bootloader such as U-Boot or GRUB) ---
       enabled: false
       
-      # --- Bootloader Type (QEMU by default does not use a bootloader, can be grub or u-boot) ---
+      # --- Bootloader Type ---
+      #   - u-boot: Built-in U-Boot build using source/defconfig
+      #   - grub: Built-in GRUB build (not yet fully implemented)
+      #   - systemd-boot: systemd-boot (not yet implemented)
+      #   - custom: Skip built-in build, use before/after_bootloader scripts
+      #   - none: No bootloader (QEMU direct boot)
       # type: u-boot 
 
       # --- Bootloader Version to download ---
@@ -144,10 +149,22 @@ bsp:
 
       # --- Bootloader Source to download (Can be a valid Git Repository or URL) ---
       # source: https://github.com/u-boot/u-boot/releases/download/v2025.10/u-boot-2025.10.tar.gz
+      #   Or Git: https://github.com/u-boot/u-boot.git#v2025.10
 
       # --- Bootloader Defconfig to use ---
       # defconfig: qemu_arm64_defconfig
 
+      # --- Boot method - How kernel is loaded by bootloader ---
+      #   - extlinux: U-Boot reads /boot/extlinux/extlinux.conf (portable, recommended)
+      #   - script: U-Boot runs boot.scr script (compiled from boot.cmd)
+      #   - direct: No boot config needed (QEMU -kernel, or bootloader configured externally)
+      # boot_method: extlinux
+
+      # --- Boot config template path (relative to BSP directory) ---
+      #   - For extlinux: Path to extlinux.conf template → installed to /boot/extlinux/extlinux.conf
+      #   - For script: Path to boot.cmd → compiled to boot.scr → installed to /boot/boot.scr
+      #   - For direct: Not used
+      # boot_config: ./boot/extlinux.conf
 
       # --- Bootloader Fragments to apply ---
       # fragments:

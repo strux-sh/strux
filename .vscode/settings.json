@@ -16,5 +16,6 @@
     "eslint.workingDirectories": [
        { "mode": "location", "directory": "backend" }
      ],
-     "commentAnchors.workspace.excludeFiles": "**/{node_modules,.git,.idea,target,out,build,vendor,.venv,.output,.nuxt,.tiles}/**/*"
+    "commentAnchors.workspace.excludeFiles": "**/{node_modules,.git,.idea,target,out,build,vendor,.venv,.output,.nuxt,.tiles}/**/*",
+    "cmake.sourceDirectory": "/Users/miguelmedeiros/Documents/Projects/strux-os-bun-rewrite/src/assets/wpe-extension-base"
 }

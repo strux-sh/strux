@@ -294,7 +294,9 @@ export class RunnerClass {
         // Note: chown works with numeric UID/GID even if the user doesn't exist in the container
         // The host system will resolve these IDs to the actual user/group names
         if (userInfo) {
-            finalScript = `${finalScript} && chown -R ${userInfo.uid}:${userInfo.gid} /project`
+            // Avoid chowning the kernel source cache, as it's huge and slow.
+            // If the BSP kernel source cache exists at dist/cache/{bsp}/kernel-source, exclude it.
+            finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; EXCLUDE_DIR=""; if [ -n "$BSP_CACHE_DIR" ]; then EXCLUDE_DIR="$BSP_CACHE_DIR/kernel-source"; elif [ -n "$PROJECT_DIST_CACHE_FOLDER" ]; then EXCLUDE_DIR="$PROJECT_DIST_CACHE_FOLDER/kernel-source"; elif [ -n "$PRESELECTED_BSP" ]; then EXCLUDE_DIR="/project/dist/cache/$PRESELECTED_BSP/kernel-source"; elif [ -n "$BSP_NAME" ]; then EXCLUDE_DIR="/project/dist/cache/$BSP_NAME/kernel-source"; fi; if [ -n "$EXCLUDE_DIR" ] && [ -d "$EXCLUDE_DIR" ]; then find /project -path "$EXCLUDE_DIR" -prune -o -exec chown "$UIDGID" {} +; else chown -R "$UIDGID" /project; fi)`
         }
 
         // Build Docker command arguments array directly
@@ -449,6 +451,72 @@ export class RunnerClass {
             exitCode,
             stdout,
             stderr
+        }
+    }
+
+    /**
+     * Runs an interactive script in Docker with TTY support.
+     * This is used for commands that require user interaction (e.g., menuconfig).
+     */
+    public async runInteractiveScriptInDocker(script: string, options: Omit<RunnerOptions, "cwd">) {
+        if (!this.dockerImageBuilt) await this.prepareDockerImage(undefined)
+
+        Logger.log(options.message)
+
+        // Build the script with chown at the end to fix permissions
+        const userInfo = this.getHostUserInfo()
+        let finalScript = script.trimEnd()
+
+        if (userInfo) {
+            finalScript = `${finalScript} && chown -R ${userInfo.uid}:${userInfo.gid} /project`
+        }
+
+        // Build Docker command arguments array with TTY support
+        const args: string[] = [
+            "docker",
+            "run",
+            "--rm",
+            "-it",  // Interactive TTY (both -i and -t required for menuconfig)
+            "--privileged"
+        ]
+
+        // Add environment variable flags
+        if (options.env) {
+            for (const [key, value] of Object.entries(options.env)) {
+                args.push("-e", `${key}=${value}`)
+            }
+        }
+
+        // Add volume mount
+        args.push("-v", `${Settings.projectPath}:/project`)
+
+        // Add image and command
+        args.push("strux-builder", "/bin/bash", "-c", finalScript)
+
+        // For interactive commands, use inherit stdio so user can interact
+        const proc = Bun.spawn(args, {
+            stdout: "inherit",
+            stderr: "inherit",
+            stdin: "inherit"
+        })
+
+        const exitCode = await proc.exited
+
+        if (exitCode === 0) {
+            const successMessage = options.messageOnSuccess ?? options.message
+            Logger.success(successMessage)
+        } else {
+            const errorMessage = options.messageOnError ?? `Command failed with exit code ${exitCode}`
+            Logger.error(errorMessage)
+            if (options.exitOnError) {
+                process.exit(exitCode)
+            }
+        }
+
+        return {
+            exitCode,
+            stdout: "", // Not captured for interactive commands
+            stderr: ""  // Not captured for interactive commands
         }
     }
 

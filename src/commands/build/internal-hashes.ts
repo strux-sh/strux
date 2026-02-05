@@ -24,6 +24,8 @@ import scriptBuildBase from "../../assets/scripts-base/strux-build-base.sh" with
 import scriptBuildPost from "../../assets/scripts-base/strux-build-post.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildClient from "../../assets/scripts-base/strux-build-client.sh" with { type: "text" }
+// @ts-ignore
+import scriptBuildKernel from "../../assets/scripts-base/strux-build-kernel.sh" with { type: "text" }
 
 // Go Client-base files
 // @ts-ignore
@@ -161,6 +163,7 @@ export function computeInternalAssetHashes(): Record<string, string> {
         "@build-base-script": hashStrings(scriptBuildBase),
         "@build-post-script": hashStrings(scriptBuildPost),
         "@build-client-script": hashStrings(scriptBuildClient),
+        "@build-kernel-script": hashStrings(scriptBuildKernel),
 
         // Client base (Go sources)
         "@client-base": hashStrings(
