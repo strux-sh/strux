@@ -163,11 +163,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         internalAssets: ["@build-kernel-script"],
         // BSP-specific cache (architecture-dependent kernel artifacts)
         artifacts: [
-            "cache/{bsp}/kernel/Image",
-            "cache/{bsp}/kernel/bzImage",
-            "cache/{bsp}/kernel/zImage",
-            "cache/{bsp}/kernel/modules/",
-            "cache/{bsp}/kernel/dtbs/",
+            "cache/{bsp}/kernel/kernel.img",
             "cache/{bsp}/kernel/.config"
         ]
     },
@@ -176,6 +172,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         directories: [
             "bsp/{bsp}/configs/",
             "bsp/{bsp}/patches/",
+            "bsp/{bsp}/blobs/"
         ],
         yamlKeys: [
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.type" },
@@ -185,6 +182,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.fragments" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.patches" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.stages" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.blobs" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
         ],
         internalAssets: ["@build-bootloader-script"],
@@ -245,4 +243,3 @@ export function getStepArtifacts(step: BuildStep, bspName: string): string[] {
 export function resolvePlaceholders(path: string, bspName: string): string {
     return path.replace(/\{bsp\}/g, bspName)
 }
-

@@ -133,6 +133,7 @@ bsp:
     # The Bootloader configuration
     bootloader:
 
+
       # --- Whether to use a bootloader (Defaults to False) (Set to true if using a custom bootloader such as U-Boot or GRUB) ---
       enabled: false
       
@@ -153,6 +154,12 @@ bsp:
 
       # --- Bootloader Defconfig to use ---
       # defconfig: qemu_arm64_defconfig
+
+      # --- Bootloader Device Tree (optional) ---
+      # Provides a custom U-Boot DTS for SPL/U-Boot init.
+      # If omitted, U-Boot uses its built-in default device tree.
+      # device_tree:
+      #   dts: ./dts/board-u-boot.dts
 
       # --- Boot method - How kernel is loaded by bootloader ---
       #   - extlinux: U-Boot reads /boot/extlinux/extlinux.conf (portable, recommended)
@@ -176,6 +183,32 @@ bsp:
       # --- Patches to apply to the bootloader ---
       # patches:
       #   - "./patches/u-boot-networking.patch"  # file path
+
+      # Optional firmware blobs used in early boot chains (SoC/vendor-specific).
+      # Provide as a list with a standard role so scripts can consume them.
+      #
+      # Recommended roles:
+      #   - ddr_init   (DDR init / training binary)
+      #   - miniloader (vendor miniloader / loader)
+      #   - bl31       (ARM Trusted Firmware / EL3)
+      #   - bl32       (TEE / OP-TEE)
+      #   - bl33       (U-Boot / non-secure payload)
+      #   - pmic_fw    (PMIC firmware)
+      #   - mcu_fw     (MCU / co-processor firmware)
+      #   - usbplug    (USB plug loader)
+      #
+      # You can still use a custom role if needed.
+      # blobs:
+      #   - id: ddr
+      #     role: ddr_init
+      #     path: ./blobs/ddr_init.bin
+      #     required: true
+      #     sha256: "..."
+      #   - id: tee
+      #     role: bl32
+      #     path: ./blobs/tee.bin
+      #     required: false
+      #     make_var: TEE
     
     # --- The Kernel Configuration ---
     kernel:
@@ -233,4 +266,3 @@ bsp:
     packages:
       - curl
       - wget
-

@@ -64,12 +64,20 @@ BOOTLOADER_VERSION=$(yq '.bsp.boot.bootloader.version' "$BSP_CONFIG" 2>/dev/null
 BOOTLOADER_DEFCONFIG=$(yq '.bsp.boot.bootloader.defconfig' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 BOOTLOADER_FRAGMENTS=$(yq -r '.bsp.boot.bootloader.fragments[]' "$BSP_CONFIG" 2>/dev/null || echo "")
 BOOTLOADER_PATCHES=$(yq '.bsp.boot.bootloader.patches[]' "$BSP_CONFIG" 2>/dev/null || echo "")
+BOOTLOADER_DTS=$(yq '.bsp.boot.bootloader.device_tree.dts' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+BOOT_BLOBS_COUNT=$(yq '.bsp.boot.bootloader.blobs | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
 
 # Skip if custom or none - BSP scripts handle it
 if [ "$BOOTLOADER_TYPE" = "custom" ] || [ "$BOOTLOADER_TYPE" = "none" ]; then
     progress "Bootloader type is '$BOOTLOADER_TYPE' - skipping built-in build"
     exit 0
 fi
+
+if [ -z "$BOOT_BLOBS_COUNT" ] || [ "$BOOT_BLOBS_COUNT" = "null" ]; then
+    BOOT_BLOBS_COUNT=0
+fi
+
+BOOTLOADER_MAKE_VARS=()
 
 if [ -z "$BOOTLOADER_SOURCE" ]; then
     echo "Error: Bootloader source not specified in $BSP_CONFIG"
@@ -78,6 +86,99 @@ fi
 
 # Trim whitespace and remove surrounding quotes from yq output
 BOOTLOADER_SOURCE=$(echo "$BOOTLOADER_SOURCE" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+BOOTLOADER_DTS=$(echo "$BOOTLOADER_DTS" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+BOOTLOADER_DEFCONFIG=$(echo "$BOOTLOADER_DEFCONFIG" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+
+# ============================================================================
+# OPTIONAL BOOT BLOBS
+# ============================================================================
+# Stage optional firmware blobs and map known roles to U-Boot make variables
+# ============================================================================
+
+if [ "$BOOT_BLOBS_COUNT" -gt 0 ]; then
+    progress "Staging boot blobs..."
+
+    BLOBS_DIR="$BOOTLOADER_OUTPUT_DIR/blobs"
+    mkdir -p "$BLOBS_DIR"
+    : > "$BLOBS_DIR/manifest.tsv"
+
+    for ((i=0; i<BOOT_BLOBS_COUNT; i++)); do
+        BLOB_ID=$(yq -r ".bsp.boot.bootloader.blobs[$i].id" "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+        BLOB_ROLE=$(yq -r ".bsp.boot.bootloader.blobs[$i].role" "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+        BLOB_PATH=$(yq -r ".bsp.boot.bootloader.blobs[$i].path" "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+        BLOB_REQUIRED=$(yq -r ".bsp.boot.bootloader.blobs[$i].required" "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+        BLOB_SHA256=$(yq -r ".bsp.boot.bootloader.blobs[$i].sha256" "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+        BLOB_MAKE_VAR=$(yq -r ".bsp.boot.bootloader.blobs[$i].make_var" "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+
+        if [ "$BLOB_ID" = "null" ] || [ -z "$BLOB_ID" ]; then
+            BLOB_ID="blob_$i"
+        fi
+
+        if [ "$BLOB_ROLE" = "null" ] || [ -z "$BLOB_ROLE" ]; then
+            BLOB_ROLE="unknown"
+        fi
+
+        if [ "$BLOB_PATH" = "null" ] || [ -z "$BLOB_PATH" ]; then
+            if [ "$BLOB_REQUIRED" = "true" ]; then
+                echo "Error: Required boot blob missing path: $BLOB_ID"
+                exit 1
+            fi
+            echo "Warning: Boot blob missing path, skipping: $BLOB_ID"
+            continue
+        fi
+
+        if [[ "$BLOB_PATH" =~ ^\./ ]]; then
+            RESOLVED_BLOB_PATH="$BSP_FOLDER/${BLOB_PATH#./}"
+        elif [[ "$BLOB_PATH" =~ ^/ ]]; then
+            RESOLVED_BLOB_PATH="$BLOB_PATH"
+        else
+            RESOLVED_BLOB_PATH="$BSP_FOLDER/$BLOB_PATH"
+        fi
+
+        if [ ! -f "$RESOLVED_BLOB_PATH" ]; then
+            if [ "$BLOB_REQUIRED" = "true" ]; then
+                echo "Error: Required boot blob not found: $BLOB_ID ($RESOLVED_BLOB_PATH)"
+                exit 1
+            fi
+            echo "Warning: Boot blob not found, skipping: $BLOB_ID ($RESOLVED_BLOB_PATH)"
+            continue
+        fi
+
+        if [ -n "$BLOB_SHA256" ] && [ "$BLOB_SHA256" != "null" ]; then
+            if command -v sha256sum >/dev/null 2>&1; then
+                echo "$BLOB_SHA256  $RESOLVED_BLOB_PATH" | sha256sum -c - || {
+                    echo "Error: SHA256 mismatch for blob: $BLOB_ID"
+                    exit 1
+                }
+            elif command -v shasum >/dev/null 2>&1; then
+                echo "$BLOB_SHA256  $RESOLVED_BLOB_PATH" | shasum -a 256 -c - || {
+                    echo "Error: SHA256 mismatch for blob: $BLOB_ID"
+                    exit 1
+                }
+            else
+                echo "Warning: No sha256 tool found; skipping checksum for $BLOB_ID"
+            fi
+        fi
+
+        mkdir -p "$BLOBS_DIR/$BLOB_ROLE"
+        cp "$RESOLVED_BLOB_PATH" "$BLOBS_DIR/$BLOB_ROLE/$BLOB_ID"
+        printf "%s\t%s\t%s\n" "$BLOB_ID" "$BLOB_ROLE" "$RESOLVED_BLOB_PATH" >> "$BLOBS_DIR/manifest.tsv"
+        progress "Staged blob: $BLOB_ID ($BLOB_ROLE)"
+
+        if [ -n "$BLOB_MAKE_VAR" ] && [ "$BLOB_MAKE_VAR" != "null" ]; then
+            BOOTLOADER_MAKE_VARS+=("$BLOB_MAKE_VAR=$RESOLVED_BLOB_PATH")
+        else
+            case "$BLOB_ROLE" in
+                bl31)
+                    BOOTLOADER_MAKE_VARS+=("BL31=$RESOLVED_BLOB_PATH")
+                    ;;
+                bl32|tee)
+                    BOOTLOADER_MAKE_VARS+=("TEE=$RESOLVED_BLOB_PATH")
+                    ;;
+            esac
+        fi
+    done
+fi
 
 # ============================================================================
 # ARCHITECTURE MAPPING FOR BOOTLOADER CROSS-COMPILATION
@@ -242,6 +343,51 @@ fi
 
 progress "Bootloader source ready at $BOOTLOADER_SOURCE_DIR"
 
+chown -R root:root "$BOOTLOADER_SOURCE_DIR"
+
+# ============================================================================
+# OPTIONAL BOOTLOADER DEVICE TREE
+# ============================================================================
+# Allow BSP to provide a custom U-Boot device tree for SPL/U-Boot init
+# ============================================================================
+
+BOOTLOADER_DTS_NAME=""
+BOOTLOADER_DTS_CONFIG=""
+BOOTLOADER_OF_LIST_CONFIG=""
+BOOTLOADER_SPL_OF_LIST_CONFIG=""
+
+if [ -n "$BOOTLOADER_DTS" ] && [ "$BOOTLOADER_DTS" != "null" ]; then
+    if [[ "$BOOTLOADER_DTS" =~ ^\./ ]]; then
+        BOOTLOADER_DTS_PATH="$BSP_FOLDER/${BOOTLOADER_DTS#./}"
+    elif [[ "$BOOTLOADER_DTS" =~ ^/ ]]; then
+        BOOTLOADER_DTS_PATH="$BOOTLOADER_DTS"
+    else
+        BOOTLOADER_DTS_PATH=""
+        BOOTLOADER_DTS_NAME="${BOOTLOADER_DTS%.dts}"
+    fi
+
+    if [ -n "$BOOTLOADER_DTS_PATH" ]; then
+        if [ ! -f "$BOOTLOADER_DTS_PATH" ]; then
+            echo "Error: Bootloader DTS not found: $BOOTLOADER_DTS_PATH"
+            exit 1
+        fi
+
+        BOOTLOADER_DTS_BASENAME="$(basename "$BOOTLOADER_DTS_PATH")"
+        BOOTLOADER_DTS_NAME="${BOOTLOADER_DTS_BASENAME%.dts}"
+
+        mkdir -p "$BOOTLOADER_SOURCE_DIR/arch/arm/dts"
+        cp "$BOOTLOADER_DTS_PATH" "$BOOTLOADER_SOURCE_DIR/arch/arm/dts/$BOOTLOADER_DTS_BASENAME"
+        progress "Staged bootloader DTS: $BOOTLOADER_DTS_BASENAME"
+    fi
+
+    if [ -n "$BOOTLOADER_DTS_NAME" ]; then
+        BOOTLOADER_DTS_CONFIG="CONFIG_DEFAULT_DEVICE_TREE=\"${BOOTLOADER_DTS_NAME}\""
+        BOOTLOADER_OF_LIST_CONFIG="CONFIG_OF_LIST=\"${BOOTLOADER_DTS_NAME}\""
+        BOOTLOADER_SPL_OF_LIST_CONFIG="CONFIG_SPL_OF_LIST=\"${BOOTLOADER_DTS_NAME}\""
+        progress "Using bootloader default device tree: $BOOTLOADER_DTS_NAME"
+    fi
+fi
+
 # ============================================================================
 # PATCH APPLICATION
 # ============================================================================
@@ -285,6 +431,7 @@ fi
 
 mkdir -p "$BOOTLOADER_OUTPUT_DIR"
 
+chown -R root:root "$BOOTLOADER_OUTPUT_DIR"
 if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
     progress "Building U-Boot..."
     
@@ -305,6 +452,8 @@ if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
         echo "Error: U-Boot defconfig not specified in $BSP_CONFIG"
         exit 1
     fi
+
+    DEFCONFIG_PATH="$BOOTLOADER_SOURCE_DIR/configs/$BOOTLOADER_DEFCONFIG"
     
     # Apply defconfig
     progress "Applying U-Boot defconfig: $BOOTLOADER_DEFCONFIG"
@@ -312,6 +461,43 @@ if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
         echo "Error: Failed to apply U-Boot defconfig: $BOOTLOADER_DEFCONFIG"
         exit 1
     }
+
+    # Some older/vendor U-Boot trees ignore O= for defconfig and write .config in the source tree.
+    # Detect that case and recover so subsequent O= builds use the correct configuration.
+    if [ ! -s "$BOOTLOADER_BUILD_DIR/.config" ]; then
+        progress "Defconfig did not create $BOOTLOADER_BUILD_DIR/.config; retrying in source tree for compatibility..."
+        make ARCH="$BOOTLOADER_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} "$BOOTLOADER_DEFCONFIG" || {
+            echo "Error: Failed to apply U-Boot defconfig in source tree: $BOOTLOADER_DEFCONFIG"
+            exit 1
+        }
+
+        if [ ! -s "$BOOTLOADER_SOURCE_DIR/.config" ]; then
+            echo "Error: Defconfig did not generate .config in source tree"
+            exit 1
+        fi
+
+        cp "$BOOTLOADER_SOURCE_DIR/.config" "$BOOTLOADER_BUILD_DIR/.config"
+        progress "Copied .config from source tree into O= build directory"
+
+        # Keep the source tree clean for O= builds
+        make ARCH="$BOOTLOADER_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} mrproper || true
+
+        # Regenerate auto.conf in O=
+        make O="$BOOTLOADER_BUILD_DIR" ARCH="$BOOTLOADER_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} olddefconfig || {
+            echo "Error: Failed to re-sync U-Boot configuration in O= build directory"
+            exit 1
+        }
+    fi
+
+    # Sanity check: ensure defconfig actually selected RK3288 / ARMv7
+    if ! grep -qE '^CONFIG_ROCKCHIP_RK3288=y|^CONFIG_TARGET_EVB_RK3288=y' "$BOOTLOADER_BUILD_DIR/.config"; then
+        echo "Error: U-Boot defconfig did not enable RK3288 symbols."
+        echo "Check that $BOOTLOADER_DEFCONFIG is the correct defconfig for this tree."
+        echo "Detected config summary:"
+        grep -E '^CONFIG_SYS_CPU=|^CONFIG_SYS_ARCH=|^CONFIG_CPU_V7=|^CONFIG_ARMV7=' "$BOOTLOADER_BUILD_DIR/.config" || true
+        exit 1
+    fi
+
     
     # Apply fragments if any
     if [ -n "$BOOTLOADER_FRAGMENTS" ]; then
@@ -375,10 +561,28 @@ if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
             progress "Applied ${#FRAGMENT_FILES[@]} configuration fragment(s)"
         fi
     fi
+
+    # Apply bootloader device tree override after fragments (if provided)
+    if [ -n "$BOOTLOADER_DTS_CONFIG" ]; then
+        echo "$BOOTLOADER_DTS_CONFIG" >> "$BOOTLOADER_BUILD_DIR/.config"
+        if [ -n "$BOOTLOADER_OF_LIST_CONFIG" ]; then
+            # Ensure CONFIG_OF_LIST includes our DTS so binman can find it
+            echo "$BOOTLOADER_OF_LIST_CONFIG" >> "$BOOTLOADER_BUILD_DIR/.config"
+        fi
+        if [ -n "$BOOTLOADER_SPL_OF_LIST_CONFIG" ]; then
+            echo "$BOOTLOADER_SPL_OF_LIST_CONFIG" >> "$BOOTLOADER_BUILD_DIR/.config"
+        fi
+        make O="$BOOTLOADER_BUILD_DIR" ARCH="$BOOTLOADER_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} olddefconfig || {
+            echo "Error: Failed to apply bootloader device tree config"
+            exit 1
+        }
+        progress "Applied bootloader device tree config: $BOOTLOADER_DTS_NAME"
+    fi
     
     # Build U-Boot
     progress "Compiling U-Boot..."
-    make -j$(nproc) O="$BOOTLOADER_BUILD_DIR" ARCH="$BOOTLOADER_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} || {
+    chown -R root:root "$BOOTLOADER_BUILD_DIR"
+    make -j$(nproc) ARCH="$BOOTLOADER_ARCH" CROSS_COMPILE="$CROSS_COMPILE" || {
         echo "Error: Failed to build U-Boot"
         exit 1
     }
@@ -388,14 +592,16 @@ if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
     mkdir -p "$BOOTLOADER_OUTPUT_DIR"
     
     # Copy common U-Boot outputs
-    if [ -f "$BOOTLOADER_BUILD_DIR/u-boot.bin" ]; then
-        cp "$BOOTLOADER_BUILD_DIR/u-boot.bin" "$BOOTLOADER_OUTPUT_DIR/"
-    fi
-    if [ -f "$BOOTLOADER_BUILD_DIR/u-boot.itb" ]; then
-        cp "$BOOTLOADER_BUILD_DIR/u-boot.itb" "$BOOTLOADER_OUTPUT_DIR/"
-    fi
-    if [ -f "$BOOTLOADER_BUILD_DIR/u-boot.img" ]; then
-        cp "$BOOTLOADER_BUILD_DIR/u-boot.img" "$BOOTLOADER_OUTPUT_DIR/"
+    if [ "$BOOTLOADER_BUILD_DIR" != "$BOOTLOADER_OUTPUT_DIR" ]; then
+        if [ -f "$BOOTLOADER_BUILD_DIR/u-boot.bin" ]; then
+            cp "$BOOTLOADER_BUILD_DIR/u-boot.bin" "$BOOTLOADER_OUTPUT_DIR/"
+        fi
+        if [ -f "$BOOTLOADER_BUILD_DIR/u-boot.itb" ]; then
+            cp "$BOOTLOADER_BUILD_DIR/u-boot.itb" "$BOOTLOADER_OUTPUT_DIR/"
+        fi
+        if [ -f "$BOOTLOADER_BUILD_DIR/u-boot.img" ]; then
+            cp "$BOOTLOADER_BUILD_DIR/u-boot.img" "$BOOTLOADER_OUTPUT_DIR/"
+        fi
     fi
     
     # Copy SPL if it exists

@@ -93,6 +93,23 @@ const ScriptSchema = z.object({
 // Export script type for use in build logic
 export type BSPScript = z.infer<typeof ScriptSchema>
 
+// Boot blob configuration schema
+const BootBlobSchema = z.object({
+    id: z.string(),
+    role: z.string(),
+    path: z.string(),
+    required: z.boolean().optional(),
+    sha256: z.string().optional(),
+    make_var: z.string().optional(),
+})
+
+// Device tree configuration schema
+const DeviceTreeSchema = z.object({
+    dts: z.string(),
+    overlays: z.array(z.string()).optional(),
+    include_paths: z.array(z.string()).optional(),
+})
+
 // Bootloader configuration schema
 const BootloaderSchema = z.object({
     enabled: z.boolean(),
@@ -103,19 +120,16 @@ const BootloaderSchema = z.object({
     defconfig: z.string().optional(),
     fragments: z.array(z.string()).optional(),
     patches: z.array(z.string()).optional(),
+    device_tree: DeviceTreeSchema.optional(),
     
     // Boot method - how kernel is loaded
     boot_method: z.enum(["extlinux", "script", "direct"]).optional(),
     
     // Boot script/config template path
     boot_config: z.string().optional(),
-})
 
-// Device tree configuration schema
-const DeviceTreeSchema = z.object({
-    dts: z.string(),
-    overlays: z.array(z.string()).optional(),
-    include_paths: z.array(z.string()).optional(),
+    // Optional firmware blobs used in early boot chains
+    blobs: z.array(BootBlobSchema).optional(),
 })
 
 // Kernel configuration schema
@@ -285,4 +299,3 @@ export class BSPYamlValidator {
     }
 
 }
-

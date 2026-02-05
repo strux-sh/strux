@@ -26,6 +26,8 @@ import scriptBuildPost from "../../assets/scripts-base/strux-build-post.sh" with
 import scriptBuildClient from "../../assets/scripts-base/strux-build-client.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildKernel from "../../assets/scripts-base/strux-build-kernel.sh" with { type: "text" }
+// @ts-ignore
+import scriptBuildBootloader from "../../assets/scripts-base/strux-build-bootloader.sh" with { type: "text" }
 
 // Go Client-base files
 // @ts-ignore
@@ -164,6 +166,7 @@ export function computeInternalAssetHashes(): Record<string, string> {
         "@build-post-script": hashStrings(scriptBuildPost),
         "@build-client-script": hashStrings(scriptBuildClient),
         "@build-kernel-script": hashStrings(scriptBuildKernel),
+        "@build-bootloader-script": hashStrings(scriptBuildBootloader),
 
         // Client base (Go sources)
         "@client-base": hashStrings(
@@ -260,4 +263,3 @@ export function getDockerfileHash(): string {
 export function clearHashCache(): void {
     cachedHashes = null
 }
-

@@ -566,7 +566,11 @@ if [ -n "$KERNEL_IMAGE_PATH" ] && [ -f "$KERNEL_IMAGE_PATH" ]; then
         echo "Error: Failed to copy kernel image"
         exit 1
     }
-    progress "Kernel image copied: $KERNEL_IMAGE"
+    cp "$KERNEL_OUTPUT_DIR/$KERNEL_IMAGE" "$KERNEL_OUTPUT_DIR/kernel.img" || {
+        echo "Error: Failed to copy kernel image to kernel.img"
+        exit 1
+    }
+    progress "Kernel image copied: $KERNEL_IMAGE (kernel.img)"
 fi
 
 # Install modules

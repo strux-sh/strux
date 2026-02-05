@@ -51,11 +51,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-setuptools \
     python3-pip \
     python3-venv \
+    python3-pyelftools \
     swig \
     libgnutls28-dev \
     uuid-dev \
     # U-Boot tools (provides mkimage)
     u-boot-tools \
+    # Image generation (genimage)
+    genimage \
     # WPE WebKit development
     libwpe-1.0-dev \
     libwpebackend-fdo-1.0-dev \
@@ -102,20 +105,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ${additionalPackages} \
     && rm -rf /var/lib/apt/lists/*
 
-# Install WIC (OpenEmbedded Image Creator)
-# WIC is part of the OpenEmbedded build system - install minimal components
-RUN mkdir -p /opt/wic && \
-    git clone --depth 1 https://git.openembedded.org/openembedded-core /opt/wic && \
-    python3 -m venv /opt/wic/.venv && \
-    /opt/wic/.venv/bin/pip install --no-cache-dir -U pip setuptools wheel && \
-    # Install additional Python dependencies WIC needs
-    /opt/wic/.venv/bin/pip install --no-cache-dir pycryptodomex && \
-    # Ensure WIC runs with the venv Python (avoids PEP 668 "externally managed" pip installs)
-    install -m 0755 /dev/stdin /usr/local/bin/wic <<'EOF'
-#!/bin/sh
-export PYTHONPATH="/opt/wic/scripts/lib${PYTHONPATH:+:$PYTHONPATH}"
-exec /opt/wic/.venv/bin/python /opt/wic/scripts/wic "$@"
-EOF
+
 
 # Install cross-architecture development libraries for cross-compilation
 # These are needed when building Cage and WPE extension for different target architectures

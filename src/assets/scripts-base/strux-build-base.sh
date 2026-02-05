@@ -501,6 +501,11 @@ if [ "${STRUX_CUSTOM_KERNEL:-false}" != "true" ]; then
 else
     progress "Custom kernel enabled - installing custom kernel and generating initramfs"
     
+    # Read kernel version from BSP config (if provided)
+    KERNEL_VERSION=$(yq '.bsp.boot.kernel.version' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+    if [ "$KERNEL_VERSION" = "null" ]; then
+        KERNEL_VERSION=""
+    fi
 
     
     # Determine kernel image name and architecture-specific path
@@ -532,13 +537,16 @@ else
     cp "$KERNEL_IMAGE" "$PROJECT_CACHE_DIR/vmlinuz"
     echo "Custom kernel copied to $PROJECT_CACHE_DIR/vmlinuz"
     
-    # Also install to rootfs /boot/ for consistency with standard kernel
+    # Install to rootfs /boot/ for consistency with standard kernel
+    progress "Installing custom kernel to rootfs /boot/..."
+    mkdir -p "$ROOTFS_DIR/boot"
     if [ -n "$KERNEL_VERSION" ]; then
-        progress "Installing custom kernel to rootfs /boot/..."
-        mkdir -p "$ROOTFS_DIR/boot"
         cp "$KERNEL_IMAGE" "$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VERSION"
         ln -sf "vmlinuz-$KERNEL_VERSION" "$ROOTFS_DIR/boot/vmlinuz"
         echo "Custom kernel installed to $ROOTFS_DIR/boot/vmlinuz-$KERNEL_VERSION"
+    else
+        cp "$KERNEL_IMAGE" "$ROOTFS_DIR/boot/vmlinuz"
+        echo "Custom kernel installed to $ROOTFS_DIR/boot/vmlinuz"
     fi
     
     # Install kernel modules into rootfs (if they exist)

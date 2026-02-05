@@ -296,7 +296,7 @@ export class RunnerClass {
         if (userInfo) {
             // Avoid chowning the kernel source cache, as it's huge and slow.
             // If the BSP kernel source cache exists at dist/cache/{bsp}/kernel-source, exclude it.
-            finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; EXCLUDE_DIR=""; if [ -n "$BSP_CACHE_DIR" ]; then EXCLUDE_DIR="$BSP_CACHE_DIR/kernel-source"; elif [ -n "$PROJECT_DIST_CACHE_FOLDER" ]; then EXCLUDE_DIR="$PROJECT_DIST_CACHE_FOLDER/kernel-source"; elif [ -n "$PRESELECTED_BSP" ]; then EXCLUDE_DIR="/project/dist/cache/$PRESELECTED_BSP/kernel-source"; elif [ -n "$BSP_NAME" ]; then EXCLUDE_DIR="/project/dist/cache/$BSP_NAME/kernel-source"; fi; if [ -n "$EXCLUDE_DIR" ] && [ -d "$EXCLUDE_DIR" ]; then find /project -path "$EXCLUDE_DIR" -prune -o -exec chown "$UIDGID" {} +; else chown -R "$UIDGID" /project; fi)`
+            finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -exec chown -h "$UIDGID" {} +)`
         }
 
         // Build Docker command arguments array directly
@@ -468,7 +468,7 @@ export class RunnerClass {
         let finalScript = script.trimEnd()
 
         if (userInfo) {
-            finalScript = `${finalScript} && chown -R ${userInfo.uid}:${userInfo.gid} /project`
+            finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -exec chown -h "$UIDGID" {} +)`
         }
 
         // Build Docker command arguments array with TTY support
