@@ -86,42 +86,30 @@ export WEBKIT_FORCE_SANDBOX=0
 # EGL/Mesa environment - let Mesa auto-detect the driver
 # GALLIUM_DRIVER will be auto-detected (virgl for virtio-gpu-gl, llvmpipe for software)
 
-# Find GPU device - support Intel, AMD, virtio, and others
-# Priority: Intel (i915) > AMD (amdgpu) > virtio > first available
+# Find KMS-capable GPU device automatically
+# KMS devices have connector entries in sysfs (e.g. card0-HDMI-A-1),
+# while render-only devices (panfrost, lima) do not.
 log "Detecting GPU..."
 GPU_FOUND=""
 for card in /dev/dri/card*; do
-    driver=$(basename $(readlink -f /sys/class/drm/$(basename $card)/device/driver) 2>/dev/null)
+    card_name=$(basename "$card")
+    driver=$(basename $(readlink -f /sys/class/drm/${card_name}/device/driver) 2>/dev/null)
     log "  Found card: $card (driver: $driver)"
-    case "$driver" in
-        i915)
-            # Intel GPU - highest priority
-            export WLR_DRM_DEVICES="$card"
-            log "Using Intel GPU: $card ($driver)"
-            GPU_FOUND="intel"
-            break
-            ;;
-        amdgpu|radeon)
-            # AMD GPU
-            export WLR_DRM_DEVICES="$card"
-            log "Using AMD GPU: $card ($driver)"
-            GPU_FOUND="amd"
-            break
-            ;;
-        virtio-pci|virtio_gpu)
-            # Virtio GPU (QEMU)
-            export WLR_DRM_DEVICES="$card"
-            log "Using Virtio GPU: $card ($driver)"
-            GPU_FOUND="virtio"
-            break
-            ;;
-    esac
+
+    # Check if this card has display connectors (KMS-capable)
+    if ls /sys/class/drm/${card_name}-* >/dev/null 2>&1; then
+        export WLR_DRM_DEVICES="$card"
+        log "Using KMS-capable GPU: $card (driver: $driver)"
+        GPU_FOUND="$driver"
+        break
+    else
+        log "  Skipping $card: no display connectors (render-only)"
+    fi
 done
 
-# Fallback to first available card if no known driver found
 if [ -z "$GPU_FOUND" ] && [ -e /dev/dri/card0 ]; then
     export WLR_DRM_DEVICES="/dev/dri/card0"
-    log "Using fallback GPU: /dev/dri/card0"
+    log "WARNING: No KMS-capable GPU detected, trying /dev/dri/card0"
 fi
 
 # Read display resolution from /strux/.display-resolution file
@@ -183,7 +171,10 @@ log "Backend started with PID: $BACKEND_PID"
 (
     sleep 2  # Give backend a moment to start logging
     SERIAL_DEV=""
-    if [ -e /dev/ttyS0 ]; then
+    # Use the kernel console device, which respects the console= kernel parameter
+    if [ -e /dev/console ]; then
+        SERIAL_DEV="/dev/console"
+    elif [ -e /dev/ttyS0 ]; then
         SERIAL_DEV="/dev/ttyS0"
     elif [ -e /dev/ttyAMA0 ]; then
         SERIAL_DEV="/dev/ttyAMA0"
@@ -223,5 +214,26 @@ fi
 log "Starting client (will launch Cage and Cog)..."
 log "Client will determine mode based on /strux/.dev-env.json"
 
+# Create the client log file and tail it to serial console in background.
+# This mirrors how the backend log is handled above, ensuring client
+# output (host discovery, WebSocket connection, etc.) is visible on
+# the serial console even after Cage takes over the VT.
+touch /tmp/strux-client.log
+(
+    SERIAL_DEV=""
+    if [ -e /dev/console ]; then
+        SERIAL_DEV="/dev/console"
+    elif [ -e /dev/ttyS0 ]; then
+        SERIAL_DEV="/dev/ttyS0"
+    elif [ -e /dev/ttyAMA0 ]; then
+        SERIAL_DEV="/dev/ttyAMA0"
+    fi
+    if [ -n "$SERIAL_DEV" ]; then
+        tail -f /tmp/strux-client.log | sed 's/^/[CLIENT] /' > "$SERIAL_DEV" 2>/dev/null &
+    fi
+) &
+
 # Launch client - it will handle everything from here
-exec "$CLIENT_BINARY"
+# Redirect output to log file so the tail above can pick it up,
+# while exec preserves proper PID tracking for systemd restart.
+exec "$CLIENT_BINARY" > /tmp/strux-client.log 2>&1

@@ -236,14 +236,19 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 		"SEATD_SOCK=/run/seatd.sock",
 		"WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
 		"WEBKIT_FORCE_SANDBOX=0",
-		"WLR_DRM_NO_MODIFIERS=1",
-		"WLR_NO_HARDWARE_CURSORS=1",
+		"WLR_LIBINPUT_NO_DEVICES=1",
 
 		// Prevent GIO/libproxy from blocking on DBus during early init
 		"LIBPROXY_IGNORE_SETTINGS=1",
 		"GIO_USE_PROXY_RESOLVER=direct",
 		"GSETTINGS_BACKEND=memory",
 	)
+
+	// Load custom Cage environment variables from bsp.yaml (written by strux-build-post.sh)
+	if extra := loadCageEnv("/strux/.cage-env"); len(extra) > 0 {
+		c.logger.Info("Loaded %d custom Cage environment variables", len(extra))
+		c.process.Env = append(c.process.Env, extra...)
+	}
 
 	// Add WebKit Inspector HTTP server if enabled (dev mode)
 	// Must bind to 0.0.0.0 so it's accessible via QEMU port forwarding
@@ -301,6 +306,22 @@ func (c *CageLauncher) Cleanup() {
 		c.logFile.Close()
 		c.logFile = nil
 	}
+}
+
+// loadCageEnv reads custom Cage environment variables from a KEY=VALUE file
+func loadCageEnv(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var envs []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") && strings.Contains(line, "=") {
+			envs = append(envs, line)
+		}
+	}
+	return envs
 }
 
 // logWriter is a simple io.Writer that logs each line

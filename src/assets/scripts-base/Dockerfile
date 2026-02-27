@@ -33,6 +33,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     meson \
     ninja-build \
     pkg-config \
+    autoconf \
+    automake \
+    libtool \
+    ccache \
     # Kernel build dependencies
     flex \
     bison \
@@ -44,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dwarves \
     libncurses-dev \
     gawk \
+    cscope \
     # U-Boot build dependencies
     device-tree-compiler \
     python3 \
@@ -55,6 +60,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     swig \
     libgnutls28-dev \
     uuid-dev \
+    libfdt-dev \
+    libftdi-dev \
+    libgmp3-dev \
+    libhidapi-dev \
+    libmpc-dev \
+    libslirp-dev \
+    libusb-1.0-0-dev \
+    libattr1-dev \
+    libcap-ng-dev \
     # U-Boot tools (provides mkimage)
     u-boot-tools \
     # Image generation (genimage)
@@ -82,6 +96,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Image and filesystem tools
     qemu-utils \
     e2fsprogs \
+    e2tools \
     util-linux \
     parted \
     dosfstools \
@@ -90,7 +105,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     squashfs-tools \
     tar \
     gzip \
+    xz-utils \
     rsync \
+    gdisk \
     # Documentation tools
     scdoc \
     # Networking tools (for fetching sources)
@@ -101,9 +118,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # YAML processor for reading configuration files
     yq \
     unzip \
+    # Python dependencies for bootloader compilation
+    python3-dev \
+    python3-cryptography \
+    python3-pip \
+    python3-pyelftools \
+    python3-serial \
+    python3-tomli \
+    python-is-python3 \
+    # Additional build and development tools
+    acpica-tools \
+    expect \
+    ftp-upload \
+    netcat-openbsd \
+    xsltproc \
+    zlib1g-dev \
+    # Android tools (adb, fastboot)
+    adb \
+    fastboot \
+    # Image conversion tools (for kernel boot logo PPM conversion)
+    netpbm \
+    imagemagick \
+    # X11/desktop utilities
+    xdg-utils \
+    xterm \
+
     # Custom host packages 
     ${additionalPackages} \
     && rm -rf /var/lib/apt/lists/*
+
 
 
 

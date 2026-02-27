@@ -63,8 +63,7 @@ BOOTLOADER_SOURCE=$(yq '.bsp.boot.bootloader.source' "$BSP_CONFIG" 2>/dev/null |
 BOOTLOADER_VERSION=$(yq '.bsp.boot.bootloader.version' "$BSP_CONFIG" 2>/dev/null || echo "")
 BOOTLOADER_DEFCONFIG=$(yq '.bsp.boot.bootloader.defconfig' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 BOOTLOADER_FRAGMENTS=$(yq -r '.bsp.boot.bootloader.fragments[]' "$BSP_CONFIG" 2>/dev/null || echo "")
-BOOTLOADER_PATCHES=$(yq '.bsp.boot.bootloader.patches[]' "$BSP_CONFIG" 2>/dev/null || echo "")
-BOOTLOADER_DTS=$(yq '.bsp.boot.bootloader.device_tree.dts' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+BOOTLOADER_PATCHES=$(yq -r '.bsp.boot.bootloader.patches[]' "$BSP_CONFIG" 2>/dev/null || echo "")
 BOOT_BLOBS_COUNT=$(yq '.bsp.boot.bootloader.blobs | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
 
 # Skip if custom or none - BSP scripts handle it
@@ -86,7 +85,6 @@ fi
 
 # Trim whitespace and remove surrounding quotes from yq output
 BOOTLOADER_SOURCE=$(echo "$BOOTLOADER_SOURCE" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
-BOOTLOADER_DTS=$(echo "$BOOTLOADER_DTS" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
 BOOTLOADER_DEFCONFIG=$(echo "$BOOTLOADER_DEFCONFIG" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
 
 # ============================================================================
@@ -128,11 +126,20 @@ if [ "$BOOT_BLOBS_COUNT" -gt 0 ]; then
         fi
 
         if [[ "$BLOB_PATH" =~ ^\./ ]]; then
+            # Relative to BSP directory: ./blobs/foo.bin -> bsp/{bsp}/blobs/foo.bin
             RESOLVED_BLOB_PATH="$BSP_FOLDER/${BLOB_PATH#./}"
         elif [[ "$BLOB_PATH" =~ ^/ ]]; then
+            # Absolute path
             RESOLVED_BLOB_PATH="$BLOB_PATH"
+        elif [[ "$BLOB_PATH" =~ ^cache/ ]]; then
+            # BSP-specific cache: cache/xxx -> dist/cache/{bsp}/xxx
+            RESOLVED_BLOB_PATH="$CACHE_DIR/${BLOB_PATH#cache/}"
+        elif [[ "$BLOB_PATH" =~ ^output/ ]]; then
+            # BSP-specific output: output/xxx -> dist/output/{bsp}/xxx
+            RESOLVED_BLOB_PATH="$PROJECT_DIR/dist/output/$BSP_NAME/${BLOB_PATH#output/}"
         else
-            RESOLVED_BLOB_PATH="$BSP_FOLDER/$BLOB_PATH"
+            # Other paths relative to dist/
+            RESOLVED_BLOB_PATH="$PROJECT_DIR/dist/$BLOB_PATH"
         fi
 
         if [ ! -f "$RESOLVED_BLOB_PATH" ]; then
@@ -248,21 +255,31 @@ mkdir -p "$BOOTLOADER_SOURCE_DIR"
 if [[ "$SOURCE_URL" =~ \.(tar\.gz|tar\.xz|tar\.bz2|tgz)$ ]]; then
     # Tarball source
     progress "Downloading bootloader tarball..."
+    # Ensure a clean source tree for tarball extracts (avoid stale staged DTS/DTSI files)
+    if [ -d "$BOOTLOADER_SOURCE_DIR" ] && [ "$BOOTLOADER_SOURCE_DIR" != "/" ]; then
+        rm -rf "$BOOTLOADER_SOURCE_DIR"
+    fi
+    mkdir -p "$BOOTLOADER_SOURCE_DIR"
     cd "$BOOTLOADER_SOURCE_DIR"
-    
     TARBALL_NAME=$(basename "$SOURCE_URL")
-    wget -q --show-progress -O "$TARBALL_NAME" "$SOURCE_URL" || {
-        echo "Error: Failed to download bootloader tarball"
-        exit 1
-    }
+    TARBALL_CACHE_DIR="$CACHE_DIR/bootloader-tarballs"
+    mkdir -p "$TARBALL_CACHE_DIR"
+    CACHED_TARBALL="$TARBALL_CACHE_DIR/$TARBALL_NAME"
+
+    if [ -f "$CACHED_TARBALL" ]; then
+        progress "Using cached bootloader tarball: $CACHED_TARBALL"
+    else
+        wget -q --show-progress -O "$CACHED_TARBALL" "$SOURCE_URL" || {
+            echo "Error: Failed to download bootloader tarball"
+            exit 1
+        }
+    fi
     
     progress "Extracting bootloader tarball..."
-    tar xf "$TARBALL_NAME" --strip-components=1 || {
+    tar xf "$CACHED_TARBALL" --strip-components=1 || {
         echo "Error: Failed to extract bootloader tarball"
         exit 1
     }
-    
-    rm -f "$TARBALL_NAME"
 else
     # Git source
     progress "Cloning bootloader repository..."
@@ -343,50 +360,281 @@ fi
 
 progress "Bootloader source ready at $BOOTLOADER_SOURCE_DIR"
 
-chown -R root:root "$BOOTLOADER_SOURCE_DIR"
-
 # ============================================================================
 # OPTIONAL BOOTLOADER DEVICE TREE
 # ============================================================================
-# Allow BSP to provide a custom U-Boot device tree for SPL/U-Boot init
+# Allow BSP to provide custom U-Boot device tree files (DTS/DTSI) for SPL/U-Boot
+# Two modes:
+#   - Standard: DTS files are copied to U-Boot tree and built with U-Boot includes
+#   - Standalone: DTS is complete (e.g. from running system), compiled externally via dtc
 # ============================================================================
 
-BOOTLOADER_DTS_NAME=""
-BOOTLOADER_DTS_CONFIG=""
-BOOTLOADER_OF_LIST_CONFIG=""
-BOOTLOADER_SPL_OF_LIST_CONFIG=""
+# Read bootloader device tree configuration from bsp.yaml
+BOOTLOADER_DTS_FILES=$(yq -r '.bsp.boot.bootloader.device_tree.dts[]? // .bsp.boot.bootloader.device_tree.dts // ""' "$BSP_CONFIG" 2>/dev/null | grep -v '^null$' || echo "")
+BOOTLOADER_DTSI_FILES=$(yq -r '.bsp.boot.bootloader.device_tree.dtsi[]? // .bsp.boot.bootloader.device_tree.dtsi // ""' "$BSP_CONFIG" 2>/dev/null | grep -v '^null$' || echo "")
+BOOTLOADER_DTS_INCLUDE_PATHS=$(yq -r '.bsp.boot.bootloader.device_tree.include_paths[]? // ""' "$BSP_CONFIG" 2>/dev/null | grep -v '^null$' || echo "")
+BOOTLOADER_DTS_STANDALONE=$(yq -r '.bsp.boot.bootloader.device_tree.standalone // false' "$BSP_CONFIG" 2>/dev/null || echo "false")
 
-if [ -n "$BOOTLOADER_DTS" ] && [ "$BOOTLOADER_DTS" != "null" ]; then
-    if [[ "$BOOTLOADER_DTS" =~ ^\./ ]]; then
-        BOOTLOADER_DTS_PATH="$BSP_FOLDER/${BOOTLOADER_DTS#./}"
-    elif [[ "$BOOTLOADER_DTS" =~ ^/ ]]; then
-        BOOTLOADER_DTS_PATH="$BOOTLOADER_DTS"
-    else
-        BOOTLOADER_DTS_PATH=""
-        BOOTLOADER_DTS_NAME="${BOOTLOADER_DTS%.dts}"
+# Determine the correct U-Boot arch dts directory
+if [ "$BOOTLOADER_ARCH" = "arm64" ]; then
+    UBOOT_DTS_DIR="$BOOTLOADER_SOURCE_DIR/arch/arm/dts"
+elif [ "$BOOTLOADER_ARCH" = "arm" ]; then
+    UBOOT_DTS_DIR="$BOOTLOADER_SOURCE_DIR/arch/arm/dts"
+elif [ "$BOOTLOADER_ARCH" = "x86" ]; then
+    UBOOT_DTS_DIR="$BOOTLOADER_SOURCE_DIR/arch/x86/dts"
+else
+    UBOOT_DTS_DIR="$BOOTLOADER_SOURCE_DIR/arch/$BOOTLOADER_ARCH/dts"
+fi
+
+# Track the DTS names for U-Boot configuration (without path, without extension)
+BOOTLOADER_DTS_NAMES=()
+# For standalone mode: track externally compiled DTB paths
+BOOTLOADER_EXT_DTB=""
+BOOTLOADER_EXT_DTB_DIR="$BOOTLOADER_BUILD_DIR/external-dtbs"
+
+# Clean up any previous Strux modifications to the U-Boot DTS Makefile
+# This ensures switching between standalone and standard modes works correctly
+UBOOT_DTS_MAKEFILE="$UBOOT_DTS_DIR/Makefile"
+if [ -f "$UBOOT_DTS_MAKEFILE" ]; then
+    # Remove any lines added by previous Strux runs
+    if grep -q "# Strux custom bootloader device tree" "$UBOOT_DTS_MAKEFILE" 2>/dev/null; then
+        progress "Cleaning previous Strux DTS modifications from Makefile..."
+        # Remove the comment line and the dtb-y line that follows it
+        sed -i '/# Strux custom bootloader device tree/,+1d' "$UBOOT_DTS_MAKEFILE"
+        # Also remove any standalone cleanup markers
+        sed -i '/# Strux standalone mode/d' "$UBOOT_DTS_MAKEFILE"
     fi
-
-    if [ -n "$BOOTLOADER_DTS_PATH" ]; then
-        if [ ! -f "$BOOTLOADER_DTS_PATH" ]; then
-            echo "Error: Bootloader DTS not found: $BOOTLOADER_DTS_PATH"
-            exit 1
-        fi
-
-        BOOTLOADER_DTS_BASENAME="$(basename "$BOOTLOADER_DTS_PATH")"
-        BOOTLOADER_DTS_NAME="${BOOTLOADER_DTS_BASENAME%.dts}"
-
-        mkdir -p "$BOOTLOADER_SOURCE_DIR/arch/arm/dts"
-        cp "$BOOTLOADER_DTS_PATH" "$BOOTLOADER_SOURCE_DIR/arch/arm/dts/$BOOTLOADER_DTS_BASENAME"
-        progress "Staged bootloader DTS: $BOOTLOADER_DTS_BASENAME"
-    fi
-
-    if [ -n "$BOOTLOADER_DTS_NAME" ]; then
-        BOOTLOADER_DTS_CONFIG="CONFIG_DEFAULT_DEVICE_TREE=\"${BOOTLOADER_DTS_NAME}\""
-        BOOTLOADER_OF_LIST_CONFIG="CONFIG_OF_LIST=\"${BOOTLOADER_DTS_NAME}\""
-        BOOTLOADER_SPL_OF_LIST_CONFIG="CONFIG_SPL_OF_LIST=\"${BOOTLOADER_DTS_NAME}\""
-        progress "Using bootloader default device tree: $BOOTLOADER_DTS_NAME"
+    
+    # Also remove any previously copied Strux DTS files from U-Boot tree
+    # (These would have been copied in standard mode)
+    if [ -n "$BOOTLOADER_DTS_FILES" ]; then
+        while IFS= read -r dts_entry; do
+            [ -z "$dts_entry" ] && continue
+            dts_entry=$(echo "$dts_entry" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+            [ -z "$dts_entry" ] && continue
+            DTS_FILENAME=$(basename "$dts_entry")
+            if [ -f "$UBOOT_DTS_DIR/$DTS_FILENAME" ]; then
+                rm -f "$UBOOT_DTS_DIR/$DTS_FILENAME"
+                progress "Removed previously copied DTS: $UBOOT_DTS_DIR/$DTS_FILENAME"
+            fi
+        done <<< "$BOOTLOADER_DTS_FILES"
     fi
 fi
+
+# Check if standalone mode is enabled (for complete DTS files without includes)
+if [ "$BOOTLOADER_DTS_STANDALONE" = "true" ] && [ -n "$BOOTLOADER_DTS_FILES" ]; then
+    progress "Processing standalone bootloader device tree files..."
+    progress "Standalone mode: DTS will be compiled externally with dtc (no U-Boot includes)"
+    
+    # Create directory for externally compiled DTBs
+    mkdir -p "$BOOTLOADER_EXT_DTB_DIR"
+    
+    # Process each DTS file - compile with dtc directly
+    while IFS= read -r dts_entry; do
+        [ -z "$dts_entry" ] && continue
+        
+        # Trim whitespace and quotes
+        dts_entry=$(echo "$dts_entry" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        [ -z "$dts_entry" ] && continue
+        
+        # Resolve path (relative to BSP folder or absolute)
+        if [[ "$dts_entry" =~ ^\./ ]]; then
+            DTS_PATH="$BSP_FOLDER/${dts_entry#./}"
+        elif [[ "$dts_entry" =~ ^/ ]]; then
+            DTS_PATH="$dts_entry"
+        else
+            DTS_PATH="$BSP_FOLDER/$dts_entry"
+        fi
+        
+        if [ ! -f "$DTS_PATH" ]; then
+            echo "Error: Bootloader DTS file not found: $DTS_PATH"
+            exit 1
+        fi
+        
+        # Get the DTS filename and name without extension
+        DTS_FILENAME=$(basename "$DTS_PATH")
+        DTS_NAME="${DTS_FILENAME%.dts}"
+        DTB_PATH="$BOOTLOADER_EXT_DTB_DIR/${DTS_NAME}.dtb"
+        
+        # Compile DTS to DTB using dtc directly (bypasses U-Boot's include mechanism)
+        progress "Compiling standalone DTS: $DTS_FILENAME -> ${DTS_NAME}.dtb"
+        if ! dtc -I dts -O dtb -o "$DTB_PATH" "$DTS_PATH" 2>&1; then
+            echo "Error: Failed to compile standalone DTS: $DTS_PATH"
+            exit 1
+        fi
+        
+        # Track the first DTB for EXT_DTB (U-Boot only supports one external DTB)
+        if [ -z "$BOOTLOADER_EXT_DTB" ]; then
+            BOOTLOADER_EXT_DTB="$DTB_PATH"
+        fi
+        
+        BOOTLOADER_DTS_NAMES+=("$DTS_NAME")
+        progress "Compiled standalone DTB: $DTB_PATH"
+    done <<< "$BOOTLOADER_DTS_FILES"
+    
+    if [ -n "$BOOTLOADER_EXT_DTB" ]; then
+        progress "Using external DTB for U-Boot: $BOOTLOADER_EXT_DTB"
+    fi
+
+elif [ -n "$BOOTLOADER_DTS_FILES" ]; then
+    # Standard mode: copy DTS to U-Boot tree for compilation with includes
+    progress "Processing bootloader device tree files (standard mode with U-Boot includes)..."
+    
+    # Ensure U-Boot dts directory exists
+    mkdir -p "$UBOOT_DTS_DIR"
+    
+    # Process each DTS file
+    while IFS= read -r dts_entry; do
+        [ -z "$dts_entry" ] && continue
+        
+        # Trim whitespace and quotes
+        dts_entry=$(echo "$dts_entry" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        [ -z "$dts_entry" ] && continue
+        
+        # Resolve path (relative to BSP folder or absolute)
+        if [[ "$dts_entry" =~ ^\./ ]]; then
+            DTS_PATH="$BSP_FOLDER/${dts_entry#./}"
+        elif [[ "$dts_entry" =~ ^/ ]]; then
+            DTS_PATH="$dts_entry"
+        else
+            DTS_PATH="$BSP_FOLDER/$dts_entry"
+        fi
+        
+        if [ ! -f "$DTS_PATH" ]; then
+            echo "Error: Bootloader DTS file not found: $DTS_PATH"
+            exit 1
+        fi
+        
+        # Get the DTS filename and name without extension
+        DTS_FILENAME=$(basename "$DTS_PATH")
+        DTS_NAME="${DTS_FILENAME%.dts}"
+        DTB_NAME="${DTS_NAME}.dtb"
+        
+        # Copy DTS to U-Boot source tree
+        cp "$DTS_PATH" "$UBOOT_DTS_DIR/$DTS_FILENAME"
+        progress "Copied bootloader DTS: $DTS_FILENAME -> $UBOOT_DTS_DIR/"
+        
+        # Ensure the DTS is added to the U-Boot Makefile so it gets compiled
+        # U-Boot requires DTS files to be listed in arch/arm/dts/Makefile
+        UBOOT_DTS_MAKEFILE="$UBOOT_DTS_DIR/Makefile"
+        if [ -f "$UBOOT_DTS_MAKEFILE" ]; then
+            # Check if already in Makefile (match the DTB name in any dtb- line)
+            if ! grep -qE "dtb-.*\+?=.*${DTB_NAME}" "$UBOOT_DTS_MAKEFILE" 2>/dev/null; then
+                # Append to end of Makefile - dtb-y ensures unconditional build
+                echo "" >> "$UBOOT_DTS_MAKEFILE"
+                echo "# Strux custom bootloader device tree" >> "$UBOOT_DTS_MAKEFILE"
+                echo "dtb-y += ${DTB_NAME}" >> "$UBOOT_DTS_MAKEFILE"
+                progress "Added ${DTB_NAME} to U-Boot DTS Makefile"
+            else
+                progress "DTS ${DTB_NAME} already in U-Boot Makefile"
+            fi
+        else
+            echo "Warning: U-Boot DTS Makefile not found at $UBOOT_DTS_MAKEFILE"
+        fi
+        
+        # Track the DTS name for configuration
+        BOOTLOADER_DTS_NAMES+=("$DTS_NAME")
+    done <<< "$BOOTLOADER_DTS_FILES"
+
+    # Process and copy DTSI files if specified (these are includes used by DTS files)
+    if [ -n "$BOOTLOADER_DTSI_FILES" ]; then
+        progress "Processing bootloader DTSI include files..."
+        
+        mkdir -p "$UBOOT_DTS_DIR"
+        
+        while IFS= read -r dtsi_entry; do
+            [ -z "$dtsi_entry" ] && continue
+            
+            # Trim whitespace and quotes
+            dtsi_entry=$(echo "$dtsi_entry" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+            [ -z "$dtsi_entry" ] && continue
+            
+            # Resolve path (relative to BSP folder or absolute)
+            if [[ "$dtsi_entry" =~ ^\./ ]]; then
+                DTSI_PATH="$BSP_FOLDER/${dtsi_entry#./}"
+            elif [[ "$dtsi_entry" =~ ^/ ]]; then
+                DTSI_PATH="$dtsi_entry"
+            else
+                DTSI_PATH="$BSP_FOLDER/$dtsi_entry"
+            fi
+            
+            if [ ! -f "$DTSI_PATH" ]; then
+                echo "Error: Bootloader DTSI file not found: $DTSI_PATH"
+                exit 1
+            fi
+            
+            # Get the DTSI filename
+            DTSI_FILENAME=$(basename "$DTSI_PATH")
+            
+            # Copy DTSI to U-Boot source tree (so DTS can #include them)
+            cp "$DTSI_PATH" "$UBOOT_DTS_DIR/$DTSI_FILENAME"
+            progress "Copied bootloader DTSI: $DTSI_FILENAME -> $UBOOT_DTS_DIR/"
+        done <<< "$BOOTLOADER_DTSI_FILES"
+    fi
+
+    # Copy files from additional include paths to U-Boot dts directory
+    if [ -n "$BOOTLOADER_DTS_INCLUDE_PATHS" ]; then
+        progress "Processing bootloader DTS include paths..."
+        
+        while IFS= read -r inc_path; do
+            [ -z "$inc_path" ] && continue
+            
+            # Trim whitespace and quotes
+            inc_path=$(echo "$inc_path" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+            [ -z "$inc_path" ] && continue
+            
+            # Resolve path (relative to BSP folder or absolute)
+            if [[ "$inc_path" =~ ^\./ ]]; then
+                RESOLVED_INC_PATH="$BSP_FOLDER/${inc_path#./}"
+            elif [[ "$inc_path" =~ ^/ ]]; then
+                RESOLVED_INC_PATH="$inc_path"
+            else
+                RESOLVED_INC_PATH="$BSP_FOLDER/$inc_path"
+            fi
+            
+            if [ -d "$RESOLVED_INC_PATH" ]; then
+                # Copy all DTS/DTSI files from include path to U-Boot dts directory
+                find "$RESOLVED_INC_PATH" -name "*.dts" -o -name "*.dtsi" | while read -r inc_file; do
+                    INC_FILENAME=$(basename "$inc_file")
+                    cp "$inc_file" "$UBOOT_DTS_DIR/$INC_FILENAME"
+                    progress "Copied include file: $INC_FILENAME -> $UBOOT_DTS_DIR/"
+                done
+            else
+                echo "Warning: DTS include path not found: $RESOLVED_INC_PATH"
+            fi
+        done <<< "$BOOTLOADER_DTS_INCLUDE_PATHS"
+    fi
+fi
+
+# Build the BOOTLOADER_DTS_NAME variable for U-Boot make (first DTS is primary)
+BOOTLOADER_DTS_NAME=""
+BOOTLOADER_DTS_CONFIG=""
+
+# For standalone mode with EXT_DTB, we don't configure U-Boot's internal DTS
+# For standard mode, we configure U-Boot to build our specific DTS files
+if [ "$BOOTLOADER_DTS_STANDALONE" != "true" ] && [ ${#BOOTLOADER_DTS_NAMES[@]} -gt 0 ]; then
+    BOOTLOADER_DTS_NAME="${BOOTLOADER_DTS_NAMES[0]}"
+    
+    # Build a space-separated list for CONFIG_OF_LIST (all specified DTS names)
+    DTS_LIST_STR=$(printf '%s ' "${BOOTLOADER_DTS_NAMES[@]}" | xargs)
+    
+    # Prepare config overrides to restrict U-Boot to only build our DTS files
+    BOOTLOADER_DTS_CONFIG=$(cat <<-EOF
+CONFIG_DEFAULT_DEVICE_TREE="${BOOTLOADER_DTS_NAME}"
+CONFIG_OF_LIST="${DTS_LIST_STR}"
+CONFIG_SPL_OF_LIST="${DTS_LIST_STR}"
+# CONFIG_OF_EMBED is not set
+EOF
+)
+    
+    progress "Configured U-Boot to build device trees: ${DTS_LIST_STR}"
+elif [ "$BOOTLOADER_DTS_STANDALONE" = "true" ] && [ ${#BOOTLOADER_DTS_NAMES[@]} -gt 0 ]; then
+    # For standalone mode, we still need a default device tree name for U-Boot config
+    # but we'll use EXT_DTB to override it at build time
+    BOOTLOADER_DTS_NAME="${BOOTLOADER_DTS_NAMES[0]}"
+    progress "Standalone mode: Will use EXT_DTB=$BOOTLOADER_EXT_DTB"
+fi
+
 
 # ============================================================================
 # PATCH APPLICATION
@@ -404,6 +652,10 @@ if [ -n "$BOOTLOADER_PATCHES" ]; then
     done <<< "$BOOTLOADER_PATCHES"
     
     for patch in "${PATCH_ARRAY[@]}"; do
+        # Trim whitespace/quotes from patch entry
+        patch=$(echo "$patch" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        [ -z "$patch" ] && continue
+
         # Resolve patch path (relative to BSP folder or absolute)
         if [[ "$patch" =~ ^\./ ]]; then
             PATCH_PATH="$BSP_FOLDER/${patch#./}"
@@ -413,10 +665,17 @@ if [ -n "$BOOTLOADER_PATCHES" ]; then
         
         if [ -f "$PATCH_PATH" ]; then
             progress "Applying patch: $patch"
-            patch -p1 < "$PATCH_PATH" || {
+            if patch -p1 --dry-run < "$PATCH_PATH" >/dev/null 2>&1; then
+                patch -p1 < "$PATCH_PATH" || {
+                    echo "Error: Failed to apply patch: $patch"
+                    exit 1
+                }
+            elif patch -p1 -R --dry-run < "$PATCH_PATH" >/dev/null 2>&1; then
+                progress "Patch already applied: $patch"
+            else
                 echo "Error: Failed to apply patch: $patch"
                 exit 1
-            }
+            fi
         else
             echo "Warning: Patch file not found: $PATCH_PATH"
         fi
@@ -431,7 +690,6 @@ fi
 
 mkdir -p "$BOOTLOADER_OUTPUT_DIR"
 
-chown -R root:root "$BOOTLOADER_OUTPUT_DIR"
 if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
     progress "Building U-Boot..."
     
@@ -489,16 +747,6 @@ if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
         }
     fi
 
-    # Sanity check: ensure defconfig actually selected RK3288 / ARMv7
-    if ! grep -qE '^CONFIG_ROCKCHIP_RK3288=y|^CONFIG_TARGET_EVB_RK3288=y' "$BOOTLOADER_BUILD_DIR/.config"; then
-        echo "Error: U-Boot defconfig did not enable RK3288 symbols."
-        echo "Check that $BOOTLOADER_DEFCONFIG is the correct defconfig for this tree."
-        echo "Detected config summary:"
-        grep -E '^CONFIG_SYS_CPU=|^CONFIG_SYS_ARCH=|^CONFIG_CPU_V7=|^CONFIG_ARMV7=' "$BOOTLOADER_BUILD_DIR/.config" || true
-        exit 1
-    fi
-
-    
     # Apply fragments if any
     if [ -n "$BOOTLOADER_FRAGMENTS" ]; then
         progress "Applying U-Boot configuration fragments..."
@@ -563,15 +811,11 @@ if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
     fi
 
     # Apply bootloader device tree override after fragments (if provided)
+    # This ensures U-Boot only builds the DTS files specified in bsp.yaml
     if [ -n "$BOOTLOADER_DTS_CONFIG" ]; then
         echo "$BOOTLOADER_DTS_CONFIG" >> "$BOOTLOADER_BUILD_DIR/.config"
-        if [ -n "$BOOTLOADER_OF_LIST_CONFIG" ]; then
-            # Ensure CONFIG_OF_LIST includes our DTS so binman can find it
-            echo "$BOOTLOADER_OF_LIST_CONFIG" >> "$BOOTLOADER_BUILD_DIR/.config"
-        fi
-        if [ -n "$BOOTLOADER_SPL_OF_LIST_CONFIG" ]; then
-            echo "$BOOTLOADER_SPL_OF_LIST_CONFIG" >> "$BOOTLOADER_BUILD_DIR/.config"
-        fi
+        # Disable building all device trees - only build our specified ones
+        echo "# CONFIG_OF_ALL_DTBS is not set" >> "$BOOTLOADER_BUILD_DIR/.config"
         make O="$BOOTLOADER_BUILD_DIR" ARCH="$BOOTLOADER_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} olddefconfig || {
             echo "Error: Failed to apply bootloader device tree config"
             exit 1
@@ -581,8 +825,20 @@ if [ "$BOOTLOADER_TYPE" = "u-boot" ]; then
     
     # Build U-Boot
     progress "Compiling U-Boot..."
-    chown -R root:root "$BOOTLOADER_BUILD_DIR"
-    make -j$(nproc) ARCH="$BOOTLOADER_ARCH" CROSS_COMPILE="$CROSS_COMPILE" || {
+    
+    # Prepare make arguments based on DTS mode
+    UBOOT_DTS_ARGS=()
+    if [ "$BOOTLOADER_DTS_STANDALONE" = "true" ] && [ -n "$BOOTLOADER_EXT_DTB" ]; then
+        # Standalone mode: use externally compiled DTB via EXT_DTB
+        # This bypasses U-Boot's DTS compilation entirely
+        UBOOT_DTS_ARGS+=("EXT_DTB=$BOOTLOADER_EXT_DTB")
+        progress "Using standalone external DTB: $BOOTLOADER_EXT_DTB"
+    elif [ -n "$BOOTLOADER_DTS_NAME" ]; then
+        # Standard mode: tell U-Boot which device tree to use
+        UBOOT_DTS_ARGS+=("DEVICE_TREE=$BOOTLOADER_DTS_NAME")
+    fi
+    
+    make -j$(nproc) O="$BOOTLOADER_BUILD_DIR" ARCH="$BOOTLOADER_ARCH" CROSS_COMPILE=${CROSS_COMPILE} "${UBOOT_DTS_ARGS[@]}" "${BOOTLOADER_MAKE_VARS[@]}" || {
         echo "Error: Failed to build U-Boot"
         exit 1
     }

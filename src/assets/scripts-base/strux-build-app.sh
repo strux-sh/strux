@@ -110,7 +110,7 @@ GOOS=linux \
 GOARCH="$GO_ARCH" \
 GOARM="${GOARM:-}" \
 CC="$CROSS_COMPILER" \
-${GO_PRIVATE_ENV}go build -o "$CACHE_DIR/app/main" .
+${GO_PRIVATE_ENV}go build -buildvcs=false -o "$CACHE_DIR/app/main" .
 
 progress "Go application built successfully"
 

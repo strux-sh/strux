@@ -532,6 +532,7 @@ Scripts have access to these environment variables:
 | `PROJECT_DIST_ARTIFACTS_FOLDER` | Shared artifacts: `dist/artifacts/` |
 | `SHARED_CACHE_DIR` | Shared cache: `dist/cache/` |
 | `BSP_CACHE_DIR` | Alias for cache folder |
+| `BSP_FOLDER` | Project root/bsp/{bsp} |
 | `HOST_ARCH` | Host machine architecture |
 | `TARGET_ARCH` | Target device architecture |
 | `STEP` | Current build step name |

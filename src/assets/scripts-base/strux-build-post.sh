@@ -170,6 +170,13 @@ if [ -f "$BSP_CACHE/.dev-env.json" ]; then
     cp "$BSP_CACHE/.dev-env.json" "$ROOTFS_DIR/strux/.dev-env.json"
 fi
 
+# Read custom Cage environment variables from bsp.yaml
+CAGE_ENV_COUNT=$(yq -r '.bsp.cage.env // [] | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
+if [ "$CAGE_ENV_COUNT" -gt 0 ]; then
+    progress "Writing custom Cage environment variables..."
+    yq -r '.bsp.cage.env[]' "$BSP_CONFIG" > "$ROOTFS_DIR/strux/.cage-env"
+fi
+
 
 # Copy the Systemd Services
 progress "Copying Systemd Services..."
@@ -200,7 +207,168 @@ mount --bind /sys /tmp/rootfs/sys || true
 
 
 # ============================================================================
-# SECTION 5: ENABLE SYSTEMD SERVICES
+# SECTION 5: INSTALL KERNEL
+# ============================================================================
+# This section installs the kernel into the rootfs. It handles both:
+# - Default Debian kernel: installed via apt-get
+# - Custom kernel: copied from pre-built artifacts in cache
+# This was moved from strux-build-base.sh so that kernel changes
+# don't require a full base rootfs rebuild (debootstrap + packages).
+# ============================================================================
+
+progress "Installing kernel..."
+
+# Get architecture from BSP config
+ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+
+if [ -z "$ARCH" ]; then
+    echo "Error: Could not read architecture from $BSP_CONFIG"
+    exit 1
+fi
+
+# Map Strux arch to Debian arch
+case "$ARCH" in
+    arm64|aarch64)
+        DEBIAN_ARCH="arm64"
+        ;;
+    amd64|x86_64)
+        DEBIAN_ARCH="amd64"
+        ;;
+    armhf|armv7|arm)
+        DEBIAN_ARCH="armhf"
+        ;;
+    *)
+        echo "Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+
+# Check if custom kernel is enabled in BSP config
+CUSTOM_KERNEL=$(yq '.bsp.boot.kernel.custom_kernel' "$BSP_CONFIG" 2>/dev/null || echo "false")
+
+if [ "$CUSTOM_KERNEL" = "true" ]; then
+    STRUX_CUSTOM_KERNEL="true"
+else
+    STRUX_CUSTOM_KERNEL="false"
+fi
+
+export STRUX_CUSTOM_KERNEL
+
+if [ "${STRUX_CUSTOM_KERNEL:-false}" != "true" ]; then
+    # ---- Default Debian Kernel ----
+    progress "Installing Debian kernel..."
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get update"
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends linux-image-$DEBIAN_ARCH"
+
+    # Find and copy the kernel to cache
+    progress "Extracting kernel image..."
+    VMLINUZ=$(ls "$ROOTFS_DIR/boot/vmlinuz-"* 2>/dev/null | head -n 1)
+    if [ -n "$VMLINUZ" ]; then
+        mkdir -p "$BSP_CACHE"
+        cp "$VMLINUZ" "$BSP_CACHE/vmlinuz"
+        echo "Kernel copied to $BSP_CACHE/vmlinuz"
+    fi
+
+    # Get kernel version for depmod
+    KERNEL_VERSION=$(ls "$ROOTFS_DIR/lib/modules" 2>/dev/null | head -n 1)
+    if [ -n "$KERNEL_VERSION" ]; then
+        progress "Generating module dependencies..."
+        run_in_chroot "depmod $KERNEL_VERSION"
+        echo "Module dependencies generated for kernel $KERNEL_VERSION"
+    fi
+else
+    # ---- Custom Kernel ----
+    progress "Custom kernel enabled - installing custom kernel..."
+
+    # Read kernel version from BSP config (if provided)
+    KERNEL_VERSION=$(yq '.bsp.boot.kernel.version' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
+    if [ "$KERNEL_VERSION" = "null" ]; then
+        KERNEL_VERSION=""
+    fi
+
+    # Determine kernel image name and architecture-specific path
+    if [ "$DEBIAN_ARCH" = "arm64" ]; then
+        KERNEL_IMAGE="$BSP_CACHE/kernel/Image"
+        KERNEL_NAME="Image"
+    elif [ "$DEBIAN_ARCH" = "armhf" ]; then
+        KERNEL_IMAGE="$BSP_CACHE/kernel/zImage"
+        KERNEL_NAME="zImage"
+    else
+        KERNEL_IMAGE="$BSP_CACHE/kernel/bzImage"
+        KERNEL_NAME="bzImage"
+    fi
+
+    # Fallback to vmlinuz if architecture-specific image not found
+    if [ ! -f "$KERNEL_IMAGE" ]; then
+        KERNEL_IMAGE="$BSP_CACHE/kernel/vmlinuz"
+        KERNEL_NAME="vmlinuz"
+    fi
+
+    if [ ! -f "$KERNEL_IMAGE" ]; then
+        echo "Error: Custom kernel image not found: $KERNEL_IMAGE"
+        exit 1
+    fi
+
+    # Copy kernel image to cache directory
+    progress "Copying custom kernel image..."
+    mkdir -p "$BSP_CACHE"
+    cp "$KERNEL_IMAGE" "$BSP_CACHE/vmlinuz"
+    echo "Custom kernel copied to $BSP_CACHE/vmlinuz"
+
+    # Install to rootfs /boot/ for consistency with standard kernel
+    progress "Installing custom kernel to rootfs /boot/..."
+    mkdir -p "$ROOTFS_DIR/boot"
+    if [ -n "$KERNEL_VERSION" ]; then
+        cp "$KERNEL_IMAGE" "$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VERSION"
+        ln -sf "vmlinuz-$KERNEL_VERSION" "$ROOTFS_DIR/boot/vmlinuz"
+        echo "Custom kernel installed to $ROOTFS_DIR/boot/vmlinuz-$KERNEL_VERSION"
+    else
+        cp "$KERNEL_IMAGE" "$ROOTFS_DIR/boot/vmlinuz"
+        echo "Custom kernel installed to $ROOTFS_DIR/boot/vmlinuz"
+    fi
+
+    # Install kernel modules into rootfs (if they exist)
+    KERNEL_MODULES_PATH="$BSP_CACHE/kernel/modules/lib/modules"
+
+    if [ -d "$KERNEL_MODULES_PATH" ]; then
+        progress "Installing custom kernel modules..."
+        KERNEL_VERSION=$(ls "$KERNEL_MODULES_PATH" 2>/dev/null | head -n 1)
+
+        if [ -n "$KERNEL_VERSION" ]; then
+            # Copy modules to rootfs
+            mkdir -p "$ROOTFS_DIR/lib/modules"
+            cp -r "$KERNEL_MODULES_PATH/$KERNEL_VERSION" "$ROOTFS_DIR/lib/modules/"
+
+            # Generate module dependencies
+            progress "Generating module dependencies..."
+            run_in_chroot "depmod $KERNEL_VERSION"
+            echo "Module dependencies generated for kernel $KERNEL_VERSION"
+        else
+            echo "Warning: No kernel version found in modules directory"
+        fi
+    else
+        echo "Warning: Kernel modules directory not found at $KERNEL_MODULES_PATH"
+        echo "  (Expected path: $BSP_CACHE/kernel/modules/lib/modules/<version>)"
+    fi
+
+    # Install initramfs-tools if not already installed
+    progress "Installing initramfs-tools..."
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get update"
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends initramfs-tools" || true
+
+    # Copy DTBs to rootfs /boot/dtbs/ if they exist
+    DTB_SOURCE_DIR="$BSP_CACHE/kernel/dtbs"
+    if [ -d "$DTB_SOURCE_DIR" ] && [ -n "$(ls -A "$DTB_SOURCE_DIR" 2>/dev/null)" ]; then
+        progress "Copying device tree blobs to rootfs /boot/dtbs/..."
+        mkdir -p "$ROOTFS_DIR/boot/dtbs"
+        cp -r "$DTB_SOURCE_DIR"/* "$ROOTFS_DIR/boot/dtbs/" 2>/dev/null || true
+        echo "Device tree blobs copied to $ROOTFS_DIR/boot/dtbs/"
+    fi
+fi
+
+
+# ============================================================================
+# SECTION 6: ENABLE SYSTEMD SERVICES
 # ============================================================================
 # Enable systemd services
 # ============================================================================
@@ -259,7 +427,7 @@ run_in_chroot "systemctl mask getty.target || true"
 
 
 # ============================================================================
-# SECTION 6: SET HOSTNAME
+# SECTION 7: SET HOSTNAME
 # ============================================================================
 # Set the hostname from YAML configuration
 # Priority: strux.yaml hostname > bsp.yaml hostname
@@ -295,7 +463,7 @@ echo "Hostname configured as: $HOSTNAME"
 # ============================================================================
 
 # ============================================================================
-# SECTION 7: CREATE PLYMOUTH THEME AND BOOT SPLASH, REGENERATE INITRAMFS
+# SECTION 8: CREATE PLYMOUTH THEME AND BOOT SPLASH, REGENERATE INITRAMFS
 # ============================================================================
 # Create the Plymouth theme and boot splash
 # ============================================================================
@@ -321,27 +489,40 @@ echo "FRAMEBUFFER=y" > "$ROOTFS_DIR/etc/initramfs-tools/conf.d/plymouth"
 cp "$PROJECT_DIST_DIR/artifacts/logo.png" "$ROOTFS_DIR/strux/logo.png"
 cp "$PROJECT_DIST_DIR/artifacts/logo.png" "$ROOTFS_DIR/usr/share/plymouth/themes/strux/logo.png"
 
-progress "Regenerating initramfs..."
+progress "Generating initramfs with Plymouth..."
 
 # Find the kernel version
 KERNEL_VERSION=$(ls /tmp/rootfs/lib/modules 2>/dev/null | head -n 1)
 
 if [ -n "$KERNEL_VERSION" ]; then
-# Update initramfs with Plymouth
-run_in_chroot "update-initramfs -u -k $KERNEL_VERSION" || echo "Warning: initramfs update failed"
+    if [ "${STRUX_CUSTOM_KERNEL:-false}" = "true" ]; then
+        # Custom kernel: create initramfs from scratch (no initrd exists yet)
+        run_in_chroot "update-initramfs -c -k $KERNEL_VERSION" || {
+            echo "Warning: Failed to generate initramfs, trying alternative method..."
+            run_in_chroot "mkinitramfs -o /boot/initrd.img-$KERNEL_VERSION $KERNEL_VERSION" || true
+        }
+    else
+        # Default Debian kernel: update existing initramfs (apt already created one)
+        run_in_chroot "update-initramfs -u -k $KERNEL_VERSION" || echo "Warning: initramfs update failed"
+    fi
 
-# Copy updated initramfs to BSP-specific cache (use dev prefix in dev mode)
-INITRD=$(ls /tmp/rootfs/boot/initrd.img-* 2>/dev/null | head -n 1)
-if [ -n "$INITRD" ]; then
-    cp "$INITRD" "$BSP_CACHE/initrd.img"
-    echo "Updated initramfs copied to $BSP_CACHE/initrd.img"
-fi
+    # Copy initramfs to BSP-specific cache and create symlink in rootfs
+    INITRD=$(ls /tmp/rootfs/boot/initrd.img-* 2>/dev/null | head -n 1)
+    if [ -n "$INITRD" ]; then
+        cp "$INITRD" "$BSP_CACHE/initrd.img"
+        echo "Initramfs copied to $BSP_CACHE/initrd.img"
+
+        # Create symlink so /boot/initrd.img exists (needed by bootloaders like U-Boot/extlinux)
+        INITRD_BASENAME=$(basename "$INITRD")
+        ln -sf "$INITRD_BASENAME" "$ROOTFS_DIR/boot/initrd.img"
+        echo "Initramfs symlink created: /boot/initrd.img -> $INITRD_BASENAME"
+    fi
 else
-echo "Warning: No kernel modules found, skipping initramfs regeneration"
+    echo "Warning: No kernel modules found, skipping initramfs generation"
 fi
 
 # ============================================================================
-# SECTION 8: CLEANUP AND MOUNT POINT UNMOUNTING
+# SECTION 9: CLEANUP AND MOUNT POINT UNMOUNTING
 # ============================================================================
 # Cleanup and unmount point unmounting
 # ============================================================================

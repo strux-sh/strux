@@ -214,7 +214,6 @@ export async function runScriptsForStep(
         // Check if the script exists
         if (!fileExists(scriptPath)) {
             Logger.errorWithExit(`Script ${scriptPath} for "${Settings.bspName}" BSP and step "${step}" not found. Please create it first.`)
-            return
         }
 
         // Read the script content
@@ -222,27 +221,46 @@ export async function runScriptsForStep(
 
         const bspName = Settings.bspName!
 
+        // Build environment variables for the script
+        const env: Record<string, string> = {
+            BSP_NAME: bspName,
+            PROJECT_FOLDER: "/project",
+            PROJECT_DIST_FOLDER: "/project/dist",
+            // BSP-specific cache and output directories
+            PROJECT_DIST_CACHE_FOLDER: `/project/dist/cache/${bspName}`,
+            PROJECT_DIST_OUTPUT_FOLDER: `/project/dist/output/${bspName}`,
+            PROJECT_DIST_ARTIFACTS_FOLDER: "/project/dist/artifacts",
+            // Also provide shared cache dir for cross-BSP artifacts like frontend
+            SHARED_CACHE_DIR: "/project/dist/cache",
+            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+            BSP_FOLDER: `/project/bsp/${bspName}`,
+            HOST_ARCH: Settings.arch!,
+            TARGET_ARCH: Settings.targetArch!,
+            STEP: step,
+            STRUX_VERSION: Settings.struxVersion!
+        }
+
+        // Add splash/logo configuration if available
+        const splash = Settings.main?.boot?.splash
+        if (splash) {
+            env.SPLASH_ENABLED = splash.enabled ? "true" : "false"
+            if (splash.logo) env.SPLASH_LOGO = splash.logo
+            if (splash.color) env.SPLASH_COLOR = splash.color
+        }
+
+        // Add display resolution if available
+        const display = Settings.bsp?.display
+        if (display) {
+            env.DISPLAY_WIDTH = String(display.width)
+            env.DISPLAY_HEIGHT = String(display.height)
+        }
+
         // Run the script in Docker
         await Runner.runScriptInDocker(scriptContent, {
             message: `Running BSP script: ${scriptName} (${step})...`,
             messageOnError: `Failed to run BSP script "${scriptName}" for step "${step}". Please check the build logs for more information.`,
             exitOnError: true,
-            env: {
-                BSP_NAME: bspName,
-                PROJECT_FOLDER: "/project",
-                PROJECT_DIST_FOLDER: "/project/dist",
-                // BSP-specific cache and output directories
-                PROJECT_DIST_CACHE_FOLDER: `/project/dist/cache/${bspName}`,
-                PROJECT_DIST_OUTPUT_FOLDER: `/project/dist/output/${bspName}`,
-                PROJECT_DIST_ARTIFACTS_FOLDER: "/project/dist/artifacts",
-                // Also provide shared cache dir for cross-BSP artifacts like frontend
-                SHARED_CACHE_DIR: "/project/dist/cache",
-                BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
-                HOST_ARCH: Settings.arch!,
-                TARGET_ARCH: Settings.targetArch!,
-                STEP: step,
-                STRUX_VERSION: Settings.struxVersion!
-            }
+            env
         })
 
         // Update the cache manifest with the new script execution

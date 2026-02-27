@@ -1,111 +1,101 @@
----
-description: Use Bun instead of Node.js, npm, pnpm, or vite.
-globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
-alwaysApply: false
----
+# CLAUDE.md
 
-Default to using Bun instead of Node.js.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
+## What Is This
 
-## APIs
+Strux OS is a CLI framework for building kiosk-style Linux operating systems. The CLI (`strux`) is written in TypeScript, compiled to a single binary via Bun. It orchestrates Docker-based builds to produce bootable OS images with a Go backend + web frontend running in a Cage Wayland compositor via WPE WebKit.
 
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
+## Development Commands
 
-## Testing
-
-Use `bun test` to run tests.
-
-```ts#index.test.ts
-import { test, expect } from "bun:test";
-
-test("hello world", () => {
-  expect(1).toBe(1);
-});
+```bash
+bun install              # Install dependencies
+bun run build            # Compile to single binary: bun build src/index.ts --compile --outfile strux
+bun run build:go         # Build Go introspection binary: go build -o strux-introspect ./cmd/strux/main.go
+bun run generate:types   # Generate runtime TS types from Go: go run ./cmd/gen-runtime-types
+bun run lint             # ESLint (eslint src/)
+bun run typecheck        # TypeScript check (tsc --noEmit)
+bun test                 # Run tests
 ```
 
-## Frontend
+## Bun-First Rules
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+- Use `bun` instead of `node`, `npm`, `pnpm`, `yarn` for all operations
+- Use `Bun.file` over `node:fs` readFile/writeFile
+- Use `Bun.$` instead of `execa` for shell commands
+- Bun automatically loads `.env` — don't use `dotenv`
 
-Server:
+## Architecture
 
-```ts#index.ts
-import index from "./index.html"
+### CLI Entry Point and Commands
 
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
+Entry: `src/index.ts` — uses `commander` to register commands. Each command sets fields on the `Settings` singleton (`src/settings.ts`) then calls its implementation function.
+
+Commands in `src/commands/`:
+- **build/** — Full build pipeline orchestrator (the largest and most complex command)
+- **dev/** — Dev mode: builds, starts QEMU, Vite dev server (Docker), WebSocket dev server (`Bun.serve`), file watcher (chokidar), and React TUI (Ink)
+- **init/** — Scaffolds a new project from template assets
+- **run/** — Launches built image in QEMU
+- **types/** — Go AST introspection → TypeScript `.d.ts` generation
+- **usb/** — USB passthrough management for QEMU
+- **kernel/** — Kernel menuconfig/clean
+
+### Build System (`src/commands/build/`)
+
+Key files:
+- `index.ts` — Pipeline orchestrator. Steps run in order: frontend → application → cage → wpe → client → kernel → bootloader → rootfs-base → rootfs-post → bundle → make_image
+- `cache.ts` + `cache-deps.ts` — Smart caching via SHA256 hashes. Each step declares file/directory/YAML key dependencies. Cache manifest stored at `dist/cache/{bsp}/.build-cache.json`
+- `bsp-scripts.ts` — Runs BSP lifecycle scripts (before_*/after_* hooks) inside Docker
+- `artifacts.ts` — Copies embedded assets to `dist/artifacts/` (write-once, then user-editable)
+- `internal-hashes.ts` — Hashes all bundled assets so CLI upgrades auto-invalidate affected build steps
+
+Build steps run inside the `strux-builder` Docker container via `Runner.runScriptInDocker()`.
+
+### Asset Embedding
+
+All shell scripts, Dockerfiles, Go source, C source, and template files are **embedded at compile time** using Bun's import attributes:
+```typescript
+import script from "../../assets/scripts-base/strux-build-frontend.sh" with { type: "text" }
+import logo from "../../assets/template-base/logo.png" with { type: "file" }
 ```
 
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
+Asset directories in `src/assets/`:
+- `scripts-base/` — Dockerfile, build shell scripts, systemd services, init scripts
+- `template-base/` — Project scaffold (strux.yaml, bsp.yaml, main.go, make-image.sh)
+- `client-base/` — Go source for on-device strux client binary
+- `cage-base/` — Cage Wayland compositor C source
+- `wpe-extension-base/` — WPE WebKit extension C source
 
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
+### Key Utilities
 
-With the following `frontend.tsx`:
+- `src/utils/run.ts` — `Runner` class: shell command execution via `Bun.spawn`, Docker image management, `runScriptInDocker()` for build steps. Supports progress markers (`STRUX_PROGRESS:`) and verbose mode.
+- `src/utils/log.ts` — `Logger` (with sink pattern for TUI routing) + `Spinner` (wraps `ora`)
+- `src/settings.ts` — Global singleton storing CLI options, loaded YAML configs, and build state
 
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
+### Type System
 
-// import .css files directly and it works
-import './index.css';
+- `src/types/bsp-yaml.ts` — Zod schema for `bsp.yaml`
+- `src/types/main-yaml.ts` — Zod schema for `strux.yaml`
+- `src/types/introspection.ts` — Schema for Go AST introspection output
+- YAML is validated with Zod v4 (`z.object(...)`) and parsed with `Bun.YAML.parse()` or `yaml` package
 
-const root = createRoot(document.body);
+### Go Components (`cmd/`, `pkg/`)
 
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
+- `cmd/strux/main.go` — `strux-introspect`: Go AST analyzer that extracts struct fields/methods from user's `main.go`
+- `cmd/gen-runtime-types/` — Generates `src/types/strux-runtime.ts` from Go runtime package
+- `pkg/runtime/` — Go runtime library used by end-user projects
 
-root.render(<Frontend />);
-```
+### Dev Mode (`src/commands/dev/`)
 
-Then, run index.ts
+Uses Ink (React TUI) with tabbed interface. Starts:
+1. WebSocket dev server on port 8000 (`Bun.serve`)
+2. Vite dev server inside Docker
+3. QEMU instance (unless `--remote`)
+4. chokidar file watcher for Go/YAML changes → recompile + binary push
+5. mDNS discovery via `bonjour-service`
 
-```sh
-bun --hot ./index.ts
-```
+### BSP Script Environment
 
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+BSP scripts run in Docker with standardized env vars: `BSP_NAME`, `PROJECT_FOLDER=/project`, `PROJECT_DIST_CACHE_FOLDER=/project/dist/cache/{bsp}`, `PROJECT_DIST_OUTPUT_FOLDER=/project/dist/output/{bsp}`, `TARGET_ARCH`, `HOST_ARCH`, `STEP`, etc.
+
+Path resolution in `cached_generated_artifacts`/`depends_on`: `cache/` → `dist/cache/{bsp}/`, `output/` → `dist/output/{bsp}/`, `./` → relative to BSP dir.

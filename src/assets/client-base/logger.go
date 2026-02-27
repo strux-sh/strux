@@ -32,12 +32,12 @@ var (
 // getSerialConsole returns the serial console file handle, opening it if needed
 func getSerialConsole() *os.File {
 	serialConsoleOnce.Do(func() {
-		// Determine serial device based on architecture
-		// x86_64: /dev/ttyS0
-		// ARM64/ARM: /dev/ttyAMA0
-		devices := []string{"/dev/ttyS0", "/dev/ttyAMA0", "/dev/console"}
+		// Use /dev/console first - it respects the console= kernel parameter
+		// and works correctly regardless of which UART is the serial console.
+		// Fall back to architecture-specific devices if /dev/console isn't available.
+		devices := []string{"/dev/console", "/dev/ttyS0", "/dev/ttyAMA0"}
 		if runtime.GOARCH == "arm64" || runtime.GOARCH == "arm" {
-			devices = []string{"/dev/ttyAMA0", "/dev/ttyS0", "/dev/console"}
+			devices = []string{"/dev/console", "/dev/ttyAMA0", "/dev/ttyS0"}
 		}
 
 		for _, dev := range devices {

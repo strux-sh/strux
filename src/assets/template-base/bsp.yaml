@@ -4,7 +4,12 @@ bsp:
   description: "QEMU virtual machine for testing"
   display:
     resolution: 1920x1080
-  
+
+  cage:
+    env:
+      - WLR_DRM_NO_MODIFIERS=1
+      - WLR_NO_HARDWARE_CURSORS=1
+
   arch: ${hostArch}
   hostname: ${projectName}
 
@@ -49,12 +54,17 @@ bsp:
   #     - after_client      After strux-client compilation
   #
   #   KERNEL (only runs if boot.kernel.custom_kernel: true):
-  #     - before_kernel     Before custom kernel compilation
-  #     - after_kernel      After kernel compilation
+  #     - before_kernel          Before kernel source fetch
+  #     - after_kernel_extract   After source fetch + patch, before config + build
+  #     - after_kernel           After kernel compilation
+  #     - custom_kernel          Replaces the built-in kernel build entirely
+  #                              (skips extract + build phases; before/after_kernel still run)
   #
   #   BOOTLOADER (only runs if boot.bootloader.enabled: true):
   #     - before_bootloader Before bootloader (U-Boot/GRUB) compilation
   #     - after_bootloader  After bootloader compilation
+  #     - custom_bootloader Replaces the built-in bootloader build entirely
+  #                         (before/after_bootloader hooks still run around it)
   #
   #   ROOTFS:
   #     - before_rootfs     Before root filesystem creation
@@ -80,6 +90,11 @@ bsp:
   #   - TARGET_ARCH                   Target device architecture
   #   - STEP                          Current build step name
   #   - STRUX_VERSION                 Strux version
+  #   - SPLASH_ENABLED                "true" or "false" (from strux.yaml boot.splash.enabled)
+  #   - SPLASH_LOGO                   Path to splash logo PNG (from strux.yaml boot.splash.logo)
+  #   - SPLASH_COLOR                  Hex background color (from strux.yaml boot.splash.color)
+  #   - DISPLAY_WIDTH                 Display width in pixels (from bsp.yaml display.resolution)
+  #   - DISPLAY_HEIGHT                Display height in pixels (from bsp.yaml display.resolution)
   #
   # Path resolution for depends_on and cached_generated_artifacts:
   #   - "cache/xxx" resolves to dist/cache/{bsp}/xxx (BSP-specific)
@@ -122,6 +137,22 @@ bsp:
     #     - bsp/qemu/overlay/                 # Re-run if overlay files change
     #     - strux.yaml                        # Re-run if main config changes
     #
+    # - location: ./scripts/build-kernel.sh
+    #   step: custom_kernel
+    #   description: "Custom kernel build (replaces built-in)"
+    #   cached_generated_artifacts:
+    #     - cache/kernel/kernel.img
+    #   depends_on:
+    #     - ./configs/kernel.config
+    #
+    # - location: ./scripts/build-bootloader.sh
+    #   step: custom_bootloader
+    #   description: "Custom bootloader build (replaces built-in)"
+    #   cached_generated_artifacts:
+    #     - cache/bootloader/u-boot.bin
+    #   depends_on:
+    #     - ./dts/board-u-boot.dts
+    #
     # - location: ./scripts/flash-to-sd.sh
     #   step: flash_script
     #   description: "Flash image to SD card"
@@ -156,10 +187,37 @@ bsp:
       # defconfig: qemu_arm64_defconfig
 
       # --- Bootloader Device Tree (optional) ---
-      # Provides a custom U-Boot DTS for SPL/U-Boot init.
+      # Provides custom U-Boot DTS/DTSI files for SPL/U-Boot init.
       # If omitted, U-Boot uses its built-in default device tree.
+      #
+      # Two modes are supported:
+      #   1. Standard mode: DTS files are copied to U-Boot tree and compiled with U-Boot includes
+      #   2. Standalone mode: DTS is complete (e.g. extracted from running system), compiled
+      #      externally with dtc and passed to U-Boot via EXT_DTB (no U-Boot includes)
+      #
       # device_tree:
+      #   # Primary DTS file(s) to compile (required if device_tree is set)
       #   dts: ./dts/board-u-boot.dts
+      #   # Or multiple DTS files:
+      #   # dts:
+      #   #   - ./dts/board-u-boot.dts
+      #   #   - ./dts/board-u-boot-extra.dts
+      #   
+      #   # DTSI include files (optional) - copied so DTS can #include them
+      #   # dtsi:
+      #   #   - ./dts/board-common.dtsi
+      #   #   - ./dts/board-pinctrl.dtsi
+      #   
+      #   # Additional include paths (optional) - all *.dts/*.dtsi files are copied
+      #   # include_paths:
+      #   #   - ./dts/includes
+      #
+      #   # Standalone mode (optional, default: false)
+      #   # Set to true if the DTS is complete and self-contained (e.g. extracted from
+      #   # a running Linux system via: dtc -I fs /sys/firmware/devicetree/base > board.dts)
+      #   # The DTS will be compiled externally with dtc and passed to U-Boot via EXT_DTB,
+      #   # bypassing U-Boot's include mechanism (rk3288-u-boot.dtsi, etc.)
+      #   # standalone: true
 
       # --- Boot method - How kernel is loaded by bootloader ---
       #   - extlinux: U-Boot reads /boot/extlinux/extlinux.conf (portable, recommended)
@@ -244,8 +302,12 @@ bsp:
 
       # --- Device Tree Configuration ---
       # device_tree:
-      #   # --- Primary DTS file (filename searches in kernel's arch/*/boot/dts/, path treats as external) ---
+      #   # --- Primary DTS file(s) (filename searches in kernel's arch/*/boot/dts/, path treats as external) ---
       #   dts: qemu-arm64.dts  # or "./dts/qemu-arm64-2.dts" for external file
+      #   # Or multiple DTS files:
+      #   # dts:
+      #   #   - qemu-arm64.dts
+      #   #   - ./dts/qemu-arm64-2.dts
 
       #   # --- DTS overlays to apply to base device tree ---
       #   overlays:

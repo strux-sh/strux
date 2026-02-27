@@ -137,7 +137,8 @@ program.command("dev")
     .option("--debug", "Show device log streams")
     .option("--vite", "Show Vite dev server output")
     .option("--no-app-debug", "Disable app output streaming")
-    .action(async (options: {remote?: boolean, clean?: boolean, debug?: boolean, vite?: boolean, appDebug?: boolean}) => {
+    .option("--no-rebuild", "Skip the initial build and use existing artifacts")
+    .action(async (options: {remote?: boolean, clean?: boolean, debug?: boolean, vite?: boolean, appDebug?: boolean, rebuild?: boolean}) => {
 
         try {
 
@@ -147,6 +148,7 @@ program.command("dev")
             Settings.devDebug = options.debug ?? false
             Settings.devViteDebug = options.vite ?? false
             Settings.devAppDebug = options.appDebug ?? true
+            Settings.noRebuild = options.rebuild === false
             await dev()
 
         } catch (err) {

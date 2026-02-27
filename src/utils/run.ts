@@ -35,6 +35,12 @@ export class RunnerClass {
     private dockerImageBuilt = false
 
     /**
+     * When true, runScriptInDocker skips the per-script chown.
+     * Set this during the build pipeline and call chownProjectFiles() once at the end.
+     */
+    public skipChown = false
+
+    /**
      * Gets the current user ID and group ID for passing to Docker container
      * Returns null on Windows (Docker Desktop handles permissions automatically)
      */
@@ -272,6 +278,60 @@ export class RunnerClass {
         return { imageHash: currentHash, rebuilt: true }
     }
 
+    /**
+     * Builds the chown command string for fixing file permissions after Docker runs.
+     * Returns null on Windows or if user info is unavailable.
+     */
+    private getChownCommand(): string | null {
+        const userInfo = this.getHostUserInfo()
+        if (!userInfo) return null
+        return `(UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -path "*/.git" -prune -o -exec chown -h "$UIDGID" {} +)`
+    }
+
+    /**
+     * Runs a standalone chown on the project directory inside Docker.
+     * Use this at the end of a build pipeline instead of chowning after every step.
+     */
+    public async chownProjectFiles(): Promise<void> {
+        const chownCmd = this.getChownCommand()
+        if (!chownCmd) return
+
+        if (!this.dockerImageBuilt) await this.prepareDockerImage(undefined)
+
+        const args: string[] = [
+            "docker", "run", "--rm", "-i", "--privileged",
+            "-v", `${Settings.projectPath}:/project`,
+            "strux-builder", "/bin/bash", "-c", chownCmd
+        ]
+
+        const spinner = new Spinner("Fixing file permissions...")
+        if (!Settings.verbose) {
+            spinner.start()
+        } else {
+            Logger.log("Fixing file permissions...")
+        }
+
+        const proc = Bun.spawn(args, {
+            stdout: Settings.verbose && !Logger.hasSink() ? "inherit" : "pipe",
+            stderr: Settings.verbose && !Logger.hasSink() ? "inherit" : "pipe",
+        })
+
+        const exitCode = await proc.exited
+
+        if (exitCode === 0) {
+            if (Settings.verbose) {
+                Logger.success("File permissions fixed")
+            } else {
+                spinner.stopWithSuccess("File permissions fixed")
+            }
+        } else {
+            if (!Settings.verbose) {
+                spinner.stop()
+            }
+            Logger.warning("Failed to fix file permissions. You may need to run: sudo chown -R $(id -u):$(id -g) .")
+        }
+    }
+
     public async runScriptInDocker(script: string, options: Omit<RunnerOptions, "cwd">) {
         if (!this.dockerImageBuilt) await this.prepareDockerImage(undefined)
 
@@ -284,19 +344,16 @@ export class RunnerClass {
             Logger.log(options.message)
         }
 
-        // Build the script with chown at the end to fix permissions
-        const userInfo = this.getHostUserInfo()
-        // Trim trailing whitespace/newlines from script before appending chown command
+        // Build the script, optionally appending chown to fix permissions.
+        // When skipChown is true (e.g., during build pipeline), chown is deferred
+        // to a single call at the end via chownProjectFiles().
         let finalScript = script.trimEnd()
 
-        // Append chown command to fix permissions after script execution
-        // Docker runs as root, so it can chown the mounted volume
-        // Note: chown works with numeric UID/GID even if the user doesn't exist in the container
-        // The host system will resolve these IDs to the actual user/group names
-        if (userInfo) {
-            // Avoid chowning the kernel source cache, as it's huge and slow.
-            // If the BSP kernel source cache exists at dist/cache/{bsp}/kernel-source, exclude it.
-            finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -exec chown -h "$UIDGID" {} +)`
+        if (!this.skipChown) {
+            const chownCmd = this.getChownCommand()
+            if (chownCmd) {
+                finalScript = `${finalScript} && ${chownCmd}`
+            }
         }
 
         // Build Docker command arguments array directly
@@ -468,7 +525,7 @@ export class RunnerClass {
         let finalScript = script.trimEnd()
 
         if (userInfo) {
-            finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -exec chown -h "$UIDGID" {} +)`
+            finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -path "*/.git" -prune -o -exec chown -h "$UIDGID" {} +)`
         }
 
         // Build Docker command arguments array with TTY support

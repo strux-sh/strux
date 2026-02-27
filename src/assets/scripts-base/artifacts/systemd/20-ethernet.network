@@ -1,5 +1,5 @@
 [Match]
-Name=eth* enp* ens* eno*
+Name=eth* enp* ens* eno* end*
 
 [Network]
 DHCP=yes

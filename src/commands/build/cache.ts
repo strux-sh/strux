@@ -161,6 +161,16 @@ export async function computeFileHash(filePath: string): Promise<string | null> 
 }
 
 /**
+ * Computes a file hash, returning a stable hash even if the file is missing.
+ * This lets cache invalidation detect removals of tracked files.
+ */
+async function computeFileHashOrMissing(filePath: string): Promise<string> {
+    const hash = await computeFileHash(filePath)
+    if (hash) return hash
+    return Bun.hash(`missing:${filePath}`).toString(16)
+}
+
+/**
  * Computes a combined hash of all files in a directory (recursively).
  * Ignores common patterns like node_modules, .git, etc.
  */
@@ -273,6 +283,68 @@ function extractYamlValue(filePath: string, keyPath: string): string | null {
 }
 
 /**
+ * Extracts a raw value from a YAML file at a given dot-notation path
+ */
+function extractYamlValueRaw(filePath: string, keyPath: string): unknown | null {
+    if (!fileExists(filePath)) return null
+
+    try {
+        const content = readFileSync(filePath, "utf-8")
+        const parsed = Bun.YAML.parse(content)
+
+        const parts = keyPath.split(".")
+        let current: unknown = parsed
+
+        for (const part of parts) {
+            if (current === null || current === undefined) return null
+            if (typeof current !== "object") return null
+            current = (current as Record<string, unknown>)[part]
+        }
+
+        if (current === null || current === undefined) return null
+        return current
+    } catch {
+        return null
+    }
+}
+
+function normalizeYamlString(value: string): string {
+    return value.trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "")
+}
+
+function looksLikePath(value: string): boolean {
+    if (value.includes("\n")) return false
+    if (value.startsWith("./") || value.startsWith("/")) return true
+    if (value.includes("/")) return true
+    return /\.(dts|dtsi|dtb|dtbo|config|cfg|patch|bin|img|itb)$/i.test(value)
+}
+
+function resolveYamlPath(rawPath: string, bspName: string): string {
+    const trimmed = normalizeYamlString(rawPath)
+    if (trimmed.startsWith("/")) return trimmed
+    if (trimmed.startsWith("./")) {
+        return join(Settings.projectPath, "bsp", bspName, trimmed.slice(2))
+    }
+    if (trimmed.startsWith("bsp/") || trimmed.startsWith("dist/") || trimmed.startsWith("overlay/") || trimmed.startsWith("src/")) {
+        return join(Settings.projectPath, trimmed)
+    }
+    return join(Settings.projectPath, "bsp", bspName, trimmed)
+}
+
+async function addYamlFileHash(
+    hashes: Record<string, string>,
+    yamlFile: string,
+    keyPath: string,
+    resolvedPath: string
+): Promise<void> {
+    const keyPathSuffix = resolvedPath.startsWith(Settings.projectPath)
+        ? resolvedPath.slice(Settings.projectPath.length + 1)
+        : resolvedPath
+    const hash = await computeFileHashOrMissing(resolvedPath)
+    hashes[`yaml-file:${yamlFile}:${keyPath}:${keyPathSuffix}`] = hash
+}
+
+/**
  * Computes all dependency hashes for a step
  */
 export async function computeDependencyHashes(
@@ -293,10 +365,8 @@ export async function computeDependencyHashes(
         for (const file of deps.files) {
             const resolvedPath = resolvePlaceholders(file, bspName)
             const fullPath = join(Settings.projectPath, resolvedPath)
-            const hash = await computeFileHash(fullPath)
-            if (hash) {
-                hashes[`file:${resolvedPath}`] = hash
-            }
+            const hash = await computeFileHashOrMissing(fullPath)
+            hashes[`file:${resolvedPath}`] = hash
         }
     }
 
@@ -329,6 +399,71 @@ export async function computeDependencyHashes(
             if (value) {
                 const hash = Bun.hash(value).toString(16)
                 hashes[`yaml:${resolvedFile}:${yamlKey.keyPath}`] = hash
+            }
+        }
+    }
+
+    // Hash YAML-referenced files
+    if (deps.yamlFileDependencies) {
+        for (const yamlDep of deps.yamlFileDependencies) {
+            const resolvedFile = resolvePlaceholders(yamlDep.file, bspName)
+            const fullPath = join(Settings.projectPath, resolvedFile)
+            const value = extractYamlValueRaw(fullPath, yamlDep.keyPath)
+            if (value === null || value === undefined) continue
+
+            const values = Array.isArray(value) ? value : [value]
+
+            switch (yamlDep.mode) {
+                case "file": {
+                    for (const entry of values) {
+                        if (typeof entry !== "string") continue
+                        const raw = normalizeYamlString(entry)
+                        if (!looksLikePath(raw)) continue
+                        const resolved = resolveYamlPath(raw, bspName)
+                        await addYamlFileHash(hashes, resolvedFile, yamlDep.keyPath, resolved)
+                    }
+                    break
+                }
+                case "file-list": {
+                    for (const entry of values) {
+                        if (typeof entry !== "string") continue
+                        const raw = normalizeYamlString(entry)
+                        if (!looksLikePath(raw)) continue
+                        const resolved = resolveYamlPath(raw, bspName)
+                        await addYamlFileHash(hashes, resolvedFile, yamlDep.keyPath, resolved)
+                    }
+                    break
+                }
+                case "file-or-inline-list": {
+                    let idx = 0
+                    for (const entry of values) {
+                        if (typeof entry !== "string") continue
+                        const raw = normalizeYamlString(entry)
+                        if (looksLikePath(raw)) {
+                            const resolved = resolveYamlPath(raw, bspName)
+                            await addYamlFileHash(hashes, resolvedFile, yamlDep.keyPath, resolved)
+                        } else {
+                            const inlineHash = Bun.hash(`inline:${raw}`).toString(16)
+                            hashes[`yaml-inline:${resolvedFile}:${yamlDep.keyPath}:${idx}`] = inlineHash
+                        }
+                        idx++
+                    }
+                    break
+                }
+                case "file-list-in-objects": {
+                    const itemPath = yamlDep.itemPath
+                    if (!itemPath) break
+                    for (const entry of values) {
+                        if (!entry || typeof entry !== "object") continue
+                        const rawValue = (entry as Record<string, unknown>)[itemPath]
+                        if (typeof rawValue !== "string") continue
+                        const raw = normalizeYamlString(rawValue)
+                        if (!looksLikePath(raw)) continue
+                        const resolved = resolveYamlPath(raw, bspName)
+                        await addYamlFileHash(hashes, resolvedFile, yamlDep.keyPath, resolved)
+                    }
+                    break
+                }
             }
         }
     }
@@ -377,9 +512,10 @@ export async function shouldRebuildStep(
         clean?: boolean
         bspName: string
         ignorePatterns?: string[]
+        skippedSteps?: BuildStep[]
     }
 ): Promise<RebuildDecision> {
-    const { forceRebuild = [], clean = false, bspName, ignorePatterns = [] } = options
+    const { forceRebuild = [], clean = false, bspName, ignorePatterns = [], skippedSteps = [] } = options
 
     // 1. Clean build requested
     if (clean) {
@@ -434,6 +570,9 @@ export async function shouldRebuildStep(
     // 6. Check upstream steps (transitive invalidation)
     if (deps.dependsOnSteps) {
         for (const upstreamStep of deps.dependsOnSteps) {
+            // Skip dependency check for conditionally disabled steps
+            if (skippedSteps.includes(upstreamStep)) continue
+
             const upstreamCached = manifest.steps[upstreamStep]
 
             // If upstream has no cache, we can't determine if it changed
@@ -549,4 +688,3 @@ export async function updateBspScriptCache(
     manifest.bspScripts[cacheKey] = entry
     await saveBuildCacheManifest(manifest, bspName)
 }
-

@@ -55,11 +55,14 @@ const ScriptStepSchema = z.enum([
 
     // Kernel (conditional: only runs if boot.kernel.custom_kernel: true)
     "before_kernel",
+    "after_kernel_extract",  // After source fetch + patch, before config + build
     "after_kernel",
+    "custom_kernel",         // Replaces the built-in kernel build (extract + build phases)
 
     // Bootloader (conditional: only runs if boot.bootloader.enabled: true)
     "before_bootloader",
     "after_bootloader",
+    "custom_bootloader",     // Replaces the built-in bootloader build
 
     // RootFS creation
     "before_rootfs",
@@ -103,11 +106,25 @@ const BootBlobSchema = z.object({
     make_var: z.string().optional(),
 })
 
-// Device tree configuration schema
+// Device tree configuration schema (for kernel)
 const DeviceTreeSchema = z.object({
-    dts: z.string(),
+    dts: z.union([z.string(), z.array(z.string())]),
     overlays: z.array(z.string()).optional(),
     include_paths: z.array(z.string()).optional(),
+})
+
+// Bootloader device tree configuration schema (for U-Boot)
+// Supports DTSI includes that are copied alongside DTS files
+const BootloaderDeviceTreeSchema = z.object({
+    // Primary DTS file(s) to compile
+    dts: z.union([z.string(), z.array(z.string())]),
+    // DTSI files that are included by the DTS files
+    dtsi: z.union([z.string(), z.array(z.string())]).optional(),
+    // Additional include paths for DTS compilation
+    include_paths: z.array(z.string()).optional(),
+    // If true, the DTS is standalone (no includes needed, e.g. extracted from running system)
+    // Will be compiled externally with dtc and passed via EXT_DTB
+    standalone: z.boolean().optional(),
 })
 
 // Bootloader configuration schema
@@ -120,11 +137,11 @@ const BootloaderSchema = z.object({
     defconfig: z.string().optional(),
     fragments: z.array(z.string()).optional(),
     patches: z.array(z.string()).optional(),
-    device_tree: DeviceTreeSchema.optional(),
-    
+    device_tree: BootloaderDeviceTreeSchema.optional(),
+
     // Boot method - how kernel is loaded
     boot_method: z.enum(["extlinux", "script", "direct"]).optional(),
-    
+
     // Boot script/config template path
     boot_config: z.string().optional(),
 
@@ -155,11 +172,17 @@ const RootFSSchema = z.object({
     packages: z.array(z.string()).optional(),
 })
 
+// Cage compositor configuration schema
+const CageSchema = z.object({
+    env: z.array(z.string()).optional(),
+})
+
 // BSP configuration schema
 const BSPConfigSchema = z.object({
     name: z.string(),
     description: z.string(),
     display: DisplaySchema.optional(),
+    cage: CageSchema.optional(),
     arch: z.string(),
     hostname: z.string(),
     scripts: z.array(ScriptSchema).optional(),

@@ -33,6 +33,20 @@ export interface YamlKeyDependency {
 }
 
 /**
+ * YAML file dependency specification
+ */
+export interface YamlFileDependency {
+    /** Path to YAML file (supports {bsp} placeholder) */
+    file: string
+    /** Dot-notation path to the key (e.g., "bsp.boot.kernel.device_tree.dts") */
+    keyPath: string
+    /** How to interpret the YAML value */
+    mode: "file" | "file-list" | "file-or-inline-list" | "file-list-in-objects"
+    /** For list-of-objects, the key to read on each object (e.g., "path") */
+    itemPath?: string
+}
+
+/**
  * Dependency specification for a build step
  */
 export interface StepDependency {
@@ -47,6 +61,8 @@ export interface StepDependency {
     excludePatterns?: string[]
     /** YAML key paths to extract and hash */
     yamlKeys?: YamlKeyDependency[]
+    /** YAML file references to resolve and hash */
+    yamlFileDependencies?: YamlFileDependency[]
     /** Internal bundled assets (hashed from embedded content) */
     internalAssets?: string[]
     /**
@@ -144,13 +160,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
     },
 
     kernel: {
-        // Kernel sources are cached in dist/cache/{bsp}/kernel-source/
-        // Track kernel configuration files and patches
-        directories: [
-            "bsp/{bsp}/configs/",
-            "bsp/{bsp}/patches/",
-            "bsp/{bsp}/dts/"
-        ],
+        // Track specific kernel inputs referenced in bsp.yaml
+        files: ["bsp/{bsp}/configs/kernel.config"],
         yamlKeys: [
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.source" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.version" },
@@ -159,6 +170,13 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.patches" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.device_tree" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
+        ],
+        yamlFileDependencies: [
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.defconfig", mode: "file" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.fragments", mode: "file-or-inline-list" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.patches", mode: "file-list" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.device_tree.dts", mode: "file" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.device_tree.overlays", mode: "file-list" }
         ],
         internalAssets: ["@build-kernel-script"],
         // BSP-specific cache (architecture-dependent kernel artifacts)
@@ -169,11 +187,6 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
     },
 
     bootloader: {
-        directories: [
-            "bsp/{bsp}/configs/",
-            "bsp/{bsp}/patches/",
-            "bsp/{bsp}/blobs/"
-        ],
         yamlKeys: [
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.type" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.source" },
@@ -183,7 +196,14 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.patches" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.stages" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.blobs" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.device_tree" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
+        ],
+        yamlFileDependencies: [
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.device_tree.dts", mode: "file" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.fragments", mode: "file-or-inline-list" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.patches", mode: "file-list" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.bootloader.blobs", mode: "file-list-in-objects", itemPath: "path" }
         ],
         internalAssets: ["@build-bootloader-script"],
         artifacts: [
@@ -197,6 +217,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.packages" },
             { file: "strux.yaml", keyPath: "rootfs.packages" }
         ],
+        // No longer depends on kernel or bootloader — kernel installation
+        // moved to rootfs-post so kernel changes don't trigger a full base rebuild
         internalAssets: ["@build-base-script"],
         // BSP-specific cache (arch + packages specific)
         artifacts: ["cache/{bsp}/rootfs-base.tar.gz"]
@@ -218,9 +240,13 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "strux.yaml", keyPath: "rootfs.overlay" },
             { file: "strux.yaml", keyPath: "boot.splash" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.overlay" },
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.hostname" }
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.hostname" },
+            // Kernel-related keys — kernel installation now happens in post
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.custom_kernel" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.env" }
         ],
-        dependsOnSteps: ["frontend", "application", "cage", "wpe", "client", "rootfs-base"],
+        dependsOnSteps: ["frontend", "application", "cage", "wpe", "client", "kernel", "rootfs-base"],
         // Only the build script is internal - plymouth/systemd/init are user-modifiable in dist/artifacts/
         internalAssets: ["@build-post-script"],
         // Fallback to internal assets if dist/artifacts/ directories don't exist yet (first build)

@@ -214,8 +214,32 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
 }
 
 /**
+ * Extracts (fetches) and patches the Linux kernel source.
+ * This is the first phase of the kernel build, separated so that
+ * BSP scripts can modify the kernel source tree (e.g., install boot logos)
+ * via the after_kernel_extract hook before configuration and compilation.
+ */
+export async function extractKernel(): Promise<void> {
+    const bspName = Settings.bspName!
+
+    await Runner.runScriptInDocker(scriptBuildKernel, {
+        message: "Fetching and patching kernel source...",
+        messageOnError: "Failed to fetch/patch kernel source. Please check the build logs for more information.",
+        exitOnError: true,
+        env: {
+            PRESELECTED_BSP: bspName,
+            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+            KERNEL_PHASE: "extract"
+        }
+    })
+
+    Logger.success("Kernel source extracted and patched")
+}
+
+/**
  * Builds the Linux kernel for the target architecture.
- * Handles source fetching, patching, configuration, and cross-compilation.
+ * This is the second phase: configuration, compilation, and artifact installation.
+ * Assumes source has already been fetched and patched by extractKernel().
  */
 export async function buildKernel(): Promise<void> {
     const bspName = Settings.bspName!
@@ -226,7 +250,8 @@ export async function buildKernel(): Promise<void> {
         exitOnError: true,
         env: {
             PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
+            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+            KERNEL_PHASE: "build"
         }
     })
 

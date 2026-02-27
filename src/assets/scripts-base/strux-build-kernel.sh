@@ -9,6 +9,16 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
+# ============================================================================
+# PHASE CONTROL
+# ============================================================================
+# KERNEL_PHASE controls which part of the kernel build to execute:
+#   "extract" - Source fetch + patch only (stops before config)
+#   "build"   - Config + build + install only (assumes source already fetched)
+#   ""        - Run everything (backwards compatible default)
+# ============================================================================
+KERNEL_PHASE="${KERNEL_PHASE:-}"
+
 # Project directory (mounted at /project in Docker container)
 PROJECT_DIR="/project"
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default
@@ -66,8 +76,8 @@ if [ -z "$KERNEL_DEFCONFIG" ] || [ "$KERNEL_DEFCONFIG" = "null" ]; then
     KERNEL_DEFCONFIG="defconfig"
 fi
 KERNEL_FRAGMENTS=$(yq -r '.bsp.boot.kernel.fragments[]' "$BSP_CONFIG" 2>/dev/null || echo "")
-KERNEL_PATCHES=$(yq '.bsp.boot.kernel.patches[]' "$BSP_CONFIG" 2>/dev/null || echo "")
-KERNEL_DTS=$(yq '.bsp.boot.kernel.device_tree.dts' "$BSP_CONFIG" 2>/dev/null || echo "")
+KERNEL_PATCHES=$(yq -r '.bsp.boot.kernel.patches[]' "$BSP_CONFIG" 2>/dev/null || echo "")
+KERNEL_DTS=$(yq -r '.bsp.boot.kernel.device_tree.dts | (if type == "!!seq" then .[] else . end)' "$BSP_CONFIG" 2>/dev/null || echo "")
 KERNEL_DTS_OVERLAYS=$(yq '.bsp.boot.kernel.device_tree.overlays[]' "$BSP_CONFIG" 2>/dev/null || echo "")
 KERNEL_DTS_INCLUDE_PATHS=$(yq '.bsp.boot.kernel.device_tree.include_paths[]' "$BSP_CONFIG" 2>/dev/null || echo "")
 
@@ -126,11 +136,27 @@ else
 fi
 
 # ============================================================================
+# PHASE GATE: Build phase skips source fetch + patch
+# ============================================================================
+# If running in "build" phase, skip directly to configuration.
+# The kernel source should already be fetched and patched.
+# ============================================================================
+if [ "$KERNEL_PHASE" = "build" ]; then
+    if [ ! -d "$KERNEL_SOURCE_DIR" ]; then
+        echo "Error: Kernel source not found at $KERNEL_SOURCE_DIR (build phase requires prior extract)"
+        exit 1
+    fi
+    cd "$KERNEL_SOURCE_DIR"
+    progress "Resuming kernel build (build phase) - source already extracted"
+fi
+
+# ============================================================================
 # SOURCE FETCHING
 # ============================================================================
 # Parse URL fragment for git ref and fetch kernel source
 # ============================================================================
 
+if [ "$KERNEL_PHASE" != "build" ]; then
 # Parse URL and optional git ref from fragment
 SOURCE_URL="${KERNEL_SOURCE%%#*}"
 GIT_REF="${KERNEL_SOURCE#*#}"
@@ -262,6 +288,10 @@ if [ -n "$KERNEL_PATCHES" ]; then
     done <<< "$KERNEL_PATCHES"
     
     for patch in "${PATCH_ARRAY[@]}"; do
+        # Trim whitespace/quotes from patch entry
+        patch=$(echo "$patch" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        [ -z "$patch" ] && continue
+
         # Resolve patch path (relative to BSP folder or absolute)
         if [[ "$patch" =~ ^\./ ]]; then
             PATCH_PATH="$BSP_FOLDER/${patch#./}"
@@ -271,14 +301,35 @@ if [ -n "$KERNEL_PATCHES" ]; then
         
         if [ -f "$PATCH_PATH" ]; then
             progress "Applying patch: $patch"
-            patch -p1 < "$PATCH_PATH" || {
+            if patch -p1 --dry-run < "$PATCH_PATH" >/dev/null 2>&1; then
+                patch -p1 < "$PATCH_PATH" || {
+                    echo "Error: Failed to apply patch: $patch"
+                    exit 1
+                }
+            elif patch -p1 -R --dry-run < "$PATCH_PATH" >/dev/null 2>&1; then
+                progress "Patch already applied: $patch"
+            else
                 echo "Error: Failed to apply patch: $patch"
                 exit 1
-            }
+            fi
         else
             echo "Warning: Patch file not found: $PATCH_PATH"
         fi
     done
+fi
+
+fi # End of [ "$KERNEL_PHASE" != "build" ] block (source fetch + patch)
+
+# ============================================================================
+# PHASE GATE: Extract phase ends here
+# ============================================================================
+# If running in "extract" phase, stop after source fetch + patch.
+# This allows BSP scripts (e.g., after_kernel_extract) to modify the kernel
+# source tree before configuration and compilation begin.
+# ============================================================================
+if [ "$KERNEL_PHASE" = "extract" ]; then
+    progress "Kernel source extraction and patching complete (extract phase)"
+    exit 0
 fi
 
 # ============================================================================
@@ -414,101 +465,159 @@ make -j$(nproc) ARCH="$KERNEL_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPI
 # Build device tree blobs if DTS is specified
 if [ -n "$KERNEL_DTS" ] && [ "$KERNEL_DTS" != "null" ]; then
     progress "Building device tree blobs..."
-    
-    # Trim whitespace and quotes from KERNEL_DTS
-    KERNEL_DTS=$(echo "$KERNEL_DTS" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
-    
-    # Check if this is an external DTS file (starts with ./ or is an absolute path outside kernel)
-    if [[ "$KERNEL_DTS" =~ ^\./ ]]; then
-        # External DTS file - resolve path relative to BSP folder
-        EXTERNAL_DTS_PATH="$BSP_FOLDER/${KERNEL_DTS#./}"
-        
-        if [ ! -f "$EXTERNAL_DTS_PATH" ]; then
-            echo "Error: External DTS file not found: $EXTERNAL_DTS_PATH"
-            exit 1
-        fi
-        
-        progress "Using external DTS file: $EXTERNAL_DTS_PATH"
-        
-        # Get the base name of the DTS file
-        DTS_BASENAME=$(basename "$EXTERNAL_DTS_PATH")
-        DTB_BASENAME="${DTS_BASENAME%.dts}.dtb"
-        
-        # Determine the kernel DTS include directories based on architecture
-        if [ "$KERNEL_ARCH" = "arm64" ]; then
-            DTS_INCLUDE_DIR="arch/arm64/boot/dts"
-        elif [ "$KERNEL_ARCH" = "arm" ]; then
-            DTS_INCLUDE_DIR="arch/arm/boot/dts"
-        elif [ "$KERNEL_ARCH" = "x86_64" ]; then
-            DTS_INCLUDE_DIR="arch/x86/boot/dts"
+
+    KERNEL_DTS_ARRAY=()
+    while IFS= read -r dts; do
+        [ -n "$dts" ] && KERNEL_DTS_ARRAY+=("$dts")
+    done <<< "$KERNEL_DTS"
+
+    IN_TREE_DTS_NAMES=()
+    EXTERNAL_DTS_PATHS=()
+    DTS_INCLUDE_PATHS_FROM_LIST=()
+
+    for dts in "${KERNEL_DTS_ARRAY[@]}"; do
+        dts=$(echo "$dts" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        [ -z "$dts" ] && continue
+
+        if [[ "$dts" =~ ^\./ ]]; then
+            RESOLVED_DTS_PATH="$BSP_FOLDER/${dts#./}"
+            if [[ "$RESOLVED_DTS_PATH" =~ \.dtsi$ ]]; then
+                if [ ! -f "$RESOLVED_DTS_PATH" ]; then
+                    echo "Error: External DTSI file not found: $RESOLVED_DTS_PATH"
+                    exit 1
+                fi
+                DTS_INCLUDE_PATHS_FROM_LIST+=("$(dirname "$RESOLVED_DTS_PATH")")
+            else
+                EXTERNAL_DTS_PATHS+=("$RESOLVED_DTS_PATH")
+            fi
+        elif [[ "$dts" =~ ^/ ]]; then
+            RESOLVED_DTS_PATH="$dts"
+            if [[ "$RESOLVED_DTS_PATH" =~ \.dtsi$ ]]; then
+                if [ ! -f "$RESOLVED_DTS_PATH" ]; then
+                    echo "Error: External DTSI file not found: $RESOLVED_DTS_PATH"
+                    exit 1
+                fi
+                DTS_INCLUDE_PATHS_FROM_LIST+=("$(dirname "$RESOLVED_DTS_PATH")")
+            else
+                EXTERNAL_DTS_PATHS+=("$RESOLVED_DTS_PATH")
+            fi
         else
-            DTS_INCLUDE_DIR="arch/$KERNEL_ARCH/boot/dts"
+            if [[ "$dts" =~ \.dtsi$ ]]; then
+                continue
+            fi
+            IN_TREE_DTS_NAMES+=("${dts%.dts}")
         fi
-        
-        # Create output directory for the DTB
+    done
+
+    # Determine the kernel DTS include directories based on architecture
+    if [ "$KERNEL_ARCH" = "arm64" ]; then
+        DTS_INCLUDE_DIR="arch/arm64/boot/dts"
+    elif [ "$KERNEL_ARCH" = "arm" ]; then
+        DTS_INCLUDE_DIR="arch/arm/boot/dts"
+    elif [ "$KERNEL_ARCH" = "x86_64" ]; then
+        DTS_INCLUDE_DIR="arch/x86/boot/dts"
+    else
+        DTS_INCLUDE_DIR="arch/$KERNEL_ARCH/boot/dts"
+    fi
+
+    # Build the kernel's DTC first if we need external DTS compilation
+    if [ ${#EXTERNAL_DTS_PATHS[@]} -gt 0 ] && [ ! -f "scripts/dtc/dtc" ]; then
+        progress "Building kernel's device tree compiler..."
+        make ARCH="$KERNEL_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} scripts/dtc/dtc || {
+            echo "Error: Failed to build kernel's DTC"
+            exit 1
+        }
+    fi
+
+    # Resolve extra include paths for external DTS compilation (optional)
+    EXTRA_DTS_INCLUDE_DIRS=()
+    if [ -n "$KERNEL_DTS_INCLUDE_PATHS" ]; then
+        while IFS= read -r inc; do
+            [ -z "$inc" ] && continue
+            if [[ "$inc" =~ ^\./ ]]; then
+                EXTRA_DTS_INCLUDE_DIRS+=("$BSP_FOLDER/${inc#./}")
+            elif [[ "$inc" =~ ^/ ]]; then
+                EXTRA_DTS_INCLUDE_DIRS+=("$inc")
+            else
+                EXTRA_DTS_INCLUDE_DIRS+=("$BSP_FOLDER/$inc")
+            fi
+        done <<< "$KERNEL_DTS_INCLUDE_PATHS"
+    fi
+    for inc in "${DTS_INCLUDE_PATHS_FROM_LIST[@]}"; do
+        EXTRA_DTS_INCLUDE_DIRS+=("$inc")
+    done
+
+    # Compile external DTS files
+    if [ ${#EXTERNAL_DTS_PATHS[@]} -gt 0 ]; then
         DTB_OUTPUT_PATH="$KERNEL_OUTPUT_DIR/dtbs"
         mkdir -p "$DTB_OUTPUT_PATH"
-        
-        progress "Compiling external DTS with kernel includes..."
-        
-        # Build the kernel's DTC first if it doesn't exist
-        if [ ! -f "scripts/dtc/dtc" ]; then
-            progress "Building kernel's device tree compiler..."
-            make ARCH="$KERNEL_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} scripts/dtc/dtc || {
-                echo "Error: Failed to build kernel's DTC"
+
+        for EXTERNAL_DTS_PATH in "${EXTERNAL_DTS_PATHS[@]}"; do
+            if [ ! -f "$EXTERNAL_DTS_PATH" ]; then
+                echo "Error: External DTS file not found: $EXTERNAL_DTS_PATH"
+                exit 1
+            fi
+
+            progress "Using external DTS file: $EXTERNAL_DTS_PATH"
+
+            DTS_BASENAME=$(basename "$EXTERNAL_DTS_PATH")
+            DTB_BASENAME="${DTS_BASENAME%.dts}.dtb"
+
+            progress "Preprocessing DTS file..."
+            CPP_INCLUDES=(
+                -I "$DTS_INCLUDE_DIR"
+                -I "$DTS_INCLUDE_DIR/include"
+                -I "include"
+                -I "scripts/dtc/include-prefixes"
+            )
+            for inc in "${EXTRA_DTS_INCLUDE_DIRS[@]}"; do
+                CPP_INCLUDES+=(-I "$inc")
+            done
+
+            cpp -nostdinc \
+                "${CPP_INCLUDES[@]}" \
+                -undef -D__DTS__ -x assembler-with-cpp \
+                "$EXTERNAL_DTS_PATH" \
+                -o "/tmp/preprocessed-${DTS_BASENAME}" 2>&1 || {
+                echo "Error: Failed to preprocess DTS file"
+                echo "Make sure your DTS includes exist in the kernel source tree"
                 exit 1
             }
-        fi
-        
-        # Compile the external DTS file using cpp (C preprocessor) + kernel's dtc
-        # This allows referencing internal kernel DTS includes without copying the file
-        progress "Preprocessing DTS file..."
-        
-        # Run the C preprocessor with kernel include paths
-        # This handles #include directives for internal kernel DTS files
-        cpp -nostdinc \
-            -I "$DTS_INCLUDE_DIR" \
-            -I "$DTS_INCLUDE_DIR/include" \
-            -I "include" \
-            -I "scripts/dtc/include-prefixes" \
-            -undef -D__DTS__ -x assembler-with-cpp \
-            "$EXTERNAL_DTS_PATH" \
-            -o "/tmp/preprocessed-${DTS_BASENAME}" 2>&1 || {
-            echo "Error: Failed to preprocess DTS file"
-            echo "Make sure your DTS includes exist in the kernel source tree"
-            exit 1
-        }
-        
-        progress "Compiling DTB: $DTB_BASENAME"
-        
-        # Compile the preprocessed DTS to DTB using the kernel's dtc
-        scripts/dtc/dtc \
-            -I dts -O dtb \
-            -i "$DTS_INCLUDE_DIR" \
-            -o "$DTB_OUTPUT_PATH/$DTB_BASENAME" \
-            "/tmp/preprocessed-${DTS_BASENAME}" 2>&1 || {
-            echo "Error: Failed to compile device tree"
-            echo ""
-            echo "DTC output:"
-            scripts/dtc/dtc -I dts -O dtb -i "$DTS_INCLUDE_DIR" "/tmp/preprocessed-${DTS_BASENAME}" 2>&1 || true
-            exit 1
-        }
-        
-        # Clean up preprocessed file
-        rm -f "/tmp/preprocessed-${DTS_BASENAME}"
-        
-        progress "External DTB compiled: $DTB_BASENAME"
-        
-        # Store the DTB name for later verification
-        CUSTOM_DTB_NAME="$DTB_BASENAME"
+
+            progress "Compiling DTB: $DTB_BASENAME"
+
+            DTC_INCLUDES=(-i "$DTS_INCLUDE_DIR")
+            for inc in "${EXTRA_DTS_INCLUDE_DIRS[@]}"; do
+                DTC_INCLUDES+=(-i "$inc")
+            done
+
+            scripts/dtc/dtc \
+                -I dts -O dtb \
+                "${DTC_INCLUDES[@]}" \
+                -o "$DTB_OUTPUT_PATH/$DTB_BASENAME" \
+                "/tmp/preprocessed-${DTS_BASENAME}" 2>&1 || {
+                echo "Error: Failed to compile device tree"
+                echo ""
+                echo "DTC output:"
+                scripts/dtc/dtc -I dts -O dtb "${DTC_INCLUDES[@]}" "/tmp/preprocessed-${DTS_BASENAME}" 2>&1 || true
+                exit 1
+            }
+
+            rm -f "/tmp/preprocessed-${DTS_BASENAME}"
+            progress "External DTB compiled: $DTB_BASENAME"
+        done
+
         EXTERNAL_DTB_ALREADY_COPIED="true"
-    else
-        # Built-in DTS or just build all DTBs
-        # Build DTBs
-        make -j$(nproc) ARCH="$KERNEL_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} dtbs || {
-            echo "Error: Failed to build device tree blobs"
-            exit 1
-        }
+    fi
+
+    # Build only the requested in-tree DTBs (avoid building all dtbs)
+    if [ ${#IN_TREE_DTS_NAMES[@]} -gt 0 ]; then
+        for dts_name in "${IN_TREE_DTS_NAMES[@]}"; do
+            make -j$(nproc) ARCH="$KERNEL_ARCH" ${CROSS_COMPILE:+CROSS_COMPILE="$CROSS_COMPILE"} "${dts_name}.dtb" || {
+                echo "Error: Failed to build device tree blob: ${dts_name}.dtb"
+                exit 1
+            }
+        done
     fi
     
     # Handle DTS overlays if specified
@@ -589,30 +698,27 @@ if [ -n "$KERNEL_DTS" ] && [ "$KERNEL_DTS" != "null" ]; then
     
     # If we compiled an external DTB, it's already in the output directory
     # Still copy any kernel-built DTBs (from make dtbs) if they exist
-    if [ "$EXTERNAL_DTB_ALREADY_COPIED" != "true" ]; then
-        # Find and copy all DTBs from kernel build
+    if [ ${#IN_TREE_DTS_NAMES[@]} -gt 0 ]; then
         DTB_ARCH_DIR=""
         if [ "$KERNEL_ARCH" = "arm64" ]; then
             DTB_ARCH_DIR="arch/arm64/boot/dts"
         elif [ "$KERNEL_ARCH" = "arm" ]; then
             DTB_ARCH_DIR="arch/arm/boot/dts"
         fi
-        
+
         if [ -n "$DTB_ARCH_DIR" ] && [ -d "$DTB_ARCH_DIR" ]; then
-            # Count DTBs found
-            DTB_COUNT=$(find "$DTB_ARCH_DIR" -name "*.dtb" 2>/dev/null | wc -l)
-            progress "Found $DTB_COUNT DTB files to copy"
-            
-            find "$DTB_ARCH_DIR" -name "*.dtb" -exec cp {} "$DTB_OUTPUT_DIR/" \; || true
+            for dts_name in "${IN_TREE_DTS_NAMES[@]}"; do
+                if [ -f "$DTB_ARCH_DIR/${dts_name}.dtb" ]; then
+                    cp "$DTB_ARCH_DIR/${dts_name}.dtb" "$DTB_OUTPUT_DIR/" || true
+                else
+                    echo "Warning: Requested DTB not found: ${dts_name}.dtb"
+                fi
+            done
             progress "Device tree blobs copied"
         fi
-    else
-        # Verify the external DTB was compiled successfully
-        if [ -n "$CUSTOM_DTB_NAME" ] && [ -f "$DTB_OUTPUT_DIR/$CUSTOM_DTB_NAME" ]; then
-            progress "Custom DTB verified: $CUSTOM_DTB_NAME"
-        elif [ -n "$CUSTOM_DTB_NAME" ]; then
-            echo "Warning: Custom DTB not found in output: $CUSTOM_DTB_NAME"
-        fi
+    elif [ "$EXTERNAL_DTB_ALREADY_COPIED" != "true" ]; then
+        # No explicit in-tree list and no external DTB: nothing to copy
+        progress "No in-tree DTBs requested; skipping DTB copy"
     fi
     
     # Copy compiled overlays if any

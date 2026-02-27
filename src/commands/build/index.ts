@@ -34,6 +34,7 @@ import {
     compileWPE,
     buildRootFS,
     buildStruxClient,
+    extractKernel,
     buildKernel,
     buildBootloader,
     postProcessRootFS,
@@ -85,6 +86,15 @@ export async function build(): Promise<void> {
     const forceRebuild = cacheConfig.force_rebuild ?? []
     const ignorePatterns = cacheConfig.ignore_patterns ?? []
 
+    // Determine which steps are conditionally disabled
+    const skippedSteps: BuildStep[] = []
+    if (!Settings.bsp?.boot?.kernel?.custom_kernel) {
+        skippedSteps.push("kernel")
+    }
+    if (!Settings.bsp?.boot?.bootloader?.enabled) {
+        skippedSteps.push("bootloader")
+    }
+
     // Prepare Docker image with cache hash tracking
     const { imageHash, rebuilt: dockerRebuilt } = await Runner.prepareDockerImage(manifest.dockerImageHash)
 
@@ -106,7 +116,8 @@ export async function build(): Promise<void> {
             forceRebuild,
             clean: Settings.clean,
             bspName,
-            ignorePatterns
+            ignorePatterns,
+            skippedSteps
         })
         if (!result.rebuild) {
             Logger.cached(`${step} (no changes detected)`)
@@ -122,145 +133,174 @@ export async function build(): Promise<void> {
         await updateStepCache(step, manifest, { bspName, ignorePatterns })
     }
 
-    // ========================================
-    // BUILD LIFECYCLE: before_build
-    // ========================================
-    await runScriptsForStep("before_build", manifest)
+    // Skip per-step chown — we'll do a single chown at the end of the build
+    Runner.skipChown = true
 
-    // ========================================
-    // FRONTEND COMPILATION
-    // ========================================
-    await runScriptsForStep("before_frontend", manifest)
-    if (await checkStepCache("frontend")) {
-        await compileFrontend()
-        await cacheStep("frontend")
-    }
-    await runScriptsForStep("after_frontend", manifest)
+    try {
+        // ========================================
+        // BUILD LIFECYCLE: before_build
+        // ========================================
+        await runScriptsForStep("before_build", manifest)
 
-    // ========================================
-    // APPLICATION COMPILATION (main.go)
-    // ========================================
-    await runScriptsForStep("before_application", manifest)
-    if (await checkStepCache("application")) {
-        await compileApplication()
-        await cacheStep("application")
-    }
-    await runScriptsForStep("after_application", manifest)
-
-    // ========================================
-    // CAGE COMPOSITOR
-    // ========================================
-    await runScriptsForStep("before_cage", manifest)
-    if (await checkStepCache("cage")) {
-        await compileCage()
-        await cacheStep("cage")
-    }
-    await runScriptsForStep("after_cage", manifest)
-
-    // ========================================
-    // WPE WEBKIT EXTENSION
-    // ========================================
-    await runScriptsForStep("before_wpe", manifest)
-    if (await checkStepCache("wpe")) {
-        await compileWPE()
-        await cacheStep("wpe")
-    }
-    await runScriptsForStep("after_wpe", manifest)
-
-    // ========================================
-    // STRUX CLIENT BINARY
-    // ========================================
-    await runScriptsForStep("before_client", manifest)
-    if (await checkStepCache("client")) {
-        await buildStruxClient(isDevMode)
-        await cacheStep("client")
-    } else {
-        // Even if cached, copy the binary over
-        await copyClientBinaryIfExists(bspName)
-        // In dev mode, always update .dev-env.json even if client step is cached
-        // This ensures inspector and other dev config changes are reflected immediately
-        if (isDevMode) {
-            await updateDevEnvConfig(bspName)
+        // ========================================
+        // FRONTEND COMPILATION
+        // ========================================
+        await runScriptsForStep("before_frontend", manifest)
+        if (await checkStepCache("frontend")) {
+            await compileFrontend()
+            await cacheStep("frontend")
         }
-    }
-    await runScriptsForStep("after_client", manifest)
+        await runScriptsForStep("after_frontend", manifest)
 
-    // ========================================
-    // KERNEL (Conditional: only if custom_kernel is enabled)
-    // ========================================
-    if (Settings.bsp?.boot?.kernel?.custom_kernel) {
-        await runScriptsForStep("before_kernel", manifest)
-        if (await checkStepCache("kernel")) {
-            await buildKernel()
-            await cacheStep("kernel")
+        // ========================================
+        // APPLICATION COMPILATION (main.go)
+        // ========================================
+        await runScriptsForStep("before_application", manifest)
+        if (await checkStepCache("application")) {
+            await compileApplication()
+            await cacheStep("application")
         }
-        await runScriptsForStep("after_kernel", manifest)
-    }
+        await runScriptsForStep("after_application", manifest)
 
-    // ========================================
-    // BOOTLOADER (Conditional: only if bootloader is enabled)
-    // ========================================
-    if (Settings.bsp?.boot?.bootloader?.enabled) {
-        await runScriptsForStep("before_bootloader", manifest)
-        
-        const bootloaderType = Settings.bsp?.boot?.bootloader?.type
-        // Only run built-in build for u-boot and grub; custom/none skip
-        if (bootloaderType && bootloaderType !== "custom" && bootloaderType !== "none") {
-            if (await checkStepCache("bootloader")) {
-                await buildBootloader()
-                await cacheStep("bootloader")
+        // ========================================
+        // CAGE COMPOSITOR
+        // ========================================
+        await runScriptsForStep("before_cage", manifest)
+        if (await checkStepCache("cage")) {
+            await compileCage()
+            await cacheStep("cage")
+        }
+        await runScriptsForStep("after_cage", manifest)
+
+        // ========================================
+        // WPE WEBKIT EXTENSION
+        // ========================================
+        await runScriptsForStep("before_wpe", manifest)
+        if (await checkStepCache("wpe")) {
+            await compileWPE()
+            await cacheStep("wpe")
+        }
+        await runScriptsForStep("after_wpe", manifest)
+
+        // ========================================
+        // STRUX CLIENT BINARY
+        // ========================================
+        await runScriptsForStep("before_client", manifest)
+        if (await checkStepCache("client")) {
+            await buildStruxClient(isDevMode)
+            await cacheStep("client")
+        } else {
+            // Even if cached, copy the binary over
+            await copyClientBinaryIfExists(bspName)
+            // In dev mode, always update .dev-env.json even if client step is cached
+            // This ensures inspector and other dev config changes are reflected immediately
+            if (isDevMode) {
+                await updateDevEnvConfig(bspName)
             }
         }
-        
-        await runScriptsForStep("after_bootloader", manifest)
+        await runScriptsForStep("after_client", manifest)
+
+        // ========================================
+        // KERNEL (Conditional: only if custom_kernel is enabled)
+        // ========================================
+        if (Settings.bsp?.boot?.kernel?.custom_kernel) {
+            const hasCustomKernelScript = Settings.bsp?.scripts?.some(s => s.step === "custom_kernel") ?? false
+
+            await runScriptsForStep("before_kernel", manifest)
+
+            if (hasCustomKernelScript) {
+                // Use BSP-provided custom kernel script instead of built-in
+                await runScriptsForStep("custom_kernel", manifest)
+            } else if (await checkStepCache("kernel")) {
+                // Phase 1: Fetch source and apply patches
+                await extractKernel()
+                // Run after_kernel_extract hooks (e.g., install kernel boot logo)
+                await runScriptsForStep("after_kernel_extract", manifest)
+                // Phase 2: Configure, compile, and install
+                await buildKernel()
+                await cacheStep("kernel")
+            }
+
+            await runScriptsForStep("after_kernel", manifest)
+        }
+
+        // ========================================
+        // BOOTLOADER (Conditional: only if bootloader is enabled)
+        // ========================================
+        if (Settings.bsp?.boot?.bootloader?.enabled) {
+            const hasCustomBootloaderScript = Settings.bsp?.scripts?.some(s => s.step === "custom_bootloader") ?? false
+
+            await runScriptsForStep("before_bootloader", manifest)
+
+            if (hasCustomBootloaderScript) {
+                // Use BSP-provided custom bootloader script instead of built-in
+                await runScriptsForStep("custom_bootloader", manifest)
+            } else {
+                const bootloaderType = Settings.bsp?.boot?.bootloader?.type
+                // Only run built-in build for u-boot and grub; custom/none skip
+                if (bootloaderType && bootloaderType !== "custom" && bootloaderType !== "none") {
+                    if (await checkStepCache("bootloader")) {
+                        await buildBootloader()
+                        await cacheStep("bootloader")
+                    }
+                }
+            }
+
+            await runScriptsForStep("after_bootloader", manifest)
+        }
+
+        // ========================================
+        // ROOT FILESYSTEM
+        // ========================================
+        await runScriptsForStep("before_rootfs", manifest)
+        if (await checkStepCache("rootfs-base")) {
+            await buildRootFS()
+            await cacheStep("rootfs-base")
+        }
+        await runScriptsForStep("after_rootfs", manifest)
+
+        // ========================================
+        // ROOT FILESYSTEM POST-PROCESSING
+        // ========================================
+        if (await checkStepCache("rootfs-post")) {
+            await postProcessRootFS()
+            await cacheStep("rootfs-post")
+        }
+
+        // ========================================
+        // FINAL IMAGE BUNDLING
+        // ========================================
+        await runScriptsForStep("before_bundle", manifest)
+
+        // Run BSP's make_image script(s)
+        await runScriptsForStep("make_image", manifest)
+
+        // ========================================
+        // BUILD LIFECYCLE: after_build
+        // ========================================
+        await runScriptsForStep("after_build", manifest)
+
+        // ========================================
+        // SAVE BUILD METADATA
+        // ========================================
+        const buildMetadata = {
+            buildMode: isDevMode ? "dev" : "production",
+            buildTime: new Date().toISOString(),
+            bspName,
+            struxVersion: Settings.struxVersion
+        }
+        await Bun.write(
+            join(Settings.projectPath, "dist", "output", bspName, ".build-info.json"),
+            JSON.stringify(buildMetadata, null, 2)
+        )
+
+        Logger.success("Build completed successfully!")
+    } finally {
+        // Always fix file permissions at the end, even if the build failed.
+        // Docker runs as root so all created files are root-owned on the host.
+        Runner.skipChown = false
+        await Runner.chownProjectFiles()
     }
-
-    // ========================================
-    // ROOT FILESYSTEM
-    // ========================================
-    await runScriptsForStep("before_rootfs", manifest)
-    if (await checkStepCache("rootfs-base")) {
-        await buildRootFS()
-        await cacheStep("rootfs-base")
-    }
-    await runScriptsForStep("after_rootfs", manifest)
-
-    // ========================================
-    // ROOT FILESYSTEM POST-PROCESSING
-    // ========================================
-    if (await checkStepCache("rootfs-post")) {
-        await postProcessRootFS()
-        await cacheStep("rootfs-post")
-    }
-
-    // ========================================
-    // FINAL IMAGE BUNDLING
-    // ========================================
-    await runScriptsForStep("before_bundle", manifest)
-    
-    // Run BSP's make_image script(s)
-    await runScriptsForStep("make_image", manifest)
-
-    // ========================================
-    // BUILD LIFECYCLE: after_build
-    // ========================================
-    await runScriptsForStep("after_build", manifest)
-
-    // ========================================
-    // SAVE BUILD METADATA
-    // ========================================
-    const buildMetadata = {
-        buildMode: isDevMode ? "dev" : "production",
-        buildTime: new Date().toISOString(),
-        bspName,
-        struxVersion: Settings.struxVersion
-    }
-    await Bun.write(
-        join(Settings.projectPath, "dist", "output", bspName, ".build-info.json"),
-        JSON.stringify(buildMetadata, null, 2)
-    )
-
-    Logger.success("Build completed successfully!")
 }
 
 /**

@@ -1,7 +1,7 @@
 [Unit]
 Description=Strux Kiosk Service
-After=network-online.target seatd.service dbus.socket dbus.service systemd-logind.service plymouth-start.service
-Wants=network-online.target seatd.service dbus.socket dbus.service plymouth-start.service
+After=seatd.service dbus.socket dbus.service systemd-logind.service plymouth-start.service
+Wants=seatd.service dbus.socket dbus.service plymouth-start.service
 Requires=seatd.service
 
 [Service]

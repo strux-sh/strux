@@ -8,13 +8,16 @@
  */
 
 import path from "path"
+import { join } from "path"
 
 import chokidar from "chokidar"
 
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
+import { fileExists } from "../../utils/path"
 import { compileApplication } from "../build/steps"
 import { build as buildCommand } from "../build"
+import { loadBuildCacheManifest, shouldRebuildStep, updateStepCache } from "../build/cache"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { createDevServer, stopDevServer, type DevServer } from "./server"
 import { run as runQEMU } from "../run"
@@ -184,22 +187,64 @@ export async function dev(): Promise<void> {
 
     const useUi = devUI !== null
 
-    // Run the initial build
-    Logger.title("Building Development Image")
+    // Run the initial build (skipped in remote mode or --no-rebuild)
+    if (Settings.isRemoteOnly) {
+        Logger.info("Remote mode: Skipping build step")
+    } else if (Settings.noRebuild) {
+        // Verify that a bootable image exists from a previous build
+        const bspName = Settings.bspName!
+        const requiredArtifacts = [
+            { path: join("dist", "output", bspName, "vmlinuz"), name: "Kernel" },
+            { path: join("dist", "output", bspName, "initrd.img"), name: "Initramfs" },
+            { path: join("dist", "output", bspName, "rootfs.ext4"), name: "Root Filesystem" }
+        ]
 
-    try {
-        await buildCommand()
-    } catch (error) {
-        // Handle StruxExitError specially - it's already been logged
-        if (error instanceof Error && error.name === "StruxExitError") {
-            // Error already logged to UI, wait for user to press Q
-            if (useUi) {
-                await new Promise((_resolve) => { /* Never resolves - UI handles exit via Q key */ })
-            }
-            return
+        const missing = requiredArtifacts.filter(a => !fileExists(join(Settings.projectPath, a.path)))
+
+        if (missing.length > 0) {
+            const names = missing.map(a => a.name).join(", ")
+            Logger.errorWithExit(
+                `--no-rebuild: Missing required artifacts: ${names}\n` +
+                "       Run 'strux dev' without --no-rebuild first to create the initial image."
+            )
         }
-        // Re-throw other errors to be caught by global handler
-        throw error
+
+        // Check if the Go application binary needs recompiling.
+        // The binary is streamed to the device on each boot, so it must be up-to-date
+        // even when the rest of the image is reused as-is.
+        const appBinaryPath = join(Settings.projectPath, "dist", "cache", bspName, "app", "main")
+        const manifest = await loadBuildCacheManifest(bspName)
+        const cacheConfig = Settings.main?.build?.cache ?? { enabled: true }
+
+        const appNeedsRebuild = !fileExists(appBinaryPath) || (
+            cacheConfig.enabled !== false &&
+            (await shouldRebuildStep("application", manifest, { bspName })).rebuild
+        )
+
+        if (appNeedsRebuild) {
+            Logger.info("Application source changed, recompiling...")
+            await compileApplication()
+            await updateStepCache("application", manifest, { bspName })
+        }
+
+        Logger.info("Skipping image rebuild (--no-rebuild), using existing image")
+    } else {
+        Logger.title("Building Development Image")
+
+        try {
+            await buildCommand()
+        } catch (error) {
+            // Handle StruxExitError specially - it's already been logged
+            if (error instanceof Error && error.name === "StruxExitError") {
+                // Error already logged to UI, wait for user to press Q
+                if (useUi) {
+                    await new Promise((_resolve) => { /* Never resolves - UI handles exit via Q key */ })
+                }
+                return
+            }
+            // Re-throw other errors to be caught by global handler
+            throw error
+        }
     }
 
     // Start the Vite dev server for the frontend inside Docker
@@ -413,8 +458,8 @@ export async function dev(): Promise<void> {
     // Start the file watcher
     await runFileWatcher()
 
-    process.on("SIGINT", cleanup)
-    process.on("SIGTERM", cleanup)
+    process.on("SIGINT", () => cleanup())
+    process.on("SIGTERM", () => cleanup())
 
     // Keep the process running
     await new Promise((_resolve) => { /* Never resolves - keeps process alive */ })
