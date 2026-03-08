@@ -1,0 +1,58 @@
+// Override VuePress 2 default theme variables
+
+:root {
+  // Accent colors (green → indigo)
+  --vp-c-accent: #6366f1;
+  --vp-c-accent-bg: #6366f1;
+  --vp-c-accent-hover: #818cf8;
+  --vp-c-accent-text: var(--vp-c-white);
+  --vp-c-accent-soft: rgb(99 102 241 / 14%);
+
+  // Background colors
+  --vp-c-bg: #0f0d1a;
+  --vp-c-bg-alt: #0a0815;
+  --vp-c-bg-elv: #161329;
+
+  // Navbar & sidebar backgrounds
+  --vp-navbar-c-bg: #0f0d1a;
+  --vp-sidebar-c-bg: #0f0d1a;
+
+  // Text colors
+  --vp-c-text: #e2e8f0;
+  --vp-c-text-mute: #94a3b8;
+  --vp-c-text-subtle: #64748b;
+
+  // Borders
+  --vp-c-border: rgba(99, 102, 241, 0.1);
+  --vp-c-divider: rgba(99, 102, 241, 0.07);
+  --vp-c-gutter: rgba(99, 102, 241, 0.07);
+}
+
+[data-theme='dark'] {
+  --vp-c-accent: #818cf8;
+  --vp-c-accent-bg: #6366f1;
+  --vp-c-accent-hover: #a5b4fc;
+  --vp-c-accent-soft: rgb(99 102 241 / 16%);
+
+  --vp-c-bg: #0f0d1a;
+  --vp-c-bg-alt: #0a0815;
+  --vp-c-bg-elv: #161329;
+
+  --vp-navbar-c-bg: #0f0d1a;
+  --vp-sidebar-c-bg: #0f0d1a;
+
+  --vp-c-text: #e2e8f0;
+  --vp-c-text-mute: #94a3b8;
+  --vp-c-text-subtle: #64748b;
+
+  --vp-c-border: rgba(99, 102, 241, 0.1);
+  --vp-c-divider: rgba(99, 102, 241, 0.07);
+  --vp-c-gutter: rgba(99, 102, 241, 0.07);
+}
+
+// Badge colors
+:root,
+[data-theme='dark'] {
+  --badge-c-tip-text: #818cf8;
+  --badge-c-tip-bg: rgb(99 102 241 / 14%);
+}

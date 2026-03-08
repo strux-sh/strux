@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 150 150" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;">
+    <g transform="matrix(1,0,0,1,-599.685,-516.294)">
+        <g id="Artboard1" transform="matrix(0.151955,0,0,0.21706,599.685,516.294)">
+            <rect x="0" y="0" width="987.135" height="691.053" style="fill:none;"/>
+            <g transform="matrix(6.82667,0,0,5.12,-1175.23,-1371.68)">
+                <g transform="matrix(1.8075,0,0,1.68714,244.453,335.392)">
+                    <g transform="matrix(1,0,0,1,-40,-40)">
+                        <g transform="matrix(1,0,0,1,4,6)">
+                            <path d="M72,6L72,36C72,39.311 69.311,42 66,42L22,42C18.689,42 16,39.311 16,36L16,6C16,2.689 18.689,0 22,0L66,0C69.311,0 72,2.689 72,6Z" style="fill:rgb(129,140,248);fill-opacity:0.25;"/>
+                            <path d="M64,16L64,46C64,49.311 61.311,52 58,52L14,52C10.689,52 8,49.311 8,46L8,16C8,12.689 10.689,10 14,10L58,10C61.311,10 64,12.689 64,16Z" style="fill:rgb(129,140,248);fill-opacity:0.5;"/>
+                            <path d="M56,26L56,56C56,59.311 53.311,62 50,62L6,62C2.689,62 0,59.311 0,56L0,26C0,22.689 2.689,20 6,20L50,20C53.311,20 56,22.689 56,26Z" style="fill:url(#_Linear1);"/>
+                            <path d="M10,34L40,34" style="fill:none;fill-rule:nonzero;stroke:white;stroke-opacity:0.9;stroke-width:2.5px;"/>
+                            <path d="M10,42L30,42" style="fill:none;fill-rule:nonzero;stroke:white;stroke-opacity:0.6;stroke-width:2.5px;"/>
+                            <path d="M10,50L22,50" style="fill:none;fill-rule:nonzero;stroke:white;stroke-opacity:0.35;stroke-width:2.5px;"/>
+                            <path d="M38,67.5C38,68.328 37.328,69 36.5,69L19.5,69C18.672,69 18,68.328 18,67.5C18,66.672 18.672,66 19.5,66L36.5,66C37.328,66 38,66.672 38,67.5Z" style="fill:rgb(129,140,248);fill-opacity:0.4;"/>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+    </g>
+    <defs>
+        <linearGradient id="_Linear1" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(60,60,-60,60,0,0)"><stop offset="0" style="stop-color:rgb(99,102,241);stop-opacity:1"/><stop offset="1" style="stop-color:rgb(129,140,248);stop-opacity:1"/></linearGradient>
+    </defs>
+</svg>
