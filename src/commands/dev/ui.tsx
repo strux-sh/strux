@@ -426,7 +426,8 @@ export class DevUI {
     private mount(): void {
         if (this.mounted) return
         const instance = render(
-            <DevApp store={this.store} onExit={this.options.onExit} onConsoleInput={this.options.onConsoleInput} />
+            <DevApp store={this.store} onExit={this.options.onExit} onConsoleInput={this.options.onConsoleInput} />,
+            { exitOnCtrlC: false }
         )
         this.unmount = instance.unmount
         this.mounted = true

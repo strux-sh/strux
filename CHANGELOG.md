@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.1
+In this version, we made a few bug fixes:
+
+- In the `strux dev` terminal interface, when using the Remote Terminal, CTRL+C keypresses were not being passed to the terminal. In v0.1.1, we fix this issue.
+
 ## v0.1.0
 
 This is the first minor release of Strux and represents a major step forward. The build system has been significantly rearchitected with proper custom kernel and bootloader support, a new CLI command, smarter caching, and numerous hardware compatibility improvements.
