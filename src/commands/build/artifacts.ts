@@ -201,9 +201,13 @@ export async function copyBootSplashLogo(): Promise<void> {
     const sourceLogoPath = join(Settings.projectPath, normalizedLogoPath)
     const destLogoPath = join(Settings.projectPath, "dist", "artifacts", "logo.png")
 
-    // Check if already copied and not cleaning
-    if (fileExists(destLogoPath) && !Settings.clean) {
-        return Logger.cached("Using existing logo.png")
+    // Check if already copied and source hasn't changed
+    if (fileExists(destLogoPath) && !Settings.clean && fileExists(sourceLogoPath)) {
+        const sourceHash = Bun.hash(await Bun.file(sourceLogoPath).arrayBuffer())
+        const destHash = Bun.hash(await Bun.file(destLogoPath).arrayBuffer())
+        if (sourceHash === destHash) {
+            return Logger.cached("Using existing logo.png")
+        }
     }
 
     // Check if source logo file exists
