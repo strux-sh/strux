@@ -7,6 +7,8 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -81,101 +83,227 @@ func introspect(filePath string) error {
 		return fmt.Errorf("%s not found", filePath)
 	}
 
-	// Parse the Go file
+	// Parse all Go files in the same directory to capture methods defined in other files
+	dir := filepath.Dir(filePath)
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	pkgs, err := parser.ParseDir(fset, dir, nil, parser.ParseComments)
 	if err != nil {
-		return fmt.Errorf("failed to parse %s: %w", filePath, err)
+		return fmt.Errorf("failed to parse directory %s: %w", dir, err)
 	}
 
-	// Get package name
-	packageName := node.Name.Name
+	// Find the package that contains the specified file
+	var files []*ast.File
+	var packageName string
+	absFilePath, _ := filepath.Abs(filePath)
+
+	for pkgName, pkg := range pkgs {
+		for fpath, file := range pkg.Files {
+			absFpath, _ := filepath.Abs(fpath)
+			if absFpath == absFilePath {
+				packageName = pkgName
+				// Collect all files from this package
+				for _, f := range pkg.Files {
+					files = append(files, f)
+				}
+				_ = file
+				break
+			}
+		}
+		if packageName != "" {
+			break
+		}
+	}
+
+	// Fallback: if we couldn't match by path, use the first package
+	if packageName == "" {
+		for pkgName, pkg := range pkgs {
+			packageName = pkgName
+			for _, f := range pkg.Files {
+				files = append(files, f)
+			}
+			break
+		}
+	}
+
+	if len(files) == 0 {
+		return fmt.Errorf("no Go files found in %s", dir)
+	}
 
 	// Collect all structs and their fields
 	structFields := make(map[string][]FieldDef)
 	knownStructs := make(map[string]bool)
 
-	// First pass: discover all struct types
-	ast.Inspect(node, func(n ast.Node) bool {
-		if typeSpec, ok := n.(*ast.TypeSpec); ok {
-			if _, ok := typeSpec.Type.(*ast.StructType); ok {
-				knownStructs[typeSpec.Name.Name] = true
+	// First pass: discover all struct types across all files
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if typeSpec, ok := n.(*ast.TypeSpec); ok {
+				if _, ok := typeSpec.Type.(*ast.StructType); ok {
+					knownStructs[typeSpec.Name.Name] = true
+				}
 			}
-		}
-		return true
-	})
+			return true
+		})
+	}
 
-	// Second pass: extract struct fields and methods
-	var appStructName string
+	// Determine the app struct by finding what's passed to runtime.Start()
+	appStructName := findRuntimeStartStruct(files)
+
+	// Default to "App" if runtime.Start() detection failed
+	if appStructName == "" {
+		appStructName = "App"
+	}
+
+	// Second pass: extract struct fields and methods across all files
 	var methods []MethodDef
 
-	ast.Inspect(node, func(n ast.Node) bool {
-		// Find type declarations
-		if typeSpec, ok := n.(*ast.TypeSpec); ok {
-			if structType, ok := typeSpec.Type.(*ast.StructType); ok {
-				structName := typeSpec.Name.Name
-				var fields []FieldDef
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			// Find type declarations
+			if typeSpec, ok := n.(*ast.TypeSpec); ok {
+				if structType, ok := typeSpec.Type.(*ast.StructType); ok {
+					structName := typeSpec.Name.Name
+					var fields []FieldDef
 
-				// Extract fields
-				for _, field := range structType.Fields.List {
-					if len(field.Names) > 0 {
-						fieldName := field.Names[0].Name
-						// Only process exported fields
-						if isExported(fieldName) {
-							goType := exprToString(field.Type)
-							fields = append(fields, FieldDef{
-								Name:   fieldName,
-								GoType: goType,
-								TSType: goTypeToTS(goType, knownStructs),
-							})
+					// Extract fields
+					for _, field := range structType.Fields.List {
+						if len(field.Names) > 0 {
+							fieldName := field.Names[0].Name
+							// Only process exported fields
+							if isExported(fieldName) {
+								goType := exprToString(field.Type)
+								fields = append(fields, FieldDef{
+									Name:   fieldName,
+									GoType: goType,
+									TSType: goTypeToTS(goType, knownStructs),
+								})
+							}
+						}
+					}
+					structFields[structName] = fields
+				}
+			}
+
+			// Collect methods on the app struct
+			if funcDecl, ok := n.(*ast.FuncDecl); ok {
+				if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+					recvType := funcDecl.Recv.List[0].Type
+
+					var recvTypeName string
+					switch t := recvType.(type) {
+					case *ast.StarExpr:
+						if ident, ok := t.X.(*ast.Ident); ok {
+							recvTypeName = ident.Name
+						}
+					case *ast.Ident:
+						recvTypeName = t.Name
+					}
+
+					if recvTypeName == appStructName {
+						methodName := funcDecl.Name.Name
+						if isExported(methodName) {
+							method := extractMethod(funcDecl, knownStructs)
+							methods = append(methods, method)
 						}
 					}
 				}
-				structFields[structName] = fields
+			}
+
+			return true
+		})
+	}
+
+	// Resolve external package types recursively (e.g., security.TorStatus -> network.Connection -> ...)
+	// Build the global import alias -> path map, starting from the main package files
+	importMap := make(map[string]string) // alias -> import path
+	for _, file := range files {
+		collectImports(file, importMap)
+	}
+
+	// qualifiedToTS maps "security.TorStatus" -> "TorStatus" for TS name resolution
+	qualifiedToTS := make(map[string]string)
+	// resolvedTypes tracks which qualified types have already been resolved to avoid circular refs
+	resolvedTypes := make(map[string]bool)
+
+	// Seed the initial set of qualified types from app fields and methods
+	pendingTypes := collectQualifiedTypes(structFields[appStructName], methods)
+
+	// Recursively resolve external types until no new ones are discovered
+	for len(pendingTypes) > 0 {
+		// Group pending types by package alias
+		pkgTypes := make(map[string][]string) // alias -> []structName
+		for _, qt := range pendingTypes {
+			if resolvedTypes[qt] {
+				continue
+			}
+			resolvedTypes[qt] = true
+
+			parts := strings.SplitN(qt, ".", 2)
+			if len(parts) == 2 {
+				pkgAlias := parts[0]
+				typeName := parts[1]
+				if _, exists := importMap[pkgAlias]; exists {
+					pkgTypes[pkgAlias] = append(pkgTypes[pkgAlias], typeName)
+				}
 			}
 		}
 
-		// Find method declarations to determine which struct is the "App"
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
-				// This is a method
-				recvType := funcDecl.Recv.List[0].Type
+		if len(pkgTypes) == 0 {
+			break
+		}
 
-				// Extract receiver type name
-				var recvTypeName string
-				switch t := recvType.(type) {
-				case *ast.StarExpr:
-					if ident, ok := t.X.(*ast.Ident); ok {
-						recvTypeName = ident.Name
-					}
-				case *ast.Ident:
-					recvTypeName = t.Name
-				}
-
-				// Set appStructName to the first struct we find methods on
-				if appStructName == "" && recvTypeName != "" {
-					appStructName = recvTypeName
-				}
-
-				// Only process methods on the App struct
-				if recvTypeName == appStructName {
-					methodName := funcDecl.Name.Name
-
-					// Only process exported methods
-					if isExported(methodName) {
-						method := extractMethod(funcDecl, knownStructs)
-						methods = append(methods, method)
-					}
+		// Resolve each external package
+		var newlyResolved []FieldDef
+		for pkgAlias, typeNames := range pkgTypes {
+			importPath := importMap[pkgAlias]
+			extStructs, extImports := resolveExternalPackage(dir, importPath, typeNames, knownStructs)
+			for name, fields := range extStructs {
+				structFields[name] = fields
+				knownStructs[name] = true
+				qualifiedToTS[pkgAlias+"."+name] = name
+				newlyResolved = append(newlyResolved, fields...)
+			}
+			// Merge the external package's imports so we can resolve its dependencies
+			for alias, path := range extImports {
+				if _, exists := importMap[alias]; !exists {
+					importMap[alias] = path
 				}
 			}
 		}
 
-		return true
-	})
+		// Scan newly resolved struct fields for more qualified types
+		pendingTypes = collectQualifiedTypesFromFields(newlyResolved)
+	}
 
-	// Default to "App" if no struct was found
-	if appStructName == "" {
-		appStructName = "App"
+	// Re-resolve TS types for everything now that all external structs are known
+	if len(qualifiedToTS) > 0 {
+		// Re-resolve app struct fields
+		if appFields, ok := structFields[appStructName]; ok {
+			for i, f := range appFields {
+				appFields[i].TSType = goTypeToTSWithQualified(f.GoType, knownStructs, qualifiedToTS)
+			}
+			structFields[appStructName] = appFields
+		}
+
+		// Re-resolve method params and return types
+		for i, m := range methods {
+			for j, p := range m.Params {
+				methods[i].Params[j].TSType = goTypeToTSWithQualified(p.GoType, knownStructs, qualifiedToTS)
+			}
+			for j, rt := range m.ReturnTypes {
+				methods[i].ReturnTypes[j].TSType = goTypeToTSWithQualified(rt.GoType, knownStructs, qualifiedToTS)
+			}
+		}
+
+		// Re-resolve all external struct fields too
+		for name, fields := range structFields {
+			if name == appStructName {
+				continue
+			}
+			for i, f := range fields {
+				fields[i].TSType = goTypeToTSWithQualified(f.GoType, knownStructs, qualifiedToTS)
+			}
+			structFields[name] = fields
+		}
 	}
 
 	// Build the output
@@ -201,6 +329,375 @@ func introspect(filePath string) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(output)
+}
+
+// runtimeImportPath is the import path for the strux runtime package
+const runtimeImportPath = "github.com/strux-dev/strux/pkg/runtime"
+
+// findRuntimeStartStruct finds the struct type passed to runtime.Start() by:
+// 1. Finding the import alias for the strux runtime package
+// 2. Finding the call to <alias>.Start(arg)
+// 3. Resolving the argument to a struct type name
+func findRuntimeStartStruct(files []*ast.File) string {
+	for _, file := range files {
+		// Find the import alias for the runtime package
+		runtimeAlias := ""
+		for _, imp := range file.Imports {
+			importPath := strings.Trim(imp.Path.Value, `"`)
+			if importPath == runtimeImportPath {
+				if imp.Name != nil {
+					runtimeAlias = imp.Name.Name
+				} else {
+					// Default alias is the last path segment
+					parts := strings.Split(importPath, "/")
+					runtimeAlias = parts[len(parts)-1]
+				}
+				break
+			}
+		}
+
+		if runtimeAlias == "" {
+			continue
+		}
+
+		// Build a map of variable names to their types within function bodies
+		// e.g., app := &App{} -> "app" maps to "App"
+		var appStructName string
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			if appStructName != "" {
+				return false
+			}
+
+			funcDecl, ok := n.(*ast.FuncDecl)
+			if !ok {
+				return true
+			}
+
+			// Build variable type map for this function
+			varTypes := make(map[string]string)
+
+			ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
+				if appStructName != "" {
+					return false
+				}
+
+				// Track variable assignments: app := &App{} or var app = &App{}
+				if assignStmt, ok := n.(*ast.AssignStmt); ok {
+					for i, lhs := range assignStmt.Lhs {
+						if ident, ok := lhs.(*ast.Ident); ok && i < len(assignStmt.Rhs) {
+							if typeName := resolveStructType(assignStmt.Rhs[i]); typeName != "" {
+								varTypes[ident.Name] = typeName
+							}
+						}
+					}
+				}
+
+				// Find calls to runtime.Start(...)
+				callExpr, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+
+				selExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+
+				ident, ok := selExpr.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+
+				if ident.Name == runtimeAlias && selExpr.Sel.Name == "Start" && len(callExpr.Args) >= 1 {
+					arg := callExpr.Args[0]
+
+					// Case 1: runtime.Start(&App{...}) - direct composite literal
+					if typeName := resolveStructType(arg); typeName != "" {
+						appStructName = typeName
+						return false
+					}
+
+					// Case 2: runtime.Start(app) - variable reference
+					if argIdent, ok := arg.(*ast.Ident); ok {
+						if typeName, exists := varTypes[argIdent.Name]; exists {
+							appStructName = typeName
+							return false
+						}
+					}
+				}
+
+				return true
+			})
+
+			return appStructName == ""
+		})
+
+		if appStructName != "" {
+			return appStructName
+		}
+	}
+
+	return ""
+}
+
+// resolveStructType extracts the struct type name from an expression.
+// Handles: &App{}, App{}, &App, new(App)
+func resolveStructType(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.UnaryExpr:
+		// &App{} or &app
+		if e.Op.String() == "&" {
+			return resolveStructType(e.X)
+		}
+	case *ast.CompositeLit:
+		// App{...}
+		return identFromExpr(e.Type)
+	case *ast.CallExpr:
+		// new(App)
+		if ident, ok := e.Fun.(*ast.Ident); ok && ident.Name == "new" && len(e.Args) == 1 {
+			return identFromExpr(e.Args[0])
+		}
+	}
+	return ""
+}
+
+// identFromExpr extracts an identifier name from an expression.
+// Handles *ast.Ident and *ast.StarExpr (pointer types).
+func identFromExpr(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.StarExpr:
+		if ident, ok := e.X.(*ast.Ident); ok {
+			return ident.Name
+		}
+	}
+	return ""
+}
+
+// collectImports extracts import alias -> path mappings from a Go file
+func collectImports(file *ast.File, importMap map[string]string) {
+	for _, imp := range file.Imports {
+		importPath := strings.Trim(imp.Path.Value, `"`)
+		var alias string
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		} else {
+			parts := strings.Split(importPath, "/")
+			alias = parts[len(parts)-1]
+		}
+		importMap[alias] = importPath
+	}
+}
+
+// stripTypeWrappers removes pointer, slice, and variadic prefixes from a Go type string
+func stripTypeWrappers(goType string) string {
+	s := goType
+	for strings.HasPrefix(s, "*") || strings.HasPrefix(s, "[]") || strings.HasPrefix(s, "...") {
+		if strings.HasPrefix(s, "*") {
+			s = s[1:]
+		} else if strings.HasPrefix(s, "[]") {
+			s = s[2:]
+		} else if strings.HasPrefix(s, "...") {
+			s = s[3:]
+		}
+	}
+	return s
+}
+
+// extractQualifiedType returns the qualified type from a Go type string, or empty string if not qualified
+func extractQualifiedType(goType string) string {
+	stripped := stripTypeWrappers(goType)
+	if strings.Contains(stripped, ".") && !strings.HasPrefix(stripped, "map[") {
+		return stripped
+	}
+	return ""
+}
+
+// collectQualifiedTypes finds all qualified type references (e.g., "security.TorStatus")
+// in app fields and methods
+func collectQualifiedTypes(fields []FieldDef, methods []MethodDef) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	collect := func(goType string) {
+		if qt := extractQualifiedType(goType); qt != "" && !seen[qt] {
+			seen[qt] = true
+			result = append(result, qt)
+		}
+	}
+
+	for _, f := range fields {
+		collect(f.GoType)
+	}
+	for _, m := range methods {
+		for _, p := range m.Params {
+			collect(p.GoType)
+		}
+		for _, rt := range m.ReturnTypes {
+			collect(rt.GoType)
+		}
+	}
+
+	return result
+}
+
+// collectQualifiedTypesFromFields finds qualified type references in struct fields
+func collectQualifiedTypesFromFields(fields []FieldDef) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, f := range fields {
+		if qt := extractQualifiedType(f.GoType); qt != "" && !seen[qt] {
+			seen[qt] = true
+			result = append(result, qt)
+		}
+	}
+	return result
+}
+
+// resolveExternalPackage parses an external Go package and extracts the requested struct definitions.
+// It uses `go list -json` to find the package directory, then parses the source files.
+// Same-package struct dependencies are transitively included (e.g., if Circuit references Connection,
+// both are returned). Returns the resolved structs and the package's own import map (for recursive resolution).
+func resolveExternalPackage(projectDir string, importPath string, typeNames []string, existingStructs map[string]bool) (map[string][]FieldDef, map[string]string) {
+	result := make(map[string][]FieldDef)
+	extImports := make(map[string]string)
+
+	// Use `go list -json` to find the package directory
+	cmd := exec.Command("go", "list", "-json", importPath)
+	cmd.Dir = projectDir
+	output, err := cmd.Output()
+	if err != nil {
+		return result, extImports
+	}
+
+	// Extract "Dir" from the JSON output
+	var pkgInfo struct {
+		Dir string `json:"Dir"`
+	}
+	if err := json.Unmarshal(output, &pkgInfo); err != nil || pkgInfo.Dir == "" {
+		return result, extImports
+	}
+
+	// Parse the external package directory
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, pkgInfo.Dir, nil, 0)
+	if err != nil {
+		return result, extImports
+	}
+
+	// Discover all struct types and collect imports from this package
+	extKnownStructs := make(map[string]bool)
+	for k, v := range existingStructs {
+		extKnownStructs[k] = v
+	}
+
+	// allStructFields stores every struct's fields in this package for dependency walking
+	allStructFields := make(map[string][]FieldDef)
+
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			collectImports(file, extImports)
+			ast.Inspect(file, func(n ast.Node) bool {
+				typeSpec, ok := n.(*ast.TypeSpec)
+				if !ok {
+					return true
+				}
+				structType, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					return true
+				}
+
+				structName := typeSpec.Name.Name
+				extKnownStructs[structName] = true
+
+				var fields []FieldDef
+				for _, field := range structType.Fields.List {
+					if len(field.Names) > 0 {
+						fieldName := field.Names[0].Name
+						if isExported(fieldName) {
+							goType := exprToString(field.Type)
+							fields = append(fields, FieldDef{
+								Name:   fieldName,
+								GoType: goType,
+								TSType: goTypeToTS(goType, extKnownStructs),
+							})
+						}
+					}
+				}
+				allStructFields[structName] = fields
+				return true
+			})
+		}
+	}
+
+	// Transitively collect all same-package struct dependencies starting from the requested types
+	needed := make(map[string]bool)
+	queue := make([]string, len(typeNames))
+	copy(queue, typeNames)
+	for _, name := range typeNames {
+		needed[name] = true
+	}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		fields, ok := allStructFields[current]
+		if !ok {
+			continue
+		}
+
+		for _, f := range fields {
+			// Check for same-package unqualified struct references
+			baseType := stripTypeWrappers(f.GoType)
+			if extKnownStructs[baseType] && !needed[baseType] {
+				needed[baseType] = true
+				queue = append(queue, baseType)
+			}
+		}
+	}
+
+	// Collect all needed structs into the result
+	for name := range needed {
+		if fields, ok := allStructFields[name]; ok {
+			result[name] = fields
+		}
+	}
+
+	return result, extImports
+}
+
+// goTypeToTSWithQualified converts Go types to TypeScript, handling qualified names
+// like "security.TorStatus" by mapping them to their unqualified TS interface name
+func goTypeToTSWithQualified(goType string, knownStructs map[string]bool, qualifiedToTS map[string]string) string {
+	// Check for direct qualified match
+	if tsName, ok := qualifiedToTS[goType]; ok {
+		return tsName
+	}
+
+	// Handle wrappers
+	if strings.HasPrefix(goType, "[]") {
+		elemType := goTypeToTSWithQualified(goType[2:], knownStructs, qualifiedToTS)
+		return elemType + "[]"
+	}
+	if strings.HasPrefix(goType, "*") {
+		return goTypeToTSWithQualified(goType[1:], knownStructs, qualifiedToTS)
+	}
+	if strings.HasPrefix(goType, "...") {
+		elemType := goTypeToTSWithQualified(goType[3:], knownStructs, qualifiedToTS)
+		return elemType + "[]"
+	}
+	if strings.HasPrefix(goType, "map[") {
+		keyType, valueType := parseMapType(goType)
+		tsKey := goTypeToTSWithQualified(keyType, knownStructs, qualifiedToTS)
+		tsValue := goTypeToTSWithQualified(valueType, knownStructs, qualifiedToTS)
+		return fmt.Sprintf("Record<%s, %s>", tsKey, tsValue)
+	}
+
+	// Fall back to standard conversion
+	return goTypeToTS(goType, knownStructs)
 }
 
 func extractMethod(funcDecl *ast.FuncDecl, knownStructs map[string]bool) MethodDef {

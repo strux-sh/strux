@@ -224,6 +224,7 @@ export async function runScriptsForStep(
         // Build environment variables for the script
         const env: Record<string, string> = {
             BSP_NAME: bspName,
+            PRESELECTED_BSP: bspName,
             PROJECT_FOLDER: "/project",
             PROJECT_DIST_FOLDER: "/project/dist",
             // BSP-specific cache and output directories

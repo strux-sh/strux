@@ -172,7 +172,8 @@ export class MainYAMLValidator {
 
             if (validated.strux_version) Settings.projectVersion = validated.strux_version
 
-            if (validated.bsp) Settings.bspName = validated.bsp
+            // Only set bspName from strux.yaml if it wasn't already set by a CLI argument
+            if (validated.bsp && !Settings.bspName) Settings.bspName = validated.bsp
 
             Settings.main = validated
 
