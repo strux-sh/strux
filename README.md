@@ -1,5 +1,11 @@
 # Strux OS
 
+<p>
+  <img alt="Strux OS Architecture Overview" src="https://raw.githubusercontent.com/strux-dev/strux/main/src/assets/template-base/logo.png" width="650" />
+</p>
+
+
+
 > **⚠️ ALPHA WARNING**: Strux OS is currently in **alpha** stage. The API and behavior may change without notice, and some features may not work as expected. Use at your own risk.
 
 A framework for building kiosk-style operating systems. Strux enables developers to create customized, minimal Linux distributions optimized for single-purpose applications like digital signage, point-of-sale systems, embedded displays, and more.
