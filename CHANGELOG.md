@@ -4,6 +4,7 @@
 In this version, we made a few bug fixes:
 
 - In the `strux dev` terminal interface, when using the Remote Terminal, CTRL+C keypresses were not being passed to the terminal. In v0.1.1, we fix this issue.
+- Fixed issue #4, where changing the logo as defined in a `strux.yaml` file still uses the cached logo when it should replace it.
 
 ## v0.1.0
 
