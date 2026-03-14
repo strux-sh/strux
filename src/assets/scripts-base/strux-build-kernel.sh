@@ -570,6 +570,12 @@ if [ -n "$KERNEL_DTS" ] && [ "$KERNEL_DTS" != "null" ]; then
                 -I "include"
                 -I "scripts/dtc/include-prefixes"
             )
+            # Auto-add vendor subdirectories for arm64 (DTS files are in arch/arm64/boot/dts/<vendor>/)
+            if [ "$KERNEL_ARCH" = "arm64" ]; then
+                for vendor_dir in "$DTS_INCLUDE_DIR"/*/; do
+                    [ -d "$vendor_dir" ] && CPP_INCLUDES+=(-I "$vendor_dir")
+                done
+            fi
             for inc in "${EXTRA_DTS_INCLUDE_DIRS[@]}"; do
                 CPP_INCLUDES+=(-I "$inc")
             done
@@ -587,6 +593,11 @@ if [ -n "$KERNEL_DTS" ] && [ "$KERNEL_DTS" != "null" ]; then
             progress "Compiling DTB: $DTB_BASENAME"
 
             DTC_INCLUDES=(-i "$DTS_INCLUDE_DIR")
+            if [ "$KERNEL_ARCH" = "arm64" ]; then
+                for vendor_dir in "$DTS_INCLUDE_DIR"/*/; do
+                    [ -d "$vendor_dir" ] && DTC_INCLUDES+=(-i "$vendor_dir")
+                done
+            fi
             for inc in "${EXTRA_DTS_INCLUDE_DIRS[@]}"; do
                 DTC_INCLUDES+=(-i "$inc")
             done

@@ -1,10 +1,23 @@
 # Changelog
 
+## v0.1.2
+
+This version solves a few bugs:
+
+- Fixed external DTS compilation failing on ARM64 kernels. The kernel DTS preprocessor (`cpp`) and device tree compiler (`dtc`) were only given `arch/arm64/boot/dts/` as an include path, but ARM64 kernels organize DTS files into vendor subdirectories (e.g., `rockchip/`, `allwinner/`, `amlogic/`). This caused `#include "rk3576.dtsi"` and similar includes to fail with "No such file or directory". The build script now automatically discovers and adds all vendor subdirectories under `arch/arm64/boot/dts/` to the include paths. This was not an issue on ARM32 where DTS files live flat in `arch/arm/boot/dts/`.
+- Fixed mDNS host discovery in the strux client connecting to fallback hosts instead of discovered hosts. The fallback hosts were added to the list before mDNS-discovered hosts, so the connection loop would always try (and succeed with) the fallback first. mDNS hosts are now prioritized over fallback hosts. Additionally, mDNS discovery now waits for the network interface to obtain an IP address before browsing, as the device's network link often comes up during the discovery window but doesn't have an IP yet, causing mDNS to find zero hosts.
+- Added GStreamer plugins for video and audio playback support. The rootfs now includes `gstreamer1.0-plugins-bad` (AAC decoding, WebVTT subtitles) and `gstreamer1.0-gl` (hardware-accelerated video rendering via GL video sink). Previously, only `plugins-base` and `plugins-good` were installed, which caused video playback to fail in WPE WebKit.
+- Fixed BSP rootfs overlay not being applied during the `rootfs-post` build step. The `yq` commands reading `bsp.rootfs.overlay` and `rootfs.overlay` paths from YAML config files were missing the `-r` (raw output) flag, causing the returned paths to include literal double quotes (e.g., `"./overlay"` instead of `./overlay`). This caused the overlay directory lookup to fail silently with a warning.
+
+### Documentation
+We also begin working on documentation for Strux in this version.
+
 ## v0.1.1
 In this version, we made a few bug fixes:
 
 - In the `strux dev` terminal interface, when using the Remote Terminal, CTRL+C keypresses were not being passed to the terminal. In v0.1.1, we fix this issue.
 - Fixed issue #4, where changing the logo as defined in a `strux.yaml` file still uses the cached logo when it should replace it.
+
 
 ## v0.1.0
 

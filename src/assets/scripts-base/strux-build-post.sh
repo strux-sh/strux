@@ -72,10 +72,10 @@ fi
 # ============================================================================
 
 # Read BSP overlay path from BSP config
-BSP_OVERLAY=$(yq '.bsp.rootfs.overlay' "$BSP_CONFIG" 2>/dev/null || echo "")
+BSP_OVERLAY=$(yq -r '.bsp.rootfs.overlay' "$BSP_CONFIG" 2>/dev/null || echo "")
 
 # Read root project overlay path from strux.yaml
-ROOT_OVERLAY=$(yq '.rootfs.overlay' "$PROJECT_DIR/strux.yaml" 2>/dev/null || echo "")
+ROOT_OVERLAY=$(yq -r '.rootfs.overlay' "$PROJECT_DIR/strux.yaml" 2>/dev/null || echo "")
 
 # Apply BSP overlay first (if it exists)
 if [ -n "$BSP_OVERLAY" ]; then

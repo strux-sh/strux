@@ -365,7 +365,9 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     fonts-dejavu-core \
     fonts-noto-core \
     gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good"
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-gl"
 
 
 
