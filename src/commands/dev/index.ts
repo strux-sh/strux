@@ -37,6 +37,12 @@ let viteProcess: ReturnType<typeof Bun.spawn> | null = null
 // Dev UI reference
 let devUI: DevUI | null = null
 
+// File watcher reference
+let fileWatcher: ReturnType<typeof chokidar.watch> | null = null
+
+// Guard flag to prevent rebuilds during shutdown
+let isShuttingDown = false
+
 const consoleSessionId = "main"
 
 
@@ -82,16 +88,34 @@ export async function dev(): Promise<void> {
     // Get the server port from fallback hosts (default to 8000)
     const serverPort = Settings.main?.dev?.server?.fallback_hosts?.[0]?.port ?? 8000
 
-    const cleanup = (exitCode = 0) => {
+    const cleanup = async (exitCode = 0) => {
+        if (isShuttingDown) return
+        isShuttingDown = true
+
         Logger.setSink(null)
         devUI?.destroy()
 
         Logger.log("Shutting down...")
 
+        // Close file watcher first to prevent new rebuilds
+        if (fileWatcher) {
+            await fileWatcher.close()
+            fileWatcher = null
+        }
+
         stopDevServer()
 
         if (viteProcess) {
             viteProcess.kill()
+            // Also explicitly stop the Docker container in case bash ignores SIGTERM
+            try {
+                Bun.spawn(["docker", "stop", "-t", "3", "strux-vite-dev"], {
+                    stdout: "pipe",
+                    stderr: "pipe",
+                })
+            } catch {
+                // Container may already be stopped
+            }
         }
 
         if (qemuProcess && "kill" in qemuProcess) {
@@ -100,7 +124,7 @@ export async function dev(): Promise<void> {
 
         setTimeout(() => {
             process.exit(exitCode)
-        }, 100)
+        }, 500)
     }
 
     // Initialize the TUI
@@ -253,8 +277,19 @@ export async function dev(): Promise<void> {
 
     // Build Docker command for Vite dev server
     // Uses the same strux-builder image with port mapping for HMR
+    // Remove any leftover container from a previous session that didn't clean up
+    try {
+        Bun.spawn(["docker", "rm", "-f", "strux-vite-dev"], {
+            stdout: "pipe",
+            stderr: "pipe",
+        })
+    } catch {
+        // Ignore - container may not exist
+    }
+
     const viteDockerArgs: string[] = [
         "docker", "run", "--rm",
+        "--name", "strux-vite-dev",
         "-v", `${Settings.projectPath}:/project`,
         "-p", "5173:5173",  // Vite dev server port
         "-w", "/project/frontend",
@@ -339,17 +374,8 @@ export async function dev(): Promise<void> {
                     Logger.log("QEMU emulator stopped")
                 }
 
-                // Stop dev server and Vite when QEMU closes
-                stopDevServer()
-
-                if (viteProcess) {
-                    viteProcess.kill()
-                }
-
-                // Give processes a moment to clean up, then exit
-                setTimeout(() => {
-                    cleanup(code ?? 0)
-                }, 100)
+                // Let cleanup handle everything (it guards against double-calls)
+                cleanup(code ?? 0)
 
             })
 
@@ -455,11 +481,12 @@ export async function dev(): Promise<void> {
 
     Logger.info(`Client key: ${clientKey}`)
 
-    // Start the file watcher
-    await runFileWatcher()
-
+    // Register signal handlers before starting file watcher
     process.on("SIGINT", () => cleanup())
     process.on("SIGTERM", () => cleanup())
+
+    // Start the file watcher
+    await runFileWatcher()
 
     // Keep the process running
     await new Promise((_resolve) => { /* Never resolves - keeps process alive */ })
@@ -515,7 +542,7 @@ function formatLogLine(streamId: string, line: string, service?: string, timesta
 async function runFileWatcher(): Promise<void> {
 
 
-    const watcher = chokidar.watch(Settings.projectPath, {
+    fileWatcher = chokidar.watch(Settings.projectPath, {
         ignored: (filePath: string, stats) => {
             // Ignore everything in frontend, dist, assets, bsp, and overlay directories
             const ignoreDirs = ["frontend/", "dist/", "assets/", "bsp/", "overlay/"]
@@ -538,7 +565,10 @@ async function runFileWatcher(): Promise<void> {
         ignoreInitial: true
     })
 
-    watcher.on("all", async (_event, filePath) => {
+    fileWatcher.on("all", async (_event, filePath) => {
+
+        // Don't trigger rebuilds during shutdown
+        if (isShuttingDown) return
 
         Logger.log("Changes detected, rebuilding application...")
 

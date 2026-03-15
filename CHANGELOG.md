@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0
+
+### Bug Fixes
+
+- Fixed a weird bug where `strux dev` and `strux dev --remote` was leaving orphaned Docker containers running after exit, causing runaway CPU usage and system overheating. The file watcher (chokidar) was never closed during shutdown, allowing it to trigger new Docker-based rebuilds even while cleanup was in progress. Additionally, the Vite dev server Docker container used bash as PID 1, which ignores SIGTERM — so killing the `docker run` wrapper process did not actually stop the container. The fix closes the file watcher before any other cleanup, adds a shutdown guard to prevent rebuild triggers during exit, names the Vite container (`strux-vite-dev`) so it can be explicitly stopped with `docker stop`, cleans up leftover containers from previous crashed sessions on startup, registers signal handlers before the file watcher to eliminate a race condition, and increases the exit delay to give Docker containers time to terminate.
+
 ## v0.1.3
 
 ### Bug Fixes
