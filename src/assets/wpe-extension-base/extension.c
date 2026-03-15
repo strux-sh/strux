@@ -1202,28 +1202,47 @@ window_object_cleared_callback (WebKitScriptWorld *world,
 {
     JSCContext *js_context = webkit_frame_get_js_context_for_script_world(frame, world);
 
-    // Clear all pending promises from previous page - they belong to the old context
-    // and cannot be resolved/rejected anymore
-    g_mutex_lock(&promises_mutex);
-    if (pending_promises) {
-        guint num_pending = g_hash_table_size(pending_promises);
-        if (num_pending > 0) {
-            fprintf(stderr, "Strux Extension: Clearing %u pending promises from previous page\n", num_pending);
+    // Check if this is a sandboxed iframe - if so, skip binding injection
+    gboolean is_sandboxed_iframe = FALSE;
+    if (!webkit_frame_is_main_frame(frame)) {
+        // Check if the iframe element has a "sandbox" attribute
+        JSCValue *result = jsc_context_evaluate(js_context,
+            "window.frameElement && window.frameElement.hasAttribute('sandbox')", -1);
+        if (result) {
+            is_sandboxed_iframe = jsc_value_to_boolean(result);
+            g_object_unref(result);
         }
-        g_hash_table_remove_all(pending_promises);
+        if (is_sandboxed_iframe) {
+            fprintf(stderr, "Strux Extension: Skipping binding injection for sandboxed iframe\n");
+            g_object_unref(js_context);
+            return;
+        }
     }
-    g_mutex_unlock(&promises_mutex);
 
-    // Clear async queue as well - those requests were for the old context
-    g_mutex_lock(&async_mutex);
-    if (async_queue) {
-        while (!g_queue_is_empty(async_queue)) {
-            AsyncRequest *req = g_queue_pop_head(async_queue);
-            free_async_request(req);
+    // Clear all pending promises from previous page - they belong to the old context
+    // and cannot be resolved/rejected anymore (only for main frame)
+    if (webkit_frame_is_main_frame(frame)) {
+        g_mutex_lock(&promises_mutex);
+        if (pending_promises) {
+            guint num_pending = g_hash_table_size(pending_promises);
+            if (num_pending > 0) {
+                fprintf(stderr, "Strux Extension: Clearing %u pending promises from previous page\n", num_pending);
+            }
+            g_hash_table_remove_all(pending_promises);
         }
+        g_mutex_unlock(&promises_mutex);
+
+        // Clear async queue as well - those requests were for the old context
+        g_mutex_lock(&async_mutex);
+        if (async_queue) {
+            while (!g_queue_is_empty(async_queue)) {
+                AsyncRequest *req = g_queue_pop_head(async_queue);
+                free_async_request(req);
+            }
+        }
+        async_inflight = FALSE;
+        g_mutex_unlock(&async_mutex);
     }
-    async_inflight = FALSE;
-    g_mutex_unlock(&async_mutex);
 
     // Inject console interceptors first (so we can see errors during binding injection)
     inject_console_interceptors(js_context);
