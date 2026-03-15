@@ -96,7 +96,7 @@ if [ -n "$BSP_OVERLAY" ]; then
         # -r: recursive
         # --no-owner: don't preserve ownership (we're copying into rootfs)
         # --no-group: don't preserve group (we're copying into rootfs)
-        rsync -a --no-owner --no-group "$BSP_OVERLAY_PATH/" "$ROOTFS_DIR/"
+        rsync -a -K --no-owner --no-group "$BSP_OVERLAY_PATH/" "$ROOTFS_DIR/"
         progress "BSP rootfs overlay applied successfully"
     else
         echo "Warning: BSP overlay directory '$BSP_OVERLAY_PATH' does not exist, skipping BSP overlay"
@@ -117,7 +117,7 @@ if [ -n "$ROOT_OVERLAY" ]; then
         # -r: recursive
         # --no-owner: don't preserve ownership (we're copying into rootfs)
         # --no-group: don't preserve group (we're copying into rootfs)
-        rsync -a --no-owner --no-group "$ROOT_OVERLAY_PATH/" "$ROOTFS_DIR/"
+        rsync -a -K --no-owner --no-group "$ROOT_OVERLAY_PATH/" "$ROOTFS_DIR/"
         progress "Rootfs overlay applied successfully"
     else
         echo "Warning: Overlay directory '$ROOT_OVERLAY_PATH' does not exist, skipping overlay"
@@ -204,6 +204,15 @@ mount --bind /dev /tmp/rootfs/dev || true
 mount --bind /dev/pts /tmp/rootfs/dev/pts || true
 mount --bind /proc /tmp/rootfs/proc || true
 mount --bind /sys /tmp/rootfs/sys || true
+
+# Copy QEMU static binary for cross-arch chroot if needed
+if [ "$HOST_ARCH" != "$TARGET_ARCH" ]; then
+    if [ "$TARGET_ARCH" = "arm64" ] && [ -f /usr/bin/qemu-aarch64-static ]; then
+        cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
+    elif [ "$TARGET_ARCH" = "armhf" ] && [ -f /usr/bin/qemu-arm-static ]; then
+        cp /usr/bin/qemu-arm-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
+    fi
+fi
 
 
 # ============================================================================
@@ -532,6 +541,10 @@ umount /tmp/rootfs/sys 2>/dev/null || true
 umount /tmp/rootfs/proc 2>/dev/null || true
 umount /tmp/rootfs/dev/pts 2>/dev/null || true
 umount /tmp/rootfs/dev 2>/dev/null || true
+
+# Remove QEMU static binaries (not needed in final image)
+rm -f /tmp/rootfs/usr/bin/qemu-aarch64-static
+rm -f /tmp/rootfs/usr/bin/qemu-arm-static
 
 # Calculate required size for ext4 image (add 20% headroom)
 echo "Calculating rootfs size..."

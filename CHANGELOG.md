@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.3
+
+### Bug Fixes
+
+- Fixed rootfs overlay breaking symlinked directories on modern Debian. Debian 12+ uses merged-usr layout where `/bin`, `/lib`, and `/sbin` are symlinks to their `/usr/` counterparts (e.g., `/lib -> usr/lib`). The `rsync -a` command used to apply BSP and project rootfs overlays would replace these symlinks with real directories, breaking the rootfs and causing chroot operations to fail with `No such file or directory`. Added `--keep-dirlinks` (`-K`) flag to rsync so it follows existing destination symlinks to directories instead of replacing them.
+
 ## v0.1.2
 
 This version solves a few bugs:
