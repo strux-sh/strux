@@ -191,6 +191,9 @@ handle_xwayland_surface_new(struct wl_listener *listener, void *data)
 	view_init(&xwayland_view->view, server, CAGE_XWAYLAND_VIEW, &xwayland_view_impl);
 	xwayland_view->xwayland_surface = xwayland_surface;
 
+	/* Assign output (XWayland surfaces don't have a direct wl_client, use PID 0 for fallback) */
+	view_assign_output(&xwayland_view->view, 0);
+
 	xwayland_view->associate.notify = handle_xwayland_associate;
 	wl_signal_add(&xwayland_surface->events.associate, &xwayland_view->associate);
 	xwayland_view->dissociate.notify = handle_xwayland_dissociate;

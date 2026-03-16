@@ -4,6 +4,7 @@
 #include "config.h"
 
 #include <stdbool.h>
+#include <sys/types.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -57,6 +58,7 @@ void view_unmap(struct cg_view *view);
 void view_map(struct cg_view *view, struct wlr_surface *surface);
 void view_destroy(struct cg_view *view);
 void view_init(struct cg_view *view, struct cg_server *server, enum cg_view_type type, const struct cg_view_impl *impl);
+void view_assign_output(struct cg_view *view, pid_t client_pid);
 
 struct cg_view *view_from_wlr_surface(struct wlr_surface *surface);
 

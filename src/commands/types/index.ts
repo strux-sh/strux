@@ -266,10 +266,15 @@ export function generateTypeScriptDefinitions(
         globalLines.push("")
     }
 
+    // Top-level shortcut: allows using App.Method() instead of window.go.main.App.Method()
+    globalLines.push(`const ${app.name}: ${app.name};`)
+    globalLines.push("")
+
     // Generate Window interface augmentation with both user app and strux runtime
     globalLines.push("const strux: Strux;")
     globalLines.push("interface Window {")
     globalLines.push("  strux: Strux;")
+    globalLines.push(`  ${app.name}: ${app.name};`)
     globalLines.push("  go: {")
     globalLines.push(`    ${app.packageName}: {`)
     globalLines.push(`      ${app.name}: ${app.name};`)

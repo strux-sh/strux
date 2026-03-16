@@ -70,17 +70,21 @@ struct cg_server {
 	bool terminated;
 	enum wlr_log_importance log_level;
 
-	// Per-view output assignment (CAGE_MULTI_OUTPUT_MODE_PER_VIEW)
-	int next_view_output;
-
 	// Strux splash screen
 	struct cg_splash *splash;
 	char *splash_image_path;
 
 	// Input device to output mapping file path
 	char *input_map_path;
+
+	// Display map file path (output_name=url mappings for Cog spawning)
+	char *display_map_path;
+
+	// Output event FIFO for notifying the primary client of hotplug events
+	int output_event_fd;
 };
 
 void server_terminate(struct cg_server *server);
+void server_notify_output_event(struct cg_server *server, const char *event, const char *output_name);
 
 #endif

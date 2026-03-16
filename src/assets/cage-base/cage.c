@@ -63,6 +63,8 @@
 #include "xwayland.h"
 #endif
 
+#define STRUX_OUTPUT_EVENT_FIFO "/tmp/strux-output-events"
+
 void
 server_terminate(struct cg_server *server)
 {
@@ -72,6 +74,24 @@ server_terminate(struct cg_server *server)
 	}
 
 	wl_display_terminate(server->wl_display);
+}
+
+void
+server_notify_output_event(struct cg_server *server, const char *event, const char *output_name)
+{
+	if (server->output_event_fd < 0) {
+		/* Try to open the FIFO (non-blocking so we don't stall if no reader) */
+		server->output_event_fd = open(STRUX_OUTPUT_EVENT_FIFO, O_WRONLY | O_NONBLOCK);
+		if (server->output_event_fd < 0) {
+			return;
+		}
+	}
+
+	char buf[256];
+	int len = snprintf(buf, sizeof(buf), "%s:%s\n", event, output_name);
+	if (len > 0 && len < (int)sizeof(buf)) {
+		write(server->output_event_fd, buf, len);
+	}
 }
 
 static void
@@ -248,6 +268,7 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 	static struct option long_options[] = {
 		{"splash-image", required_argument, NULL, 'S'},
 		{"input-map", required_argument, NULL, 'I'},
+		{"display-map", required_argument, NULL, 'M'},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -284,6 +305,9 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 		case 'I':
 			server->input_map_path = strdup(optarg);
 			break;
+		case 'M':
+			server->display_map_path = strdup(optarg);
+			break;
 		default:
 			usage(stderr, argv[0]);
 			return false;
@@ -296,7 +320,7 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 int
 main(int argc, char *argv[])
 {
-	struct cg_server server = {.log_level = WLR_INFO};
+	struct cg_server server = {.log_level = WLR_INFO, .output_event_fd = -1};
 	struct wl_event_source *sigchld_source = NULL;
 	pid_t pid = 0;
 	int ret = 0, app_ret = 0;
@@ -657,6 +681,11 @@ end:
 	splash_destroy(server.splash);
 	free(server.splash_image_path);
 	free(server.input_map_path);
+	free(server.display_map_path);
+	if (server.output_event_fd >= 0) {
+		close(server.output_event_fd);
+	}
+	unlink(STRUX_OUTPUT_EVENT_FIFO);
 	seat_destroy(server.seat);
 	/* This function is not null-safe, but we only ever get here
 	   with a proper wl_display. */

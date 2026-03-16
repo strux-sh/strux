@@ -281,6 +281,14 @@ handle_new_xdg_toplevel(struct wl_listener *listener, void *data)
 	view_init(&xdg_shell_view->view, server, CAGE_XDG_SHELL_VIEW, &xdg_shell_view_impl);
 	xdg_shell_view->xdg_toplevel = toplevel;
 
+	/* Get client PID for output assignment — matches against cog_pid on outputs */
+	pid_t client_pid = 0;
+	struct wl_client *client = wl_resource_get_client(toplevel->base->resource);
+	if (client) {
+		wl_client_get_credentials(client, &client_pid, NULL, NULL);
+	}
+	view_assign_output(&xdg_shell_view->view, client_pid);
+
 	xdg_shell_view->commit.notify = handle_xdg_shell_surface_commit;
 	wl_signal_add(&toplevel->base->surface->events.commit, &xdg_shell_view->commit);
 	xdg_shell_view->map.notify = handle_xdg_shell_surface_map;

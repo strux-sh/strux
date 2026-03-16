@@ -12,7 +12,11 @@
 #include "config.h"
 
 #include <assert.h>
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
@@ -221,11 +225,138 @@ is_nested_output(struct cg_output *output)
 	return false;
 }
 
+/* Look up a value for an output name from the display map file.
+ * File format: "key=value" per line.
+ * Caller must free the returned string. */
+static char *
+display_map_lookup(const char *map_path, const char *key)
+{
+	if (!map_path) {
+		return NULL;
+	}
+
+	FILE *f = fopen(map_path, "r");
+	if (!f) {
+		return NULL;
+	}
+
+	size_t key_len = strlen(key);
+	char line[512];
+	while (fgets(line, sizeof(line), f)) {
+		char *nl = strchr(line, '\n');
+		if (nl) *nl = '\0';
+
+		if (strncmp(line, key, key_len) == 0 && line[key_len] == '=') {
+			char *result = strdup(line + key_len + 1);
+			fclose(f);
+			return result;
+		}
+	}
+
+	fclose(f);
+	return NULL;
+}
+
+#define COG_NOT_CONFIGURED_URL "file:///strux/.not-configured.html"
+#define STRUX_RUN_COG_SCRIPT "/strux/strux-run-cog.sh"
+
+/* Spawn a Cog browser instance for the given output by calling
+ * the user-modifiable strux-run-cog.sh script.
+ * Returns the child PID, or 0 on failure. */
+static pid_t
+spawn_cog_for_output(struct cg_server *server, struct cg_output *output)
+{
+	if (!server->display_map_path) {
+		return 0;
+	}
+
+	/* Look up URL for this output */
+	char *url = display_map_lookup(server->display_map_path, output->wlr_output->name);
+	const char *cog_url = url ? url : COG_NOT_CONFIGURED_URL;
+
+	/* Look up resolution and set it before spawning Cog */
+	char res_key[128];
+	snprintf(res_key, sizeof(res_key), "%s.resolution", output->wlr_output->name);
+	char *resolution = display_map_lookup(server->display_map_path, res_key);
+
+	wlr_log(WLR_INFO, "Spawning Cog for output %s -> %s", output->wlr_output->name, cog_url);
+
+	pid_t pid = fork();
+	if (pid == 0) {
+		/* Child process */
+		sigset_t set;
+		sigemptyset(&set);
+		sigprocmask(SIG_SETMASK, &set, NULL);
+
+		/* Set resolution via wlr-randr if configured */
+		if (resolution) {
+			pid_t randr_pid = fork();
+			if (randr_pid == 0) {
+				execlp("wlr-randr", "wlr-randr",
+				       "--output", output->wlr_output->name,
+				       "--mode", resolution, NULL);
+				_exit(0);
+			} else if (randr_pid > 0) {
+				int status;
+				waitpid(randr_pid, &status, 0);
+			}
+		}
+
+		/* Small delay to let resolution settle */
+		sleep(1);
+
+		/* Call the user-modifiable script: strux-run-cog.sh <output_name> <url> */
+		execl(STRUX_RUN_COG_SCRIPT, STRUX_RUN_COG_SCRIPT,
+		      output->wlr_output->name, cog_url, NULL);
+
+		/* Fallback if script doesn't exist */
+		wlr_log_errno(WLR_ERROR, "Failed to exec %s, falling back to direct cog launch",
+			      STRUX_RUN_COG_SCRIPT);
+		execlp("cog", "cog",
+		       "--web-extensions-dir=/usr/lib/wpe-web-extensions",
+		       "--platform=wl",
+		       "--enable-developer-extras=1",
+		       cog_url, NULL);
+		_exit(1);
+	}
+
+	free(url);
+	free(resolution);
+
+	if (pid < 0) {
+		wlr_log_errno(WLR_ERROR, "Failed to fork Cog for output %s", output->wlr_output->name);
+		return 0;
+	}
+
+	wlr_log(WLR_INFO, "Cog spawned for output %s (PID %d)", output->wlr_output->name, pid);
+	return pid;
+}
+
+/* Kill the Cog instance for an output */
+static void
+kill_cog_for_output(struct cg_output *output)
+{
+	if (output->cog_pid > 0) {
+		wlr_log(WLR_INFO, "Killing Cog for output %s (PID %d)",
+			output->wlr_output->name, output->cog_pid);
+		kill(output->cog_pid, SIGTERM);
+		int status;
+		waitpid(output->cog_pid, &status, 0);
+		output->cog_pid = 0;
+	}
+}
+
 static void
 output_destroy(struct cg_output *output)
 {
 	struct cg_server *server = output->server;
 	bool was_nested_output = is_nested_output(output);
+
+	/* Kill the Cog instance for this output */
+	kill_cog_for_output(output);
+
+	/* Notify the primary client that this output is gone */
+	server_notify_output_event(server, "DISCONNECTED", output->wlr_output->name);
 
 	/* Clear assigned_output on any views bound to this output
 	 * to prevent dangling pointer access after free. */
@@ -350,6 +481,14 @@ handle_new_output(struct wl_listener *listener, void *data)
 	 * Input devices may have been registered before outputs existed. */
 	if (output->server->seat) {
 		seat_remap_input_devices(output->server->seat);
+	}
+
+	/* Notify the primary client that a new output is available */
+	server_notify_output_event(output->server, "CONNECTED", wlr_output->name);
+
+	/* In per-view mode with a display map, spawn a Cog for this output */
+	if (server->output_mode == CAGE_MULTI_OUTPUT_MODE_PER_VIEW && server->display_map_path) {
+		output->cog_pid = spawn_cog_for_output(server, output);
 	}
 }
 

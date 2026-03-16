@@ -174,30 +174,72 @@ view_destroy(struct cg_view *view)
 	}
 }
 
+/* Check if any mapped view is already assigned to this output */
+static bool
+output_has_view(struct cg_server *server, struct cg_output *target)
+{
+	struct cg_view *view;
+	wl_list_for_each(view, &server->views, link) {
+		if (view->assigned_output == target) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Find the output that spawned the Cog process with the given PID.
+ * This is the primary matching strategy — deterministic regardless
+ * of the order views are created. */
 static struct cg_output *
-assign_next_output(struct cg_server *server)
+find_output_by_pid(struct cg_server *server, pid_t pid)
+{
+	if (pid <= 0) {
+		return NULL;
+	}
+
+	struct cg_output *output;
+	wl_list_for_each(output, &server->outputs, link) {
+		if (output->cog_pid == pid) {
+			wlr_log(WLR_DEBUG, "Matched view (PID %d) to output %s by cog_pid",
+				pid, output->wlr_output->name);
+			return output;
+		}
+	}
+
+	return NULL;
+}
+
+/* Assign a view to an output. Tries PID matching first (deterministic),
+ * then falls back to first unoccupied output. */
+static struct cg_output *
+assign_next_output(struct cg_server *server, pid_t client_pid)
 {
 	if (server->output_mode != CAGE_MULTI_OUTPUT_MODE_PER_VIEW) {
 		return NULL;
 	}
 
-	int count = wl_list_length(&server->outputs);
-	if (count == 0) {
-		return NULL;
+	/* Try PID-based matching first (handles display-map spawned Cogs) */
+	struct cg_output *matched = find_output_by_pid(server, client_pid);
+	if (matched) {
+		return matched;
 	}
 
-	int target = server->next_view_output % count;
-	server->next_view_output++;
-
-	int i = 0;
+	/* Fallback: first unoccupied output (handles non-display-map scenarios) */
 	struct cg_output *output;
 	wl_list_for_each(output, &server->outputs, link) {
-		if (i == target) {
-			wlr_log(WLR_DEBUG, "Assigning view to output %s (index %d)",
-				output->wlr_output->name, target);
+		if (!output_has_view(server, output)) {
+			wlr_log(WLR_DEBUG, "Assigning view (PID %d) to unoccupied output %s",
+				client_pid, output->wlr_output->name);
 			return output;
 		}
-		i++;
+	}
+
+	/* All outputs occupied — fall back to first output */
+	if (!wl_list_empty(&server->outputs)) {
+		output = wl_container_of(server->outputs.next, output, link);
+		wlr_log(WLR_DEBUG, "All outputs occupied, assigning to first output %s",
+			output->wlr_output->name);
+		return output;
 	}
 
 	return NULL;
@@ -209,9 +251,12 @@ view_init(struct cg_view *view, struct cg_server *server, enum cg_view_type type
 	view->server = server;
 	view->type = type;
 	view->impl = impl;
+}
 
-	/* Assign output early so the initial configure sends the correct dimensions */
-	view->assigned_output = assign_next_output(server);
+void
+view_assign_output(struct cg_view *view, pid_t client_pid)
+{
+	view->assigned_output = assign_next_output(view->server, client_pid);
 }
 
 struct cg_view *

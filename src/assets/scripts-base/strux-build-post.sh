@@ -356,6 +356,10 @@ if [ -f "$BSP_CACHE/.input-map" ]; then
     cp "$BSP_CACHE/.input-map" "$ROOTFS_DIR/strux/.input-map"
 fi
 
+# Copy the Cog launcher script (user-modifiable)
+cp "$PROJECT_DIR/dist/artifacts/scripts/strux-run-cog.sh" "$ROOTFS_DIR/strux/strux-run-cog.sh"
+chmod +x "$ROOTFS_DIR/strux/strux-run-cog.sh"
+
 # Copy "not configured" HTML page for unconfigured monitor outputs
 cp "$PROJECT_DIR/dist/artifacts/not-configured.html" "$ROOTFS_DIR/strux/.not-configured.html" 2>/dev/null || true
 

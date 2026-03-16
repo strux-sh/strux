@@ -38,7 +38,23 @@ func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// File doesn't exist — serve index.html for SPA client-side routing
-	http.ServeFile(w, r, filepath.Join(h.staticDir, "index.html"))
+	indexPath := filepath.Join(h.staticDir, "index.html")
+	if _, statErr := os.Stat(indexPath); statErr != nil {
+		log.Printf("SPA fallback: index.html not found at %s (resolved from staticDir=%s, cwd=%s): %v",
+			indexPath, h.staticDir, getCwd(), statErr)
+		http.Error(w, "index.html not found", http.StatusNotFound)
+		return
+	}
+	log.Printf("SPA fallback: serving %s for request %s", indexPath, r.URL.Path)
+	http.ServeFile(w, r, indexPath)
+}
+
+func getCwd() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "(unknown)"
+	}
+	return cwd
 }
 
 // Start begins the IPC bridge and HTTP server.

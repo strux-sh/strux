@@ -1530,6 +1530,11 @@ inject_bindings (JSCContext *js_context)
                             }
                         }
 
+                        // Create top-level shortcut: window.<StructName> = window.go.<pkg>.<StructName>
+                        jsc_value_object_set_property(global, struct_name, struct_js_obj);
+                        fprintf(stderr, "Strux Extension: Created shortcut window.%s -> window.go.%s.%s\n",
+                                struct_name, pkg_name, struct_name);
+
                         g_object_unref(struct_js_obj);
                     }
 

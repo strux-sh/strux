@@ -28,6 +28,8 @@ import initScript from "../../assets/scripts-base/artifacts/scripts/init.sh" wit
 import initNetworkScript from "../../assets/scripts-base/artifacts/scripts/strux-network.sh" with { type: "text" }
 //@ts-ignore
 import initStruxScript from "../../assets/scripts-base/artifacts/scripts/strux.sh" with { type: "text" }
+//@ts-ignore
+import runCogScript from "../../assets/scripts-base/artifacts/scripts/strux-run-cog.sh" with { type: "text" }
 
 // Systemd Services
 // @ts-ignore
@@ -164,6 +166,9 @@ export async function copyInitScripts(): Promise<void> {
     }
     if (!fileExists(join(scriptsDir, "strux.sh"))) {
         await Bun.write(join(scriptsDir, "strux.sh"), initStruxScript)
+    }
+    if (!fileExists(join(scriptsDir, "strux-run-cog.sh"))) {
+        await Bun.write(join(scriptsDir, "strux-run-cog.sh"), runCogScript)
     }
 
     // Not-configured HTML page for unconfigured monitor outputs

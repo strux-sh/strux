@@ -197,90 +197,35 @@ func (c *CageLauncher) WaitForDevServer(url string, timeout time.Duration) bool 
 	return false
 }
 
-// buildShellCmd builds the shell command string for launching Cog inside Cage.
-//
-// The script:
-// 1. Detects physical outputs and their names via wlr-randr
-// 2. Sets resolution per configured output
-// 3. For each physical output (in Cage's order), finds the matching config
-//    entry by output name and launches the correct Cog URL
-// 4. Unconfigured outputs get the "not configured" page
-//
-// This name-based matching ensures Cog instances land on the correct physical
-// monitor regardless of the order outputs appear in Cage's internal list.
-func (c *CageLauncher) buildShellCmd(opts LaunchOptions) string {
-	var parts []string
-	parts = append(parts, `set -eu;`)
+// writeDisplayMap writes the output-to-URL mapping file that Cage reads via --display-map.
+// Format: one "output_name=url" per line, plus "output_name.resolution=WxH" for resolution.
+func (c *CageLauncher) writeDisplayMap(opts LaunchOptions) error {
+	var lines []string
 
-	// Detect physical output names in Cage's order.
-	// wlr-randr lists outputs with names at the start of lines (e.g., "HDMI-A-1 ...")
-	parts = append(parts, `echo "[strux] detecting outputs...";`)
-	parts = append(parts, `OUTPUTS=$(wlr-randr 2>/dev/null | grep "^[A-Za-z]" | awk '{print $1}');`)
-	parts = append(parts, `OUTPUT_COUNT=$(echo "$OUTPUTS" | wc -l | tr -d ' ');`)
-	parts = append(parts, `echo "[strux] detected $OUTPUT_COUNT output(s): $OUTPUTS";`)
-
-	// Set resolution per configured output using wlr-randr
 	if opts.DisplayConfig != nil {
-		for i, monitor := range opts.DisplayConfig.Monitors {
-			if monitor.Resolution == "" {
-				continue
-			}
-			outputName := fmt.Sprintf("Virtual-%d", i+1)
-			if len(monitor.Names) > 0 {
-				outputName = monitor.Names[0]
-			}
-			parts = append(parts, fmt.Sprintf(
-				`timeout 2s wlr-randr --output "%s" --mode "%s" 2>/dev/null || echo "[strux] wlr-randr for %s skipped/failed";`,
-				outputName, monitor.Resolution, outputName,
-			))
-		}
-	}
-
-	// Build a shell function that maps an output name to the correct Cog URL.
-	// For each physical output (in Cage's order), we find the config entry
-	// whose "names" list contains that output name.
-	notConfiguredURL := "file:///strux/.not-configured.html"
-	cogFlags := "--web-extensions-dir=/usr/lib/wpe-web-extensions --platform=wl --enable-developer-extras=1"
-
-	parts = append(parts, `# Map output names to URLs`)
-	parts = append(parts, `get_url_for_output() {`)
-	parts = append(parts, `  OUTPUT_NAME="$1";`)
-
-	if opts.DisplayConfig != nil && len(opts.DisplayConfig.Monitors) > 0 {
 		for _, monitor := range opts.DisplayConfig.Monitors {
 			cogURL := opts.CogURL + monitor.Path
-			if len(monitor.Names) > 0 {
-				// Match any name in the names list
-				for _, name := range monitor.Names {
-					parts = append(parts, fmt.Sprintf(
-						`  if [ "$OUTPUT_NAME" = "%s" ]; then echo "%s"; return; fi;`,
-						name, cogURL,
-					))
+			for _, name := range monitor.Names {
+				lines = append(lines, fmt.Sprintf("%s=%s", name, cogURL))
+				if monitor.Resolution != "" {
+					lines = append(lines, fmt.Sprintf("%s.resolution=%s", name, monitor.Resolution))
 				}
 			}
 		}
 	}
 
-	// Fallback: not configured
-	parts = append(parts, fmt.Sprintf(`  echo "%s";`, notConfiguredURL))
-	parts = append(parts, `};`)
+	content := strings.Join(lines, "\n") + "\n"
+	return os.WriteFile("/tmp/strux-display-map", []byte(content), 0644)
+}
 
-	// Launch one Cog per physical output in Cage's output order.
-	// Cage assigns views to outputs round-robin, so the Nth view maps to the Nth output.
-	// Use a for loop (not piped while-read) to avoid subshell issues with sleep/backgrounding.
-	parts = append(parts, `echo "[strux] launching cog instances in output order...";`)
-	parts = append(parts, fmt.Sprintf(`for OUT in $OUTPUTS; do
-  URL=$(get_url_for_output "$OUT");
-  echo "[strux] output $OUT -> $URL";
-  cog %s "$URL" &
-  sleep 2;
-done;`, cogFlags))
-
-	// Wait for all background Cog processes
-	parts = append(parts, `echo "[strux] all cog instances launched, waiting...";`)
-	parts = append(parts, `wait;`)
-
-	return strings.Join(parts, "\n")
+// writeDisplayMapAndGetPath writes the display map file and returns the path.
+// Cage reads this file to know which URL to launch on each output.
+func (c *CageLauncher) writeDisplayMapAndGetPath(opts LaunchOptions) string {
+	if err := c.writeDisplayMap(opts); err != nil {
+		c.logger.Error("Failed to write display map: %v", err)
+		return ""
+	}
+	return "/tmp/strux-display-map"
 }
 
 // Launch starts Cage compositor with Cog browser
@@ -300,14 +245,19 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 		args = append(args, "--input-map=/strux/.input-map")
 	}
 
+	// Write display map and pass to Cage — Cage spawns Cog instances per output
+	// using the user-modifiable /strux/strux-run-cog.sh script
+	displayMapPath := c.writeDisplayMapAndGetPath(opts)
+	if displayMapPath != "" {
+		args = append(args, fmt.Sprintf("--display-map=%s", displayMapPath))
+	}
+
 	// Add splash image if provided
 	if opts.SplashImage != "" {
 		args = append(args, fmt.Sprintf("--splash-image=%s", opts.SplashImage))
 	}
 
-	shellCmd := c.buildShellCmd(opts)
-
-	args = append(args, "--", "sh", "-c", shellCmd)
+	// No primary client command — Cage manages Cog lifecycle directly
 
 	// Create the command
 	c.process = exec.Command("cage", args...)

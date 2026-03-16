@@ -52,6 +52,69 @@ rt.Serve() // blocks on HTTP server
 - `rt.On(event, handler)` — **new**, registers a Go handler for JS events. Returns a handler ID for `Off()`.
 - `rt.Off(id)` — **new**, removes a handler by ID.
 
+### New: Multi-Monitor Display Support
+
+Strux now supports multiple independent displays, each showing a different page of your web application. Configure monitors in `strux.yaml`:
+
+```yaml
+display:
+  monitors:
+    - path: /
+      resolution: 1920x1080
+      names:
+        - DSI-1
+        - Virtual-1
+      input_devices:
+        - ILITEK
+    - path: /dashboard
+      resolution: 1280x720
+      names:
+        - HDMI-A-1
+        - Virtual-2
+```
+
+**How it works:**
+- Cage compositor runs in a new `per-view` mode (`-m per-view`) where each browser window is confined to a single output
+- Cage reads a display map and spawns one Cog (WPE WebKit) instance per connected output, matched by output name to the configured URL
+- Views are assigned to outputs using PID-based matching — deterministic regardless of process startup order
+- Unconfigured outputs show a "Monitor Not Configured" fallback page
+- The Go backend serves the frontend with SPA fallback routing, so paths like `/dashboard` return `index.html` for client-side routing
+
+**Hotplug support:**
+- When a monitor is disconnected, Cage kills the Cog instance for that output
+- When a monitor is reconnected, Cage spawns a new Cog instance with the correct URL
+- Input devices (touchscreens) are re-mapped when outputs appear
+
+**Input device mapping:**
+- The `input_devices` field maps touch/pointer devices to specific outputs using substring matching (e.g., `ILITEK` matches `ILITEK ILITEK-TP`)
+- Devices are automatically re-mapped when outputs connect after input registration
+
+**User-modifiable Cog launcher:**
+- Cage calls `/strux/strux-run-cog.sh <output_name> <url>` for each output
+- This script is written to `dist/artifacts/scripts/` on first build and can be customized to add Cog flags, environment variables, or swap browsers entirely
+
+### New: Global Struct Shortcuts (Breaking Change)
+
+Go struct bindings are now accessible directly from the global scope, without the `window.go.<package>.<Struct>` prefix. The struct name from your Go code becomes a top-level global in the browser.
+
+**Before:**
+```javascript
+const result = await window.go.main.App.Greet("Alice");
+window.go.main.App.Title = "New Title";
+```
+
+**After:**
+```javascript
+const result = await App.Greet("Alice");
+App.Title = "New Title";
+```
+
+The full `window.go.main.App` path still works — the shortcut is an alias pointing to the same object. The struct name in Go determines the global name: if your struct is called `Dashboard`, the shortcut is `Dashboard.Method()`.
+
+The generated `strux.d.ts` now includes a `const` declaration for the shortcut alongside the existing `Window` interface augmentation, so TypeScript recognizes both access patterns.
+
+**Why this could be breaking:** If you already have a global variable or DOM element with the same name as your Go struct (e.g., a global `App` variable), the injected shortcut will shadow it.
+
 ### New: `--local-runtime` Flag
 
 Build and dev commands now accept `--local-runtime <path>` to use a local copy of the Strux Go runtime instead of the published GitHub module. This is useful for testing runtime changes (like the new event system) without publishing a release.
@@ -74,6 +137,7 @@ How it works:
 
 ### Bug Fixes
 
+- Fixed `strux dev` file watcher triggering redundant rebuilds and spawning multiple Docker containers simultaneously. The chokidar watcher was not ignoring `.git/` directories, so git operations would trigger rebuilds. Additionally, rapid file saves or changes during an active build would each kick off a new build in parallel. Added `.git/` to the ignored directories, introduced a 300ms debounce to batch rapid file changes, and added a build queue that prevents concurrent builds — if changes arrive during a build, they are queued and executed after the current build finishes.
 - Fixed a weird bug where `strux dev` and `strux dev --remote` was leaving orphaned Docker containers running after exit, causing runaway CPU usage and system overheating. The file watcher (chokidar) was never closed during shutdown, allowing it to trigger new Docker-based rebuilds even while cleanup was in progress. Additionally, the Vite dev server Docker container used bash as PID 1, which ignores SIGTERM — so killing the `docker run` wrapper process did not actually stop the container. The fix closes the file watcher before any other cleanup, adds a shutdown guard to prevent rebuild triggers during exit, names the Vite container (`strux-vite-dev`) so it can be explicitly stopped with `docker stop`, cleans up leftover containers from previous crashed sessions on startup, registers signal handlers before the file watcher to eliminate a race condition, and increases the exit delay to give Docker containers time to terminate.
 
 ## v0.1.3

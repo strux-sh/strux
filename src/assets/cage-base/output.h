@@ -1,6 +1,7 @@
 #ifndef CG_OUTPUT_H
 #define CG_OUTPUT_H
 
+#include <sys/types.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_output.h>
 
@@ -16,6 +17,9 @@ struct cg_output {
 	struct wl_listener request_state;
 	struct wl_listener destroy;
 	struct wl_listener frame;
+
+	/* Cog browser PID spawned for this output (per-view mode with display map) */
+	pid_t cog_pid;
 
 	struct wl_list link; // cg_server::outputs
 };
