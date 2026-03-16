@@ -43,6 +43,12 @@ let fileWatcher: ReturnType<typeof chokidar.watch> | null = null
 // Guard flag to prevent rebuilds during shutdown
 let isShuttingDown = false
 
+// Build debounce/queue state
+let isBuilding = false
+let pendingBuild: "full" | "app" | null = null
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+const DEBOUNCE_MS = 300
+
 const consoleSessionId = "main"
 
 
@@ -545,7 +551,7 @@ async function runFileWatcher(): Promise<void> {
     fileWatcher = chokidar.watch(Settings.projectPath, {
         ignored: (filePath: string, stats) => {
             // Ignore everything in frontend, dist, assets, bsp, and overlay directories
-            const ignoreDirs = ["frontend/", "dist/", "assets/", "bsp/", "overlay/"]
+            const ignoreDirs = ["frontend/", "dist/", "assets/", "bsp/", "overlay/", ".git/"]
             // Normalize path separators for cross-platform consistency
             const normalizedPath = filePath.replace(/\\/g, "/")
             for (const dir of ignoreDirs) {
@@ -565,30 +571,59 @@ async function runFileWatcher(): Promise<void> {
         ignoreInitial: true
     })
 
-    fileWatcher.on("all", async (_event, filePath) => {
+    fileWatcher.on("all", (_event, filePath) => {
 
         // Don't trigger rebuilds during shutdown
         if (isShuttingDown) return
 
-        Logger.log("Changes detected, rebuilding application...")
+        const buildType = filePath.endsWith(".yaml") ? "full" : "app"
 
-        try {
-            // Check if the file is a strux file
-            if (filePath.endsWith(".yaml")) await triggerFullRebuild()
-            else await rebuildApplication()
-        } catch (error) {
-            // Handle StruxExitError specially - it's already been logged to the UI
-            if (error instanceof Error && error.name === "StruxExitError") {
-                // Error already logged to UI, don't propagate - let user see it and continue
-                Logger.warning("Build failed. Fix the error and save to retry.")
-                return
+        // If a build is in progress, queue the highest-priority build type
+        if (isBuilding) {
+            // "full" takes priority over "app"
+            if (buildType === "full" || pendingBuild === null) {
+                pendingBuild = buildType === "full" ? "full" : (pendingBuild ?? "app")
             }
-            // Re-throw other errors to be caught by global handler
-            throw error
+            return
         }
+
+        // Debounce rapid file changes
+        if (debounceTimer) clearTimeout(debounceTimer)
+        debounceTimer = setTimeout(() => {
+            debounceTimer = null
+            executeBuild(buildType)
+        }, DEBOUNCE_MS)
 
     })
 
+}
+
+
+async function executeBuild(buildType: "full" | "app"): Promise<void> {
+    isBuilding = true
+    pendingBuild = null
+
+    Logger.log("Changes detected, rebuilding application...")
+
+    try {
+        if (buildType === "full") await triggerFullRebuild()
+        else await rebuildApplication()
+    } catch (error) {
+        if (error instanceof Error && error.name === "StruxExitError") {
+            Logger.warning("Build failed. Fix the error and save to retry.")
+        } else {
+            throw error
+        }
+    } finally {
+        isBuilding = false
+    }
+
+    // If changes came in during the build, run the queued build
+    if (pendingBuild && !isShuttingDown) {
+        const next = pendingBuild
+        pendingBuild = null
+        await executeBuild(next)
+    }
 }
 
 

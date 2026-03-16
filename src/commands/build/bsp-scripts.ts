@@ -189,11 +189,12 @@ async function updateBspScriptCacheAfterRun(
 export async function runScriptsForStep(
     step: ScriptStep,
     manifest: BuildCacheManifest
-): Promise<void> {
+): Promise<boolean> {
     // Get scripts for this step from the BSP configuration
     const scripts = Settings.bsp?.scripts?.filter(s => s.step === step) ?? []
 
-    if (scripts.length === 0) return
+    if (scripts.length === 0) return false
+    let didRun = false
 
     for (const script of scripts) {
         const scriptName = script.description ?? script.location
@@ -257,6 +258,7 @@ export async function runScriptsForStep(
         }
 
         // Run the script in Docker
+        didRun = true
         await Runner.runScriptInDocker(scriptContent, {
             message: `Running BSP script: ${scriptName} (${step})...`,
             messageOnError: `Failed to run BSP script "${scriptName}" for step "${step}". Please check the build logs for more information.`,
@@ -269,5 +271,6 @@ export async function runScriptsForStep(
 
         Logger.success(`Completed BSP script: ${scriptName}`)
     }
+    return didRun
 }
 

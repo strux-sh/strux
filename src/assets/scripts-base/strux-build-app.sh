@@ -99,6 +99,33 @@ if [ ! -f "$PROJECT_DIR/main.go" ]; then
     exit 0
 fi
 
+# If USE_LOCAL_RUNTIME is set, inject a replace directive for the local runtime.
+# We back up go.mod/go.sum, modify them inside the container, build, then restore.
+GOMOD_BACKUP=""
+GOSUM_BACKUP=""
+if [ "${USE_LOCAL_RUNTIME:-}" = "1" ] && [ -d "/strux-runtime" ]; then
+    progress "Using local strux runtime from /strux-runtime..."
+    GOMOD_BACKUP=$(cat "$PROJECT_DIR/go.mod")
+    if [ -f "$PROJECT_DIR/go.sum" ]; then
+        GOSUM_BACKUP=$(cat "$PROJECT_DIR/go.sum")
+    fi
+
+    # Restore go.mod/go.sum on exit (even on failure) so host files stay clean
+    restore_gomod() {
+        if [ -n "$GOMOD_BACKUP" ]; then
+            echo "$GOMOD_BACKUP" > "$PROJECT_DIR/go.mod"
+            if [ -n "$GOSUM_BACKUP" ]; then
+                echo "$GOSUM_BACKUP" > "$PROJECT_DIR/go.sum"
+            elif [ -f "$PROJECT_DIR/go.sum" ]; then
+                rm -f "$PROJECT_DIR/go.sum"
+            fi
+        fi
+    }
+    trap restore_gomod EXIT
+
+    go mod edit -replace "github.com/strux-dev/strux=/strux-runtime"
+fi
+
 # Set up Go private module environment (if needed)
 # This can be set via environment variable before running the script
 # Example: GO_PRIVATE_ENV="GOPRIVATE=example.com " (note the trailing space if setting env vars)
@@ -111,6 +138,7 @@ GOARCH="$GO_ARCH" \
 GOARM="${GOARM:-}" \
 CC="$CROSS_COMPILER" \
 ${GO_PRIVATE_ENV}go build -buildvcs=false -o "$CACHE_DIR/app/main" .
+
 
 progress "Go application built successfully"
 

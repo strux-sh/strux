@@ -82,6 +82,19 @@ const DevSchema = z.object({
     inspector: DevInspectorSchema.optional(),
 })
 
+// Display monitor configuration schema
+const DisplayMonitorSchema = z.object({
+    path: z.string(),
+    resolution: z.string().regex(/^\d+x\d+$/, "Resolution must be in WIDTHxHEIGHT format (e.g., 1920x1080)").optional(),
+    names: z.array(z.string()).optional(),
+    input_devices: z.array(z.string()).optional(),
+})
+
+// Display configuration schema
+const DisplaySchema = z.object({
+    monitors: z.array(DisplayMonitorSchema).min(1),
+})
+
 // Main strux.yaml schema
 export const StruxYamlSchema = z.object({
     strux_version: z.string(),
@@ -89,6 +102,7 @@ export const StruxYamlSchema = z.object({
     bsp: z.string(),
     hostname: z.string().optional(),
     boot: BootSchema.optional(),
+    display: DisplaySchema.optional(),
     rootfs: RootFSSchema.optional(),
     qemu: QemuSchema.optional(),
     build: BuildSchema.optional(),

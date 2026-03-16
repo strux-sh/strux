@@ -36,6 +36,30 @@ tar -xzf "$BSP_CACHE/rootfs-base.tar.gz" -C "$ROOTFS_DIR"
 mkdir -p "$ROOTFS_DIR/strux"
 
 # ============================================================================
+# SECTION 4: MOUNT NECESSARY FILESYSTEMS FOR CHROOT OPERATIONS
+# ============================================================================
+# Mount necessary filesystems for chroot operations
+# ============================================================================
+
+
+# Mount necessary filesystems for chroot operations
+mount --bind /dev /tmp/rootfs/dev || true
+mount --bind /dev/pts /tmp/rootfs/dev/pts || true
+mount --bind /proc /tmp/rootfs/proc || true
+mount --bind /sys /tmp/rootfs/sys || true
+
+# Copy QEMU static binary for cross-arch chroot if needed
+if [ "$HOST_ARCH" != "$TARGET_ARCH" ]; then
+    if [ "$TARGET_ARCH" = "arm64" ] && [ -f /usr/bin/qemu-aarch64-static ]; then
+        cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
+    elif [ "$TARGET_ARCH" = "armhf" ] && [ -f /usr/bin/qemu-arm-static ]; then
+        cp /usr/bin/qemu-arm-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
+    fi
+fi
+
+
+
+# ============================================================================
 # SECTION 1: CONFIGURATION READING FROM YAML FILES
 # ============================================================================
 # Read the selected BSP and overlay paths from configuration files
@@ -63,6 +87,157 @@ if [ ! -f "$BSP_CONFIG" ]; then
     echo "Error: BSP configuration file not found: $BSP_CONFIG"
     exit 1
 fi
+
+
+# ============================================================================
+# SECTION 5: CUSTOM PACKAGE INSTALLATION
+# ============================================================================
+# This section installs user-specified packages from the configuration:
+# - Repository packages: Installed via apt-get
+# - .deb files: Copied to chroot and installed via dpkg
+#
+# Path resolution rules:
+# - Global packages: relative to project root (/project)
+# - BSP packages starting with ./: relative to BSP folder (/project/bsp/{bsp_name})
+# - BSP packages without ./: relative to project root
+# ============================================================================
+
+progress "Collecting custom packages from configuration..."
+
+# Collect packages from global rootfs.packages
+GLOBAL_PACKAGES=$(yq '.rootfs.packages[]?' "$PROJECT_DIR/strux.yaml" 2>/dev/null || echo "")
+
+# Collect packages from BSP-specific rootfs.packages
+BSP_PACKAGES=$(yq '.bsp.rootfs.packages[]?' "$BSP_CONFIG" 2>/dev/null || echo "")
+
+# Separate repository packages from .deb file paths
+REPO_PACKAGES=""
+DEB_FILES=""
+
+# Process global packages (relative to project root)
+while IFS= read -r package; do
+    if [ -z "$package" ]; then
+        continue
+    fi
+
+    # Check if it's a .deb file (ends with .deb)
+    if [[ "$package" == *.deb ]]; then
+        # Global packages are relative to project root
+        # Normalize path (remove ./ prefix if present)
+        normalized_package="${package#./}"
+
+        # Resolve the path relative to project directory
+        if [ -f "$PROJECT_DIR/$normalized_package" ]; then
+            DEB_FILES="$DEB_FILES$normalized_package\n"
+        elif [ -f "$package" ]; then
+            # Absolute path
+            DEB_FILES="$DEB_FILES$package\n"
+        else
+            echo "Warning: .deb file not found: $package (checked: $PROJECT_DIR/$normalized_package)"
+        fi
+    else
+        # It's a repository package name
+        REPO_PACKAGES="$REPO_PACKAGES$package "
+    fi
+done <<< "$GLOBAL_PACKAGES"
+
+# Process BSP packages (paths starting with ./ are relative to BSP folder)
+while IFS= read -r package; do
+    if [ -z "$package" ]; then
+        continue
+    fi
+
+    # Check if it's a .deb file (ends with .deb)
+    if [[ "$package" == *.deb ]]; then
+        # BSP packages: if starts with ./, resolve relative to BSP folder, otherwise relative to project root
+        if [[ "$package" == ./* ]]; then
+            # Remove ./ prefix and resolve relative to BSP folder
+            bsp_relative_path="${package#./}"
+            if [ -f "$BSP_FOLDER/$bsp_relative_path" ]; then
+                DEB_FILES="$DEB_FILES$BSP_FOLDER/$bsp_relative_path\n"
+            else
+                echo "Warning: .deb file not found: $package (checked: $BSP_FOLDER/$bsp_relative_path)"
+            fi
+        else
+            # Not starting with ./, resolve relative to project root (like global packages)
+            normalized_package="${package#./}"
+            if [ -f "$PROJECT_DIR/$normalized_package" ]; then
+                DEB_FILES="$DEB_FILES$normalized_package\n"
+            elif [ -f "$package" ]; then
+                # Absolute path
+                DEB_FILES="$DEB_FILES$package\n"
+            else
+                echo "Warning: .deb file not found: $package (checked: $PROJECT_DIR/$normalized_package)"
+            fi
+        fi
+    else
+        # It's a repository package name - check if already added (avoid duplicates)
+        if [[ ! " $REPO_PACKAGES " =~ " $package " ]]; then
+            REPO_PACKAGES="$REPO_PACKAGES$package "
+        fi
+    fi
+done <<< "$BSP_PACKAGES"
+
+# Trim trailing spaces/newlines
+REPO_PACKAGES=$(echo "$REPO_PACKAGES" | sed 's/[[:space:]]*$//')
+DEB_FILES=$(echo -e "$DEB_FILES" | grep -v '^$' || true)
+
+# Install repository packages from config
+if [ -n "$REPO_PACKAGES" ]; then
+    progress "Installing repository packages..."
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get update"
+    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        $REPO_PACKAGES"
+else
+    progress "No repository packages to install"
+fi
+
+# Copy and install custom .deb package files
+if [ -n "$DEB_FILES" ]; then
+    progress "Copying and installing custom .deb package files..."
+
+    # Create temporary directory for .deb files in chroot
+    DEB_TEMP_DIR="$ROOTFS_DIR/tmp/deb-packages"
+    mkdir -p "$DEB_TEMP_DIR"
+
+    # Copy each .deb file to chroot and install it
+    while IFS= read -r deb_file; do
+        if [ -z "$deb_file" ]; then
+            continue
+        fi
+
+        # Normalize path (remove ./ prefix if present)
+        deb_file="${deb_file#./}"
+
+        # Resolve the path - try relative to project directory first, then absolute
+        if [ -f "$PROJECT_DIR/$deb_file" ]; then
+            SOURCE_FILE="$PROJECT_DIR/$deb_file"
+        elif [ -f "$deb_file" ]; then
+            SOURCE_FILE="$deb_file"
+        else
+            echo "Warning: Skipping .deb file not found: $deb_file (checked: $PROJECT_DIR/$deb_file and $deb_file)"
+            continue
+        fi
+
+        # Get just the filename
+        DEB_FILENAME=$(basename "$SOURCE_FILE")
+        TARGET_FILE="$DEB_TEMP_DIR/$DEB_FILENAME"
+
+        # Copy .deb file to chroot
+        cp "$SOURCE_FILE" "$TARGET_FILE"
+
+        # Install the .deb file inside chroot
+        progress "Installing $DEB_FILENAME..."
+        run_in_chroot "DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/deb-packages/$DEB_FILENAME || apt-get install -f -y"
+    done <<< "$DEB_FILES"
+
+    # Clean up temporary directory
+    rm -rf "$DEB_TEMP_DIR"
+    run_in_chroot "rm -rf /tmp/deb-packages" || true
+else
+    progress "No .deb package files to install"
+fi
+
 
 # ============================================================================
 # SECTION 2: APPLY ROOTFS OVERLAYS
@@ -170,6 +345,20 @@ if [ -f "$BSP_CACHE/.dev-env.json" ]; then
     cp "$BSP_CACHE/.dev-env.json" "$ROOTFS_DIR/strux/.dev-env.json"
 fi
 
+# Copy display configuration JSON (written by TypeScript build pipeline)
+if [ -f "$BSP_CACHE/.display-config.json" ]; then
+    progress "Copying display configuration..."
+    cp "$BSP_CACHE/.display-config.json" "$ROOTFS_DIR/strux/.display-config.json"
+fi
+
+# Copy input device mapping (maps touch/pointer devices to outputs)
+if [ -f "$BSP_CACHE/.input-map" ]; then
+    cp "$BSP_CACHE/.input-map" "$ROOTFS_DIR/strux/.input-map"
+fi
+
+# Copy "not configured" HTML page for unconfigured monitor outputs
+cp "$PROJECT_DIR/dist/artifacts/not-configured.html" "$ROOTFS_DIR/strux/.not-configured.html" 2>/dev/null || true
+
 # Read custom Cage environment variables from bsp.yaml
 CAGE_ENV_COUNT=$(yq -r '.bsp.cage.env // [] | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
 if [ "$CAGE_ENV_COUNT" -gt 0 ]; then
@@ -191,32 +380,10 @@ cp "$PROJECT_DIR/dist/artifacts/systemd/strux-network.service" "$ROOTFS_DIR/etc/
 cp "$PROJECT_DIR/dist/artifacts/systemd/20-ethernet.network" "$ROOTFS_DIR/etc/systemd/network/20-ethernet.network"
 
 
-# ============================================================================
-# SECTION 4: MOUNT NECESSARY FILESYSTEMS FOR CHROOT OPERATIONS
-# ============================================================================
-# Mount necessary filesystems for chroot operations
-# ============================================================================
-
-
-
-# Mount necessary filesystems for chroot operations
-mount --bind /dev /tmp/rootfs/dev || true
-mount --bind /dev/pts /tmp/rootfs/dev/pts || true
-mount --bind /proc /tmp/rootfs/proc || true
-mount --bind /sys /tmp/rootfs/sys || true
-
-# Copy QEMU static binary for cross-arch chroot if needed
-if [ "$HOST_ARCH" != "$TARGET_ARCH" ]; then
-    if [ "$TARGET_ARCH" = "arm64" ] && [ -f /usr/bin/qemu-aarch64-static ]; then
-        cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
-    elif [ "$TARGET_ARCH" = "armhf" ] && [ -f /usr/bin/qemu-arm-static ]; then
-        cp /usr/bin/qemu-arm-static "$ROOTFS_DIR/usr/bin/" 2>/dev/null || true
-    fi
-fi
 
 
 # ============================================================================
-# SECTION 5: INSTALL KERNEL
+# SECTION 6: INSTALL KERNEL
 # ============================================================================
 # This section installs the kernel into the rootfs. It handles both:
 # - Default Debian kernel: installed via apt-get
@@ -377,7 +544,7 @@ fi
 
 
 # ============================================================================
-# SECTION 6: ENABLE SYSTEMD SERVICES
+# SECTION 7: ENABLE SYSTEMD SERVICES
 # ============================================================================
 # Enable systemd services
 # ============================================================================
@@ -436,7 +603,7 @@ run_in_chroot "systemctl mask getty.target || true"
 
 
 # ============================================================================
-# SECTION 7: SET HOSTNAME
+# SECTION 8: SET HOSTNAME
 # ============================================================================
 # Set the hostname from YAML configuration
 # Priority: strux.yaml hostname > bsp.yaml hostname
@@ -472,7 +639,7 @@ echo "Hostname configured as: $HOSTNAME"
 # ============================================================================
 
 # ============================================================================
-# SECTION 8: CREATE PLYMOUTH THEME AND BOOT SPLASH, REGENERATE INITRAMFS
+# SECTION 9: CREATE PLYMOUTH THEME AND BOOT SPLASH, REGENERATE INITRAMFS
 # ============================================================================
 # Create the Plymouth theme and boot splash
 # ============================================================================
@@ -531,7 +698,7 @@ else
 fi
 
 # ============================================================================
-# SECTION 9: CLEANUP AND MOUNT POINT UNMOUNTING
+# SECTION 10: CLEANUP AND MOUNT POINT UNMOUNTING
 # ============================================================================
 # Cleanup and unmount point unmounting
 # ============================================================================

@@ -51,6 +51,10 @@ export class SettingsConfig {
     // To show app output in dev mode (defaults to true)
     devAppDebug = true
 
+    // Path to local strux repo for using local runtime during builds
+    // When set, injects a go.mod replace directive and mounts the repo into Docker
+    localRuntime: string | null = null
+
 
     constructor() {
 

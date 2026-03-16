@@ -116,6 +116,32 @@ func (rt *Runtime) GenerateTypeScript(outputPath string) error {
 
 	sb.WriteString("}\n\n")
 
+	// Generate strux.ipc event types
+	sb.WriteString("// Strux IPC event system\n")
+	sb.WriteString("declare namespace strux {\n")
+	sb.WriteString("  export namespace ipc {\n")
+	sb.WriteString("    /**\n")
+	sb.WriteString("     * Register a listener for an event from the Go backend.\n")
+	sb.WriteString("     * @param event The event name to listen for\n")
+	sb.WriteString("     * @param callback Function called when the event is received\n")
+	sb.WriteString("     * @returns A function that removes the listener when called\n")
+	sb.WriteString("     */\n")
+	sb.WriteString("    export function on(event: string, callback: (data: any) => void): () => void;\n")
+	sb.WriteString("    /**\n")
+	sb.WriteString("     * Remove a previously registered event listener.\n")
+	sb.WriteString("     * @param event The event name\n")
+	sb.WriteString("     * @param callback The same callback reference passed to on()\n")
+	sb.WriteString("     */\n")
+	sb.WriteString("    export function off(event: string, callback: (data: any) => void): void;\n")
+	sb.WriteString("    /**\n")
+	sb.WriteString("     * Send an event to the Go backend.\n")
+	sb.WriteString("     * @param event The event name\n")
+	sb.WriteString("     * @param data Optional data to send with the event\n")
+	sb.WriteString("     */\n")
+	sb.WriteString("    export function send(event: string, data?: any): void;\n")
+	sb.WriteString("  }\n")
+	sb.WriteString("}\n\n")
+
 	// Extend Window interface
 	sb.WriteString("// Extend Window interface with Strux bindings\n")
 	sb.WriteString("declare global {\n")

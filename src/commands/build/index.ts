@@ -38,7 +38,8 @@ import {
     buildKernel,
     buildBootloader,
     postProcessRootFS,
-    updateDevEnvConfig
+    updateDevEnvConfig,
+    writeDisplayConfig
 } from "./steps"
 
 // BSP Script Execution
@@ -136,57 +137,72 @@ export async function build(): Promise<void> {
     // Skip per-step chown — we'll do a single chown at the end of the build
     Runner.skipChown = true
 
+    // Track whether any build step actually ran (vs all cached)
+    let anyStepRan = false
+
+    // Wrapper that tracks whether any BSP script ran
+    async function runBspScripts(step: Parameters<typeof runScriptsForStep>[0]) {
+        if (await runScriptsForStep(step, manifest)) {
+            anyStepRan = true
+        }
+    }
+
     try {
         // ========================================
         // BUILD LIFECYCLE: before_build
         // ========================================
-        await runScriptsForStep("before_build", manifest)
+        await runBspScripts("before_build")
 
         // ========================================
         // FRONTEND COMPILATION
         // ========================================
-        await runScriptsForStep("before_frontend", manifest)
+        await runBspScripts("before_frontend")
         if (await checkStepCache("frontend")) {
+            anyStepRan = true
             await compileFrontend()
             await cacheStep("frontend")
         }
-        await runScriptsForStep("after_frontend", manifest)
+        await runBspScripts("after_frontend")
 
         // ========================================
         // APPLICATION COMPILATION (main.go)
         // ========================================
-        await runScriptsForStep("before_application", manifest)
+        await runBspScripts("before_application")
         if (await checkStepCache("application")) {
+            anyStepRan = true
             await compileApplication()
             await cacheStep("application")
         }
-        await runScriptsForStep("after_application", manifest)
+        await runBspScripts("after_application")
 
         // ========================================
         // CAGE COMPOSITOR
         // ========================================
-        await runScriptsForStep("before_cage", manifest)
+        await runBspScripts("before_cage")
         if (await checkStepCache("cage")) {
+            anyStepRan = true
             await compileCage()
             await cacheStep("cage")
         }
-        await runScriptsForStep("after_cage", manifest)
+        await runBspScripts("after_cage")
 
         // ========================================
         // WPE WEBKIT EXTENSION
         // ========================================
-        await runScriptsForStep("before_wpe", manifest)
+        await runBspScripts("before_wpe")
         if (await checkStepCache("wpe")) {
+            anyStepRan = true
             await compileWPE()
             await cacheStep("wpe")
         }
-        await runScriptsForStep("after_wpe", manifest)
+        await runBspScripts("after_wpe")
 
         // ========================================
         // STRUX CLIENT BINARY
         // ========================================
-        await runScriptsForStep("before_client", manifest)
+        await runBspScripts("before_client")
         if (await checkStepCache("client")) {
+            anyStepRan = true
             await buildStruxClient(isDevMode)
             await cacheStep("client")
         } else {
@@ -198,7 +214,7 @@ export async function build(): Promise<void> {
                 await updateDevEnvConfig(bspName)
             }
         }
-        await runScriptsForStep("after_client", manifest)
+        await runBspScripts("after_client")
 
         // ========================================
         // KERNEL (Conditional: only if custom_kernel is enabled)
@@ -206,22 +222,24 @@ export async function build(): Promise<void> {
         if (Settings.bsp?.boot?.kernel?.custom_kernel) {
             const hasCustomKernelScript = Settings.bsp?.scripts?.some(s => s.step === "custom_kernel") ?? false
 
-            await runScriptsForStep("before_kernel", manifest)
+            await runBspScripts("before_kernel")
 
             if (hasCustomKernelScript) {
+                anyStepRan = true
                 // Use BSP-provided custom kernel script instead of built-in
-                await runScriptsForStep("custom_kernel", manifest)
+                await runBspScripts("custom_kernel")
             } else if (await checkStepCache("kernel")) {
+                anyStepRan = true
                 // Phase 1: Fetch source and apply patches
                 await extractKernel()
                 // Run after_kernel_extract hooks (e.g., install kernel boot logo)
-                await runScriptsForStep("after_kernel_extract", manifest)
+                await runBspScripts("after_kernel_extract")
                 // Phase 2: Configure, compile, and install
                 await buildKernel()
                 await cacheStep("kernel")
             }
 
-            await runScriptsForStep("after_kernel", manifest)
+            await runBspScripts("after_kernel")
         }
 
         // ========================================
@@ -230,39 +248,46 @@ export async function build(): Promise<void> {
         if (Settings.bsp?.boot?.bootloader?.enabled) {
             const hasCustomBootloaderScript = Settings.bsp?.scripts?.some(s => s.step === "custom_bootloader") ?? false
 
-            await runScriptsForStep("before_bootloader", manifest)
+            await runBspScripts("before_bootloader")
 
             if (hasCustomBootloaderScript) {
+                anyStepRan = true
                 // Use BSP-provided custom bootloader script instead of built-in
-                await runScriptsForStep("custom_bootloader", manifest)
+                await runBspScripts("custom_bootloader")
             } else {
                 const bootloaderType = Settings.bsp?.boot?.bootloader?.type
                 // Only run built-in build for u-boot and grub; custom/none skip
                 if (bootloaderType && bootloaderType !== "custom" && bootloaderType !== "none") {
                     if (await checkStepCache("bootloader")) {
+                        anyStepRan = true
                         await buildBootloader()
                         await cacheStep("bootloader")
                     }
                 }
             }
 
-            await runScriptsForStep("after_bootloader", manifest)
+            await runBspScripts("after_bootloader")
         }
 
         // ========================================
         // ROOT FILESYSTEM
         // ========================================
-        await runScriptsForStep("before_rootfs", manifest)
+        await runBspScripts("before_rootfs")
         if (await checkStepCache("rootfs-base")) {
+            anyStepRan = true
             await buildRootFS()
             await cacheStep("rootfs-base")
         }
-        await runScriptsForStep("after_rootfs", manifest)
+        await runBspScripts("after_rootfs")
 
         // ========================================
         // ROOT FILESYSTEM POST-PROCESSING
         // ========================================
+        // Always write display config before rootfs-post (like dev-env.json)
+        await writeDisplayConfig(bspName)
+
         if (await checkStepCache("rootfs-post")) {
+            anyStepRan = true
             await postProcessRootFS()
             await cacheStep("rootfs-post")
         }
@@ -270,15 +295,15 @@ export async function build(): Promise<void> {
         // ========================================
         // FINAL IMAGE BUNDLING
         // ========================================
-        await runScriptsForStep("before_bundle", manifest)
+        await runBspScripts("before_bundle")
 
         // Run BSP's make_image script(s)
-        await runScriptsForStep("make_image", manifest)
+        await runBspScripts("make_image")
 
         // ========================================
         // BUILD LIFECYCLE: after_build
         // ========================================
-        await runScriptsForStep("after_build", manifest)
+        await runBspScripts("after_build")
 
         // ========================================
         // SAVE BUILD METADATA
@@ -296,10 +321,13 @@ export async function build(): Promise<void> {
 
         Logger.success("Build completed successfully!")
     } finally {
-        // Always fix file permissions at the end, even if the build failed.
+        // Fix file permissions at the end if any build step ran.
         // Docker runs as root so all created files are root-owned on the host.
+        // Skip if everything was cached — no Docker commands ran, so no files changed ownership.
         Runner.skipChown = false
-        await Runner.chownProjectFiles()
+        if (anyStepRan) {
+            await Runner.chownProjectFiles()
+        }
     }
 }
 

@@ -14,6 +14,13 @@ import (
 
 const socketPath = "/tmp/strux-ipc.sock"
 
+// ChannelHandshake is the first message sent by the WPE extension on each socket
+// to identify which channel the connection belongs to.
+type ChannelHandshake struct {
+	Type    string `json:"type"`
+	Channel string `json:"channel"` // "sync", "async", or "events"
+}
+
 // Runtime manages the IPC bridge between Go and JavaScript
 type Runtime struct {
 	app        interface{}
@@ -25,6 +32,7 @@ type Runtime struct {
 	structName string
 	pkgName    string
 	extensions *extension.Registry
+	events     *eventState
 }
 
 // Message represents a JSON-RPC style message
@@ -62,6 +70,7 @@ func New(app interface{}) *Runtime {
 		fields:     make(map[string]int),
 		stopChan:   make(chan struct{}),
 		extensions: extension.NewRegistry(),
+		events:     newEventState(),
 	}
 	rt.discoverMethods()
 	rt.discoverFields()
@@ -224,133 +233,173 @@ func (rt *Runtime) acceptConnections() {
 	}
 }
 
-// handleConnection processes messages from a single connection
+// handleConnection processes messages from a single connection.
+// It peeks at the first message to check for a channel handshake.
 func (rt *Runtime) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
 
+	// Peek at first message to check for channel handshake
+	var firstMsg json.RawMessage
+	if err := decoder.Decode(&firstMsg); err != nil {
+		return
+	}
+
+	// Try to parse as handshake
+	var handshake ChannelHandshake
+	if err := json.Unmarshal(firstMsg, &handshake); err == nil && handshake.Type == "handshake" {
+		// Send acknowledgment
+		encoder.Encode(map[string]interface{}{"type": "handshake", "ok": true})
+
+		if handshake.Channel == "events" {
+			// Register as event connection and handle events
+			rt.events.eventConnsMu.Lock()
+			rt.events.eventConns[conn] = struct{}{}
+			rt.events.eventConnsMu.Unlock()
+
+			fmt.Printf("Strux Runtime: Event channel connected\n")
+			rt.handleEventConnection(conn)
+			return
+		}
+
+		// For sync/async channels, just continue to the normal message loop
+		fmt.Printf("Strux Runtime: %s channel connected\n", handshake.Channel)
+	} else {
+		// Not a handshake — treat as a regular message (backward compatibility)
+		var msg Message
+		if err := json.Unmarshal(firstMsg, &msg); err != nil {
+			return
+		}
+		rt.handleMessage(msg, encoder)
+	}
+
+	// Normal message loop for sync/async channels
 	for {
 		var msg Message
 		if err := decoder.Decode(&msg); err != nil {
 			return
 		}
-
-		// Special case: request for method and field metadata
-		if msg.Method == "__getBindings" {
-			methods := rt.GetMethodInfo()
-			fields := rt.GetFieldInfo()
-
-			// Structure bindings: user app + all registered extensions
-			bindings := map[string]interface{}{
-				rt.pkgName: map[string]interface{}{
-					rt.structName: map[string]interface{}{
-						"methods": methods,
-						"fields":  fields,
-					},
-				},
-			}
-
-			// Add all extension bindings
-			extensionBindings := rt.extensions.GetAllBindings()
-			for namespace, subNamespaces := range extensionBindings {
-				bindings[namespace] = subNamespaces
-			}
-
-			encoder.Encode(Response{
-				ID:     msg.ID,
-				Result: bindings,
-			})
-			continue
-		}
-
-		// Special case: get field value
-		if msg.Method == "__getField" {
-			var params []interface{}
-			if len(msg.Params) > 0 {
-				json.Unmarshal(msg.Params, &params)
-			}
-
-			if len(params) < 1 {
-				encoder.Encode(Response{
-					ID:    msg.ID,
-					Error: "field name required",
-				})
-				continue
-			}
-
-			fieldName, ok := params[0].(string)
-			if !ok {
-				encoder.Encode(Response{
-					ID:    msg.ID,
-					Error: "field name must be a string",
-				})
-				continue
-			}
-
-			value, err := rt.getField(fieldName)
-			encoder.Encode(Response{
-				ID:     msg.ID,
-				Result: value,
-				Error: func() string {
-					if err != nil {
-						return err.Error()
-					}
-					return ""
-				}(),
-			})
-			continue
-		}
-
-		// Special case: set field value
-		if msg.Method == "__setField" {
-			var params []interface{}
-			if len(msg.Params) > 0 {
-				json.Unmarshal(msg.Params, &params)
-			}
-
-			if len(params) < 2 {
-				encoder.Encode(Response{
-					ID:    msg.ID,
-					Error: "field name and value required",
-				})
-				continue
-			}
-
-			fieldName, ok := params[0].(string)
-			if !ok {
-				encoder.Encode(Response{
-					ID:    msg.ID,
-					Error: "field name must be a string",
-				})
-				continue
-			}
-
-			err := rt.setField(fieldName, params[1])
-			encoder.Encode(Response{
-				ID: msg.ID,
-				Error: func() string {
-					if err != nil {
-						return err.Error()
-					}
-					return ""
-				}(),
-			})
-			continue
-		}
-
-		// Execute the method
-		result, err := rt.executeMethod(msg.Method, msg.Params)
-
-		resp := Response{ID: msg.ID}
-		if err != nil {
-			resp.Error = err.Error()
-		} else {
-			resp.Result = result
-		}
-
-		encoder.Encode(resp)
+		rt.handleMessage(msg, encoder)
 	}
+}
+
+// handleMessage processes a single JSON-RPC message
+func (rt *Runtime) handleMessage(msg Message, encoder *json.Encoder) {
+	// Special case: request for method and field metadata
+	if msg.Method == "__getBindings" {
+		methods := rt.GetMethodInfo()
+		fields := rt.GetFieldInfo()
+
+		// Structure bindings: user app + all registered extensions
+		bindings := map[string]interface{}{
+			rt.pkgName: map[string]interface{}{
+				rt.structName: map[string]interface{}{
+					"methods": methods,
+					"fields":  fields,
+				},
+			},
+		}
+
+		// Add all extension bindings
+		extensionBindings := rt.extensions.GetAllBindings()
+		for namespace, subNamespaces := range extensionBindings {
+			bindings[namespace] = subNamespaces
+		}
+
+		encoder.Encode(Response{
+			ID:     msg.ID,
+			Result: bindings,
+		})
+		return
+	}
+
+	// Special case: get field value
+	if msg.Method == "__getField" {
+		var params []interface{}
+		if len(msg.Params) > 0 {
+			json.Unmarshal(msg.Params, &params)
+		}
+
+		if len(params) < 1 {
+			encoder.Encode(Response{
+				ID:    msg.ID,
+				Error: "field name required",
+			})
+			return
+		}
+
+		fieldName, ok := params[0].(string)
+		if !ok {
+			encoder.Encode(Response{
+				ID:    msg.ID,
+				Error: "field name must be a string",
+			})
+			return
+		}
+
+		value, err := rt.getField(fieldName)
+		encoder.Encode(Response{
+			ID:     msg.ID,
+			Result: value,
+			Error: func() string {
+				if err != nil {
+					return err.Error()
+				}
+				return ""
+			}(),
+		})
+		return
+	}
+
+	// Special case: set field value
+	if msg.Method == "__setField" {
+		var params []interface{}
+		if len(msg.Params) > 0 {
+			json.Unmarshal(msg.Params, &params)
+		}
+
+		if len(params) < 2 {
+			encoder.Encode(Response{
+				ID:    msg.ID,
+				Error: "field name and value required",
+			})
+			return
+		}
+
+		fieldName, ok := params[0].(string)
+		if !ok {
+			encoder.Encode(Response{
+				ID:    msg.ID,
+				Error: "field name must be a string",
+			})
+			return
+		}
+
+		err := rt.setField(fieldName, params[1])
+		encoder.Encode(Response{
+			ID: msg.ID,
+			Error: func() string {
+				if err != nil {
+					return err.Error()
+				}
+				return ""
+			}(),
+		})
+		return
+	}
+
+	// Execute the method
+	result, err := rt.executeMethod(msg.Method, msg.Params)
+
+	resp := Response{ID: msg.ID}
+	if err != nil {
+		resp.Error = err.Error()
+	} else {
+		resp.Result = result
+	}
+
+	encoder.Encode(resp)
 }
 
 // executeMethod calls a bound method with the provided parameters

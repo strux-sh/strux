@@ -149,17 +149,36 @@ func main() {
 	CageLauncherInstance.Cleanup()
 }
 
+// loadDisplaySettings loads display configuration and resolution.
+// Returns the display config (may be nil) and the fallback resolution string.
+func loadDisplaySettings() (*DisplayConfig, string) {
+	logger := NewLogger("Display")
+
+	// Try loading the display config (multi-monitor support)
+	var displayConfig *DisplayConfig
+	if dc, err := LoadDisplayConfig("/strux/.display-config.json"); err == nil {
+		displayConfig = dc
+		logger.Info("Loaded display config: %d monitor(s)", len(dc.Monitors))
+	} else {
+		logger.Info("No display config found, using single-monitor defaults")
+	}
+
+	// Read fallback resolution from legacy file or first monitor in config
+	resolution := "1920x1080"
+	if displayConfig != nil && len(displayConfig.Monitors) > 0 && displayConfig.Monitors[0].Resolution != "" {
+		resolution = displayConfig.Monitors[0].Resolution
+	} else if content, err := readFileIntoString("/strux/.display-resolution"); err == nil {
+		resolution = strings.TrimSpace(content)
+	}
+
+	return displayConfig, resolution
+}
+
 // launchProduction launches Cage with production settings
 func launchProduction() error {
 	logger := NewLogger("Production")
 
-	// Read display resolution
-	resolution := "1920x1080"
-	if content, err := readFileIntoString("/strux/.display-resolution"); err == nil {
-		resolution = strings.TrimSpace(content)
-	} else {
-		logger.Warn("Could not read display resolution, using default")
-	}
+	displayConfig, resolution := loadDisplaySettings()
 
 	// Check for splash image
 	splashImage := ""
@@ -173,12 +192,15 @@ func launchProduction() error {
 		return ErrBackendNotReady
 	}
 
+	logger.Info("Launching with resolution: %s", resolution)
+
 	// Launch Cage with backend URL (no inspector in production)
 	return cage.Launch(LaunchOptions{
-		CogURL:      "http://localhost:8080",
-		Resolution:  resolution,
-		SplashImage: splashImage,
-		Inspector:   nil,
+		CogURL:        "http://localhost:8080",
+		Resolution:    resolution,
+		SplashImage:   splashImage,
+		Inspector:     nil,
+		DisplayConfig: displayConfig,
 	})
 }
 
@@ -186,13 +208,7 @@ func launchProduction() error {
 func launchDevMode(cogURL string, inspector *InspectorConfig) error {
 	logger := NewLogger("DevMode")
 
-	// Read display resolution
-	resolution := "1920x1080"
-	if content, err := readFileIntoString("/strux/.display-resolution"); err == nil {
-		resolution = strings.TrimSpace(content)
-	} else {
-		logger.Warn("Could not read display resolution, using default")
-	}
+	displayConfig, resolution := loadDisplaySettings()
 
 	// Check for splash image
 	splashImage := ""
@@ -206,12 +222,15 @@ func launchDevMode(cogURL string, inspector *InspectorConfig) error {
 		return ErrBackendNotReady
 	}
 
+	logger.Info("Launching with resolution: %s", resolution)
+
 	// Launch Cage with inspector if enabled
 	return cage.Launch(LaunchOptions{
-		CogURL:      cogURL,
-		Resolution:  resolution,
-		SplashImage: splashImage,
-		Inspector:   inspector,
+		CogURL:        cogURL,
+		Resolution:    resolution,
+		SplashImage:   splashImage,
+		Inspector:     inspector,
+		DisplayConfig: displayConfig,
 	})
 }
 

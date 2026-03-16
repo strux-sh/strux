@@ -5,6 +5,22 @@ bsp: qemu
 
 hostname: ${projectName}
 
+# --- Display Configuration ---
+# display:
+#   monitors:
+#     - path: /
+#       resolution: 1920x1080
+#       names:
+#         - HDMI-A-1
+#         - Virtual-1
+#       input_devices:
+#         - ILITEK
+#     - path: /dashboard
+#       resolution: 1280x720
+#       names:
+#         - HDMI-A-2
+#         - Virtual-2
+
 boot:
   # --- The splash screen configuration ---
   splash:

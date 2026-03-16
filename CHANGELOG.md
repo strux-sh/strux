@@ -2,6 +2,76 @@
 
 ## v0.2.0
 
+### New: Bidirectional Event System (`strux.ipc`)
+
+A new event system enables real-time, bidirectional communication between the Go backend and the JavaScript frontend — no polling, no callbacks-as-parameters, just fire-and-forget events in both directions.
+
+**JavaScript API** (`strux.ipc`):
+```javascript
+// Listen for events from Go
+const unsub = strux.ipc.on("download-progress", (data) => {
+    updateProgressBar(data.percent);
+});
+
+// Send an event to Go
+strux.ipc.send("user-action", { button: "start" });
+
+// Remove listener (either way works)
+unsub();
+strux.ipc.off("download-progress", handler);
+```
+
+**Go API** (via `runtime.Init`):
+```go
+rt, _ := runtime.Init(app)
+
+// Listen for events from JS
+rt.On("user-action", func(data interface{}) {
+    fmt.Println("User did:", data)
+})
+
+// Send event to all connected frontends
+rt.Emit("download-progress", map[string]int{"percent": 50})
+
+rt.Serve() // blocks on HTTP server
+```
+
+**Architecture:**
+- A dedicated third Unix socket connection ("events" channel) is established between the WPE extension and the Go runtime, separate from the existing sync and async channels
+- Each socket connection now identifies itself via a handshake message (`{"type":"handshake","channel":"events"}`)
+- Go→JS events are pushed over this channel and dispatched to registered JS callbacks via `g_idle_add` (thread-safe, main-loop dispatch)
+- JS→Go events are sent over the same channel and dispatched to registered Go handlers in goroutines
+- Event listeners are automatically cleaned up on page reload/navigation
+- TypeScript type definitions are auto-generated for `strux.ipc.on()`, `strux.ipc.off()`, and `strux.ipc.send()`
+
+**API changes:**
+- `runtime.Start(app)` — unchanged, still blocks, still returns `error`. Use this if you don't need events.
+- `runtime.Init(app)` — **new**, returns `(*Runtime, error)`. Use this when you need access to `Emit`/`On`/`Off`. Follow with `rt.Serve()` to start the HTTP server.
+- `rt.Serve()` — **new**, starts the HTTP server (blocking). Call after `Init` and event setup.
+- `rt.Emit(event, data)` — **new**, broadcasts an event to all connected JS frontends.
+- `rt.On(event, handler)` — **new**, registers a Go handler for JS events. Returns a handler ID for `Off()`.
+- `rt.Off(id)` — **new**, removes a handler by ID.
+
+### New: `--local-runtime` Flag
+
+Build and dev commands now accept `--local-runtime <path>` to use a local copy of the Strux Go runtime instead of the published GitHub module. This is useful for testing runtime changes (like the new event system) without publishing a release.
+
+```bash
+strux build qemu --local-runtime ../strux-os-bun-rewrite
+strux dev --local-runtime ../strux-os-bun-rewrite
+```
+
+How it works:
+- The local strux repo is mounted read-only into the Docker container at `/strux-runtime`
+- Inside the container, `go mod edit -replace` injects a temporary replace directive before building
+- The project's `go.mod` and `go.sum` are backed up and restored via a shell `trap EXIT`, so host files are never modified — even if the build fails or is interrupted
+- Relative paths (e.g., `../`) are resolved to absolute paths before being passed to Docker
+
+### Optimizations
+
+- Moved custom package installation (both repository packages and `.deb` files) from the `rootfs-base` build step to `rootfs-post`. Previously, any change to `rootfs.packages` in `strux.yaml` or `bsp.rootfs.packages` in `bsp.yaml` would invalidate the base rootfs cache, triggering a full debootstrap + system package rebuild. Packages are now installed early in the post-processing step instead, so adding or removing a package only rebuilds the much faster `rootfs-post` step. The cache dependency graph has been updated accordingly — `rootfs-base` now only depends on `bsp.arch`, while `rootfs-post` tracks both package lists.
+- Skip file permission fix (`chown`) when all build steps are cached. Previously, `strux dev` and `strux build` would always spawn a Docker container at the end of the build to fix file ownership — even when every step was cached and no Docker commands actually ran. The build pipeline now tracks whether any step or BSP script executed, and only runs the `chown` pass when something actually produced files.
+
 ### Bug Fixes
 
 - Fixed a weird bug where `strux dev` and `strux dev --remote` was leaving orphaned Docker containers running after exit, causing runaway CPU usage and system overheating. The file watcher (chokidar) was never closed during shutdown, allowing it to trigger new Docker-based rebuilds even while cleanup was in progress. Additionally, the Vite dev server Docker container used bash as PID 1, which ignores SIGTERM — so killing the `docker run` wrapper process did not actually stop the container. The fix closes the file watcher before any other cleanup, adds a shutdown guard to prevent rebuild triggers during exit, names the Vite container (`strux-vite-dev`) so it can be explicitly stopped with `docker stop`, cleans up leftover containers from previous crashed sessions on startup, registers signal handlers before the file watcher to eliminate a race condition, and increases the exit delay to give Docker containers time to terminate.

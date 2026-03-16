@@ -22,6 +22,19 @@ static GMutex async_mutex;
 static GQueue *async_queue = NULL;
 static gboolean async_inflight = FALSE;
 
+// Event socket connection (for bidirectional events)
+static GSocketConnection *event_connection = NULL;
+static GOutputStream *event_output = NULL;
+static GDataInputStream *event_data_input = NULL;
+static GMutex event_mutex;
+
+// Event listeners: event_name (gchar*) -> GPtrArray* of JSCValue* callbacks
+static GHashTable *event_listeners = NULL;
+static GMutex listeners_mutex;
+
+// Current JS context for event dispatch
+static JSCContext *current_event_context = NULL;
+
 static guint call_counter = 0;
 
 // Pending promise tracking
@@ -51,8 +64,12 @@ typedef struct {
 static void free_pending_promise (gpointer data);
 static void free_async_request (AsyncRequest *req);
 static gboolean connect_async_ipc (void);
+static gboolean connect_event_ipc (void);
 static void async_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_data);
 static void start_next_async_request (void);
+static void event_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_data);
+static void start_event_read_loop (void);
+static void free_event_listeners_array (gpointer data);
 
 static void
 free_async_request (AsyncRequest *req)
@@ -202,6 +219,269 @@ connect_async_ipc (void)
 
     fprintf(stderr, "Strux Extension: Connected async IPC socket\n");
     return TRUE;
+}
+
+// Send a channel handshake message and read acknowledgment
+static gboolean
+send_handshake (GOutputStream *output, GInputStream *input, const gchar *channel)
+{
+    gchar *handshake = g_strdup_printf("{\"type\":\"handshake\",\"channel\":\"%s\"}\n", channel);
+    GError *error = NULL;
+    gsize bytes_written;
+
+    if (!g_output_stream_write_all(output, handshake, strlen(handshake),
+                                    &bytes_written, NULL, &error)) {
+        fprintf(stderr, "Strux Extension: Failed to send %s handshake: %s\n", channel, error->message);
+        g_error_free(error);
+        g_free(handshake);
+        return FALSE;
+    }
+    g_free(handshake);
+
+    // Read acknowledgment (read byte-by-byte until newline)
+    GString *response = g_string_new(NULL);
+    gchar byte;
+    gssize bytes_read;
+
+    while (TRUE) {
+        bytes_read = g_input_stream_read(input, &byte, 1, NULL, &error);
+        if (bytes_read <= 0) {
+            if (error) {
+                fprintf(stderr, "Strux Extension: Failed to read %s handshake ack: %s\n", channel, error->message);
+                g_error_free(error);
+            }
+            g_string_free(response, TRUE);
+            return FALSE;
+        }
+        if (byte == '\n') break;
+        g_string_append_c(response, byte);
+    }
+
+    fprintf(stderr, "Strux Extension: %s handshake acknowledged\n", channel);
+    g_string_free(response, TRUE);
+    return TRUE;
+}
+
+// Connect the event IPC socket
+static gboolean
+connect_event_ipc (void)
+{
+    GSocketClient *client;
+    GSocketAddress *address;
+    GError *error = NULL;
+
+    if (event_connection != NULL)
+        return TRUE;
+
+    client = g_socket_client_new();
+    address = g_unix_socket_address_new(SOCKET_PATH);
+
+    event_connection = g_socket_client_connect(client, G_SOCKET_CONNECTABLE(address), NULL, &error);
+
+    g_object_unref(address);
+    g_object_unref(client);
+
+    if (error) {
+        fprintf(stderr, "Strux Extension: Failed to connect event IPC socket: %s\n", error->message);
+        g_error_free(error);
+        return FALSE;
+    }
+
+    event_output = g_io_stream_get_output_stream(G_IO_STREAM(event_connection));
+    GInputStream *event_input = g_io_stream_get_input_stream(G_IO_STREAM(event_connection));
+
+    // Wrap input stream with GDataInputStream for async line reading
+    event_data_input = g_data_input_stream_new(event_input);
+
+    // Send handshake to identify as event channel
+    if (!send_handshake(event_output, event_input, "events")) {
+        fprintf(stderr, "Strux Extension: Event channel handshake failed\n");
+        g_object_unref(event_connection);
+        event_connection = NULL;
+        event_output = NULL;
+        event_data_input = NULL;
+        return FALSE;
+    }
+
+    fprintf(stderr, "Strux Extension: Connected event IPC socket\n");
+
+    // Start async read loop for incoming events from Go
+    start_event_read_loop();
+
+    return TRUE;
+}
+
+// Free a GPtrArray of JSCValue* callbacks
+static void
+free_event_listeners_array (gpointer data)
+{
+    GPtrArray *arr = (GPtrArray*)data;
+    if (arr) {
+        for (guint i = 0; i < arr->len; i++) {
+            JSCValue *cb = g_ptr_array_index(arr, i);
+            if (cb) g_object_unref(cb);
+        }
+        g_ptr_array_free(arr, TRUE);
+    }
+}
+
+// Dispatch data for g_idle_add
+typedef struct {
+    gchar *event_name;
+    gchar *json_data;
+} EventDispatch;
+
+// Dispatch event to JS listeners on the main thread
+static gboolean
+dispatch_event_to_js (gpointer user_data)
+{
+    EventDispatch *dispatch = (EventDispatch*)user_data;
+
+    if (!current_event_context) {
+        g_free(dispatch->event_name);
+        g_free(dispatch->json_data);
+        g_free(dispatch);
+        return G_SOURCE_REMOVE;
+    }
+
+    g_mutex_lock(&listeners_mutex);
+    GPtrArray *callbacks = g_hash_table_lookup(event_listeners, dispatch->event_name);
+    if (!callbacks || callbacks->len == 0) {
+        g_mutex_unlock(&listeners_mutex);
+        g_free(dispatch->event_name);
+        g_free(dispatch->json_data);
+        g_free(dispatch);
+        return G_SOURCE_REMOVE;
+    }
+
+    // Copy callback refs so we can release the lock
+    GPtrArray *cb_copy = g_ptr_array_new();
+    for (guint i = 0; i < callbacks->len; i++) {
+        JSCValue *cb = g_ptr_array_index(callbacks, i);
+        g_ptr_array_add(cb_copy, g_object_ref(cb));
+    }
+    g_mutex_unlock(&listeners_mutex);
+
+    // Parse the data JSON into a JSCValue
+    JSCValue *data_val = NULL;
+    if (dispatch->json_data && strlen(dispatch->json_data) > 0) {
+        JSCValue *global = jsc_context_get_global_object(current_event_context);
+        JSCValue *json_obj = jsc_value_object_get_property(global, "JSON");
+        JSCValue *parse_func = jsc_value_object_get_property(json_obj, "parse");
+        JSCValue *json_str_val = jsc_value_new_string(current_event_context, dispatch->json_data);
+
+        data_val = jsc_value_function_call(parse_func, JSC_TYPE_VALUE, json_str_val, G_TYPE_NONE);
+
+        JSCException *exception = jsc_context_get_exception(current_event_context);
+        if (exception) {
+            jsc_context_clear_exception(current_event_context);
+            data_val = jsc_value_new_null(current_event_context);
+        }
+
+        g_object_unref(json_str_val);
+        g_object_unref(parse_func);
+        g_object_unref(json_obj);
+        g_object_unref(global);
+    } else {
+        data_val = jsc_value_new_null(current_event_context);
+    }
+
+    // Call each callback with the data
+    for (guint i = 0; i < cb_copy->len; i++) {
+        JSCValue *cb = g_ptr_array_index(cb_copy, i);
+        (void)jsc_value_function_call(cb, JSC_TYPE_VALUE, data_val, G_TYPE_NONE);
+
+        JSCException *exception = jsc_context_get_exception(current_event_context);
+        if (exception) {
+            fprintf(stderr, "Strux Extension: Event callback error for '%s': %s\n",
+                    dispatch->event_name, jsc_exception_get_message(exception));
+            jsc_context_clear_exception(current_event_context);
+        }
+    }
+
+    // Cleanup
+    g_object_unref(data_val);
+    for (guint i = 0; i < cb_copy->len; i++) {
+        g_object_unref(g_ptr_array_index(cb_copy, i));
+    }
+    g_ptr_array_free(cb_copy, TRUE);
+    g_free(dispatch->event_name);
+    g_free(dispatch->json_data);
+    g_free(dispatch);
+
+    return G_SOURCE_REMOVE;
+}
+
+// Async read callback for event socket — reads events from Go
+static void
+event_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+    GError *error = NULL;
+    gsize length;
+
+    gchar *line = g_data_input_stream_read_line_finish(G_DATA_INPUT_STREAM(source_object),
+                                                         res, &length, &error);
+
+    if (!line || error) {
+        if (error) {
+            fprintf(stderr, "Strux Extension: Event socket read error: %s\n", error->message);
+            g_error_free(error);
+        }
+        if (line) g_free(line);
+        // Connection lost — clean up
+        g_mutex_lock(&event_mutex);
+        if (event_connection) {
+            g_object_unref(event_connection);
+            event_connection = NULL;
+            event_output = NULL;
+            event_data_input = NULL;
+        }
+        g_mutex_unlock(&event_mutex);
+        return;
+    }
+
+    // Parse the event message
+    JsonParser *parser = json_parser_new();
+    if (json_parser_load_from_data(parser, line, -1, NULL)) {
+        JsonNode *root = json_parser_get_root(parser);
+        JsonObject *obj = json_node_get_object(root);
+
+        const gchar *type = json_object_get_string_member(obj, "type");
+        if (type && g_strcmp0(type, "event") == 0) {
+            const gchar *event_name = json_object_get_string_member(obj, "event");
+            if (event_name) {
+                // Serialize the "data" field back to JSON string
+                gchar *data_json = NULL;
+                if (json_object_has_member(obj, "data")) {
+                    JsonNode *data_node = json_object_get_member(obj, "data");
+                    JsonGenerator *gen = json_generator_new();
+                    json_generator_set_root(gen, data_node);
+                    data_json = json_generator_to_data(gen, NULL);
+                    g_object_unref(gen);
+                }
+
+                // Schedule dispatch on main thread
+                EventDispatch *dispatch = g_new(EventDispatch, 1);
+                dispatch->event_name = g_strdup(event_name);
+                dispatch->json_data = data_json ? data_json : g_strdup("");
+                g_idle_add(dispatch_event_to_js, dispatch);
+            }
+        }
+    }
+    g_object_unref(parser);
+    g_free(line);
+
+    // Continue reading
+    start_event_read_loop();
+}
+
+// Start (or restart) the event read loop
+static void
+start_event_read_loop (void)
+{
+    if (!event_data_input) return;
+    g_data_input_stream_read_line_async(event_data_input, G_PRIORITY_DEFAULT, NULL,
+                                         event_read_callback, NULL);
 }
 
 // Callback for async read completion
@@ -848,6 +1128,287 @@ inject_field_property (JSCContext *context, JSCValue *object, const gchar *field
     // Note: user_data is freed by getter's GDestroyNotify, setter_data by setter's
 }
 
+// ============================================================================
+// strux.ipc event API: on(), off(), send()
+// ============================================================================
+
+// strux.ipc.on(event, callback) — returns an unsubscribe function
+static JSCValue*
+ipc_on_callback (GPtrArray *args, gpointer user_data)
+{
+    JSCContext *context = NULL;
+    if (args && args->len > 0) {
+        context = jsc_value_get_context(g_ptr_array_index(args, 0));
+    }
+    if (!context) context = jsc_context_get_current();
+
+    if (!args || args->len < 2) {
+        fprintf(stderr, "Strux Extension: strux.ipc.on() requires (event, callback)\n");
+        return jsc_value_new_undefined(context);
+    }
+
+    JSCValue *event_arg = g_ptr_array_index(args, 0);
+    JSCValue *callback_arg = g_ptr_array_index(args, 1);
+
+    if (!jsc_value_is_string(event_arg) || !jsc_value_is_function(callback_arg)) {
+        fprintf(stderr, "Strux Extension: strux.ipc.on() expects (string, function)\n");
+        return jsc_value_new_undefined(context);
+    }
+
+    gchar *event_name = jsc_value_to_string(event_arg);
+
+    g_mutex_lock(&listeners_mutex);
+
+    GPtrArray *callbacks = g_hash_table_lookup(event_listeners, event_name);
+    if (!callbacks) {
+        callbacks = g_ptr_array_new();
+        g_hash_table_insert(event_listeners, g_strdup(event_name), callbacks);
+    }
+    g_ptr_array_add(callbacks, g_object_ref(callback_arg));
+
+    g_mutex_unlock(&listeners_mutex);
+
+    fprintf(stderr, "Strux Extension: Registered event listener for '%s'\n", event_name);
+
+    // Create an unsubscribe function that removes this specific callback
+    // We capture the event name and callback reference in a closure
+    gchar *unsub_code = g_strdup_printf(
+        "(function(eventName, cb) {"
+        "  return function() { strux.ipc.off(eventName, cb); };"
+        "})");
+    JSCValue *unsub_factory = jsc_context_evaluate(context, unsub_code, -1);
+    g_free(unsub_code);
+
+    JSCValue *unsub_func = jsc_value_function_call(unsub_factory,
+        JSC_TYPE_VALUE, event_arg,
+        JSC_TYPE_VALUE, callback_arg,
+        G_TYPE_NONE);
+
+    g_object_unref(unsub_factory);
+    g_free(event_name);
+
+    return unsub_func;
+}
+
+// strux.ipc.off(event, callback) — remove a specific listener
+static JSCValue*
+ipc_off_callback (GPtrArray *args, gpointer user_data)
+{
+    JSCContext *context = NULL;
+    if (args && args->len > 0) {
+        context = jsc_value_get_context(g_ptr_array_index(args, 0));
+    }
+    if (!context) context = jsc_context_get_current();
+
+    if (!args || args->len < 2) {
+        return jsc_value_new_undefined(context);
+    }
+
+    JSCValue *event_arg = g_ptr_array_index(args, 0);
+    JSCValue *callback_arg = g_ptr_array_index(args, 1);
+
+    if (!jsc_value_is_string(event_arg)) {
+        return jsc_value_new_undefined(context);
+    }
+
+    gchar *event_name = jsc_value_to_string(event_arg);
+
+    g_mutex_lock(&listeners_mutex);
+
+    GPtrArray *callbacks = g_hash_table_lookup(event_listeners, event_name);
+    if (callbacks) {
+        for (guint i = 0; i < callbacks->len; i++) {
+            JSCValue *cb = g_ptr_array_index(callbacks, i);
+            // Compare by GObject pointer — same JS function reference = same JSCValue*
+            if (cb == callback_arg) {
+                g_object_unref(cb);
+                g_ptr_array_remove_index(callbacks, i);
+                fprintf(stderr, "Strux Extension: Removed event listener for '%s'\n", event_name);
+                break;
+            }
+        }
+    }
+
+    g_mutex_unlock(&listeners_mutex);
+    g_free(event_name);
+
+    return jsc_value_new_undefined(context);
+}
+
+// strux.ipc.send(event, data) — send event to Go
+static JSCValue*
+ipc_send_callback (GPtrArray *args, gpointer user_data)
+{
+    JSCContext *context = NULL;
+    if (args && args->len > 0) {
+        context = jsc_value_get_context(g_ptr_array_index(args, 0));
+    }
+    if (!context) context = jsc_context_get_current();
+
+    if (!args || args->len < 1) {
+        fprintf(stderr, "Strux Extension: strux.ipc.send() requires at least (event)\n");
+        return jsc_value_new_undefined(context);
+    }
+
+    JSCValue *event_arg = g_ptr_array_index(args, 0);
+    if (!jsc_value_is_string(event_arg)) {
+        fprintf(stderr, "Strux Extension: strux.ipc.send() first arg must be a string\n");
+        return jsc_value_new_undefined(context);
+    }
+
+    gchar *event_name = jsc_value_to_string(event_arg);
+
+    // Build the event JSON message
+    JsonBuilder *builder = json_builder_new();
+    json_builder_begin_object(builder);
+
+    json_builder_set_member_name(builder, "type");
+    json_builder_add_string_value(builder, "event");
+
+    json_builder_set_member_name(builder, "event");
+    json_builder_add_string_value(builder, event_name);
+
+    // Add data if provided
+    json_builder_set_member_name(builder, "data");
+    if (args->len >= 2) {
+        JSCValue *data_arg = g_ptr_array_index(args, 1);
+        if (jsc_value_is_string(data_arg)) {
+            gchar *str = jsc_value_to_string(data_arg);
+            json_builder_add_string_value(builder, str);
+            g_free(str);
+        } else if (jsc_value_is_number(data_arg)) {
+            json_builder_add_double_value(builder, jsc_value_to_double(data_arg));
+        } else if (jsc_value_is_boolean(data_arg)) {
+            json_builder_add_boolean_value(builder, jsc_value_to_boolean(data_arg));
+        } else if (jsc_value_is_object(data_arg) || jsc_value_is_array(data_arg)) {
+            // Serialize object/array via JSON.stringify
+            JSCValue *global = jsc_context_get_global_object(context);
+            JSCValue *json_obj = jsc_value_object_get_property(global, "JSON");
+            JSCValue *stringify_func = jsc_value_object_get_property(json_obj, "stringify");
+            JSCValue *json_str = jsc_value_function_call(stringify_func,
+                JSC_TYPE_VALUE, data_arg, G_TYPE_NONE);
+
+            if (jsc_value_is_string(json_str)) {
+                // We need to embed the raw JSON, not a quoted string.
+                // So we add it as a raw JSON node.
+                gchar *raw_json = jsc_value_to_string(json_str);
+                JsonParser *parser = json_parser_new();
+                if (json_parser_load_from_data(parser, raw_json, -1, NULL)) {
+                    JsonNode *data_node = json_node_copy(json_parser_get_root(parser));
+                    json_builder_add_value(builder, data_node);
+                } else {
+                    json_builder_add_null_value(builder);
+                }
+                g_object_unref(parser);
+                g_free(raw_json);
+            } else {
+                json_builder_add_null_value(builder);
+            }
+
+            g_object_unref(json_str);
+            g_object_unref(stringify_func);
+            g_object_unref(json_obj);
+            g_object_unref(global);
+        } else {
+            json_builder_add_null_value(builder);
+        }
+    } else {
+        json_builder_add_null_value(builder);
+    }
+
+    json_builder_end_object(builder);
+
+    JsonNode *root = json_builder_get_root(builder);
+    JsonGenerator *generator = json_generator_new();
+    json_generator_set_root(generator, root);
+    gchar *json_str = json_generator_to_data(generator, NULL);
+
+    // Send over event socket
+    g_mutex_lock(&event_mutex);
+    if (connect_event_ipc() && event_output) {
+        gchar *msg = g_strdup_printf("%s\n", json_str);
+        GError *error = NULL;
+        gsize bytes_written;
+        if (!g_output_stream_write_all(event_output, msg, strlen(msg),
+                                        &bytes_written, NULL, &error)) {
+            fprintf(stderr, "Strux Extension: Failed to send event '%s': %s\n",
+                    event_name, error->message);
+            g_error_free(error);
+        }
+        g_free(msg);
+    }
+    g_mutex_unlock(&event_mutex);
+
+    g_free(json_str);
+    json_node_free(root);
+    g_object_unref(generator);
+    g_object_unref(builder);
+    g_free(event_name);
+
+    return jsc_value_new_undefined(context);
+}
+
+// Inject strux.ipc namespace with on/off/send methods
+static void
+inject_ipc_api (JSCContext *js_context)
+{
+    // Connect event socket
+    if (!connect_event_ipc()) {
+        fprintf(stderr, "Strux Extension: Warning: Could not connect event socket. strux.ipc will be unavailable.\n");
+        return;
+    }
+
+    // Store context for event dispatch
+    if (current_event_context) {
+        g_object_unref(current_event_context);
+    }
+    current_event_context = g_object_ref(js_context);
+
+    JSCValue *global = jsc_context_get_global_object(js_context);
+
+    // Get or create window.strux
+    JSCValue *strux_obj = jsc_value_object_get_property(global, "strux");
+    if (!jsc_value_is_object(strux_obj) || jsc_value_is_undefined(strux_obj)) {
+        g_object_unref(strux_obj);
+        strux_obj = jsc_value_new_object(js_context, NULL, NULL);
+        jsc_value_object_set_property(global, "strux", strux_obj);
+    }
+
+    // Create strux.ipc object
+    JSCValue *ipc_obj = jsc_value_new_object(js_context, NULL, NULL);
+    jsc_value_object_set_property(strux_obj, "ipc", ipc_obj);
+
+    // strux.ipc.on(event, callback) -> unsubscribe function
+    JSCValue *on_func = jsc_value_new_function_variadic(
+        js_context, "on",
+        G_CALLBACK(ipc_on_callback), NULL, NULL,
+        JSC_TYPE_VALUE);
+    jsc_value_object_set_property(ipc_obj, "on", on_func);
+
+    // strux.ipc.off(event, callback)
+    JSCValue *off_func = jsc_value_new_function_variadic(
+        js_context, "off",
+        G_CALLBACK(ipc_off_callback), NULL, NULL,
+        JSC_TYPE_VALUE);
+    jsc_value_object_set_property(ipc_obj, "off", off_func);
+
+    // strux.ipc.send(event, data?)
+    JSCValue *send_func = jsc_value_new_function_variadic(
+        js_context, "send",
+        G_CALLBACK(ipc_send_callback), NULL, NULL,
+        JSC_TYPE_VALUE);
+    jsc_value_object_set_property(ipc_obj, "send", send_func);
+
+    fprintf(stderr, "Strux Extension: Injected strux.ipc.on(), strux.ipc.off(), strux.ipc.send()\n");
+
+    g_object_unref(send_func);
+    g_object_unref(off_func);
+    g_object_unref(on_func);
+    g_object_unref(ipc_obj);
+    g_object_unref(strux_obj);
+    g_object_unref(global);
+}
+
 // Inject Go method bindings into JavaScript
 static void
 inject_bindings (JSCContext *js_context)
@@ -1244,11 +1805,43 @@ window_object_cleared_callback (WebKitScriptWorld *world,
         g_mutex_unlock(&async_mutex);
     }
 
+    // Clear event listeners from previous page
+    if (webkit_frame_is_main_frame(frame)) {
+        g_mutex_lock(&listeners_mutex);
+        if (event_listeners) {
+            g_hash_table_remove_all(event_listeners);
+        }
+        g_mutex_unlock(&listeners_mutex);
+
+        // Close and reconnect event socket for clean state
+        g_mutex_lock(&event_mutex);
+        if (event_connection) {
+            g_object_unref(event_connection);
+            event_connection = NULL;
+            event_output = NULL;
+            if (event_data_input) {
+                g_object_unref(event_data_input);
+                event_data_input = NULL;
+            }
+        }
+        g_mutex_unlock(&event_mutex);
+
+        if (current_event_context) {
+            g_object_unref(current_event_context);
+            current_event_context = NULL;
+        }
+    }
+
     // Inject console interceptors first (so we can see errors during binding injection)
     inject_console_interceptors(js_context);
 
     // Inject Go method bindings
     inject_bindings(js_context);
+
+    // Inject strux.ipc event API (must be after inject_bindings which creates window.strux)
+    if (webkit_frame_is_main_frame(frame)) {
+        inject_ipc_api(js_context);
+    }
 
     g_object_unref(js_context);
 }
@@ -1273,10 +1866,16 @@ webkit_web_extension_initialize (WebKitWebProcessExtension *extension)
     g_mutex_init(&sync_mutex);
     g_mutex_init(&async_mutex);
     g_mutex_init(&promises_mutex);
+    g_mutex_init(&event_mutex);
+    g_mutex_init(&listeners_mutex);
 
     // Initialize pending promises hash table
     pending_promises = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
         (GDestroyNotify)free_pending_promise);
+
+    // Initialize event listeners hash table
+    event_listeners = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+        (GDestroyNotify)free_event_listeners_array);
 
     g_signal_connect(extension, "page-created",
                      G_CALLBACK(web_page_created_callback),

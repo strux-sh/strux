@@ -12,6 +12,7 @@
 
 #include <assert.h>
 #include <linux/input-event-codes.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wayland-server-core.h>
@@ -134,25 +135,90 @@ update_capabilities(struct cg_seat *seat)
 	}
 }
 
+/* Look up an input device name in the input map file.
+ * File format: one "device_substring:output_name" per line.
+ * Returns the output name if found (caller must free), or NULL. */
+static char *
+lookup_input_map(const char *map_path, const char *device_name)
+{
+	if (!map_path) {
+		return NULL;
+	}
+
+	FILE *f = fopen(map_path, "r");
+	if (!f) {
+		return NULL;
+	}
+
+	char line[256];
+	while (fgets(line, sizeof(line), f)) {
+		/* Strip newline */
+		char *nl = strchr(line, '\n');
+		if (nl) *nl = '\0';
+		char *cr = strchr(line, '\r');
+		if (cr) *cr = '\0';
+
+		/* Find the colon separator */
+		char *colon = strchr(line, ':');
+		if (!colon || colon == line) {
+			continue;
+		}
+
+		*colon = '\0';
+		const char *pattern = line;
+		const char *target_output = colon + 1;
+
+		/* Substring match: if the device name contains the pattern */
+		if (strstr(device_name, pattern) != NULL) {
+			char *result = strdup(target_output);
+			fclose(f);
+			return result;
+		}
+	}
+
+	fclose(f);
+	return NULL;
+}
+
 static void
 map_input_device_to_output(struct cg_seat *seat, struct wlr_input_device *device, const char *output_name)
 {
-	if (!output_name) {
+	/* If the device doesn't have an output hint, check the input map file */
+	const char *resolved_name = output_name;
+	char *mapped_name = NULL;
+
+	if (!resolved_name) {
+		mapped_name = lookup_input_map(seat->server->input_map_path, device->name);
+		resolved_name = mapped_name;
+	}
+
+	if (!resolved_name) {
+		/* No mapping found. In per-view mode, fall back to first output. */
+		if (seat->server->output_mode == CAGE_MULTI_OUTPUT_MODE_PER_VIEW &&
+		    !wl_list_empty(&seat->server->outputs)) {
+			struct cg_output *first = wl_container_of(seat->server->outputs.next, first, link);
+			wlr_log(WLR_INFO, "Mapping input device %s to first output %s (no mapping found)\n",
+				device->name, first->wlr_output->name);
+			wlr_cursor_map_input_to_output(seat->cursor, device, first->wlr_output);
+			return;
+		}
 		wlr_log(WLR_INFO, "Input device %s cannot be mapped to an output device\n", device->name);
 		return;
 	}
 
 	struct cg_output *output;
 	wl_list_for_each (output, &seat->server->outputs, link) {
-		if (strcmp(output_name, output->wlr_output->name) == 0) {
+		if (strcmp(resolved_name, output->wlr_output->name) == 0) {
 			wlr_log(WLR_INFO, "Mapping input device %s to output device %s\n", device->name,
 				output->wlr_output->name);
 			wlr_cursor_map_input_to_output(seat->cursor, device, output->wlr_output);
+			free(mapped_name);
 			return;
 		}
 	}
 
-	wlr_log(WLR_INFO, "Couldn't map input device %s to an output\n", device->name);
+	wlr_log(WLR_INFO, "Couldn't map input device %s to output %s\n", device->name, resolved_name);
+	free(mapped_name);
 }
 
 static void
@@ -965,4 +1031,20 @@ seat_center_cursor(struct cg_seat *seat)
 	struct wlr_box layout_box;
 	wlr_output_layout_get_box(seat->server->output_layout, NULL, &layout_box);
 	wlr_cursor_warp(seat->cursor, NULL, layout_box.width / 2, layout_box.height / 2);
+}
+
+void
+seat_remap_input_devices(struct cg_seat *seat)
+{
+	/* Re-try mapping touch devices that may have failed earlier
+	 * (e.g., when inputs were registered before outputs existed). */
+	struct cg_touch *touch;
+	wl_list_for_each(touch, &seat->touch, link) {
+		map_input_device_to_output(seat, &touch->touch->base, touch->touch->output_name);
+	}
+
+	struct cg_pointer *pointer;
+	wl_list_for_each(pointer, &seat->pointers, link) {
+		map_input_device_to_output(seat, &pointer->pointer->base, pointer->pointer->output_name);
+	}
 }

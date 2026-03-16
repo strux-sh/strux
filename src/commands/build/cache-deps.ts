@@ -213,14 +213,12 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
 
     "rootfs-base": {
         yamlKeys: [
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" },
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.packages" },
-            { file: "strux.yaml", keyPath: "rootfs.packages" }
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
         ],
         // No longer depends on kernel or bootloader — kernel installation
         // moved to rootfs-post so kernel changes don't trigger a full base rebuild
         internalAssets: ["@build-base-script"],
-        // BSP-specific cache (arch + packages specific)
+        // BSP-specific cache (arch specific — packages moved to rootfs-post)
         artifacts: ["cache/{bsp}/rootfs-base.tar.gz"]
     },
 
@@ -244,7 +242,11 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             // Kernel-related keys — kernel installation now happens in post
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.custom_kernel" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" },
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.env" }
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.env" },
+            // Package keys — custom packages are now installed in post step
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.packages" },
+            { file: "strux.yaml", keyPath: "rootfs.packages" },
+            { file: "strux.yaml", keyPath: "display" }
         ],
         dependsOnSteps: ["frontend", "application", "cage", "wpe", "client", "kernel", "rootfs-base"],
         // Only the build script is internal - plymouth/systemd/init are user-modifiable in dist/artifacts/

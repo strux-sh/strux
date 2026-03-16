@@ -55,27 +55,46 @@ export async function run(options: RunOptions = {}) {
 
     if (!qemuBin) Logger.errorWithExit("Unsupported architecture. Please use a supported architecture.")
 
-    if (Settings.targetArch === "x86_64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=tty1", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyS0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=Virtual-1:${Settings.bsp!.display!.width}x${Settings.bsp!.display!.height}@60`)
-    if (Settings.targetArch === "arm64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.width}x${Settings.bsp!.display!.height}`)
-    if (Settings.targetArch === "armhf") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", `video=${Settings.bsp!.display!.width}x${Settings.bsp!.display!.height}`)
+    // Determine monitor count from display config
+    const monitors = Settings.main?.display?.monitors
+    const monitorCount = monitors?.length ?? 1
 
+    // Build video kernel args — one per monitor with output name prefix
+    const defaultResolution = `${Settings.bsp!.display!.width}x${Settings.bsp!.display!.height}`
+    const videoArgs: string[] = []
+    if (monitors && monitors.length > 1) {
+        monitors.forEach((monitor, index) => {
+            const resolution = monitor.resolution ?? defaultResolution
+            videoArgs.push(`video=Virtual-${index + 1}:${resolution}@60`)
+        })
+    } else {
+        videoArgs.push(`video=Virtual-1:${defaultResolution}@60`)
+    }
+
+    if (Settings.targetArch === "x86_64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=tty1", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyS0"]), "fbcon=map:0", "vt.global_cursor_default=0", ...videoArgs)
+    if (Settings.targetArch === "arm64") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", ...videoArgs)
+    if (Settings.targetArch === "armhf") consoleArgs.push("root=/dev/vda", "rw", ...(Settings.qemuSystemDebug ? ["console=ttyAMA0", "console=ttyS0"] : ["quiet", "splash", "loglevel=0", "logo.nologo", "vt.handoff=7", "rd.plymouth.show-delay=0", "plymouth.ignore-serial-consoles", "systemd.show_status=false", "console=tty1", "console=ttyAMA0"]), "fbcon=map:0", "vt.global_cursor_default=0", ...videoArgs)
+
+
+    // Multi-monitor suffix for GPU device
+    const maxOutputsSuffix = monitorCount > 1 ? `,max_outputs=${monitorCount}` : ""
 
     if (Settings.targetArch === "x86_64" && process.platform === "darwin") {
         displayOpt = "cocoa"
-        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         accelArgs.push("-accel", "hvf", "-cpu", "host")
     }
     if (Settings.targetArch === "x86_64" && process.platform !== "darwin") {
 
         // Auto-detect GPU and enable GL for Intel/AMD
         if (await shouldUseGL()) {
-            // Use virtio-vga-gl with SDL (more reliable GL context than GTK)
-            displayOpt = "sdl,gl=on"
-            gpuDevice = `virtio-vga-gl,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+            // Use GTK for multi-monitor (SDL doesn't support multiple windows), SDL otherwise
+            displayOpt = monitorCount > 1 ? "gtk,gl=on" : "sdl,gl=on"
+            gpuDevice = `virtio-vga-gl,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         } else {
             // QXL for NVIDIA/unknown (software rendering but correct resolution)
             displayOpt = "gtk"
-            gpuDevice = `qxl-vga,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+            gpuDevice = `qxl-vga,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
 
         }
 
@@ -84,18 +103,18 @@ export async function run(options: RunOptions = {}) {
     }
     if (Settings.targetArch === "arm64" && process.platform === "darwin") {
         displayOpt = "cocoa"
-        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         accelArgs.push("-accel", "hvf", "-cpu", "host")
     }
     if (Settings.targetArch === "arm64" && process.platform !== "darwin") {
 
         // Auto-detect GPU for ARM64 emulation as well
         if (await shouldUseGL()) {
-            displayOpt = "gtk,gl=on"
-            gpuDevice = `virtio-gpu-gl-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+            displayOpt = monitorCount > 1 ? "gtk,gl=on" : "gtk,gl=on"
+            gpuDevice = `virtio-gpu-gl-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         } else {
             displayOpt = "gtk"
-            gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+            gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         }
         accelArgs.push("-cpu", "cortex-a57")
     }
@@ -103,7 +122,7 @@ export async function run(options: RunOptions = {}) {
     // ARMHF (ARMv7) configuration
     if (Settings.targetArch === "armhf" && process.platform === "darwin") {
         displayOpt = "cocoa"
-        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         // No HVF acceleration on macOS for 32-bit ARM, use TCG emulation
         accelArgs.push("-cpu", "cortex-a15")
     }
@@ -111,11 +130,11 @@ export async function run(options: RunOptions = {}) {
 
         // Auto-detect GPU for ARMHF emulation
         if (await shouldUseGL()) {
-            displayOpt = "gtk,gl=on"
-            gpuDevice = `virtio-gpu-gl-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+            displayOpt = monitorCount > 1 ? "gtk,gl=on" : "gtk,gl=on"
+            gpuDevice = `virtio-gpu-gl-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         } else {
             displayOpt = "gtk"
-            gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}`
+            gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         }
         accelArgs.push("-cpu", "cortex-a15")
     }

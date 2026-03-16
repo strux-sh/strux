@@ -92,7 +92,15 @@ void
 view_position(struct cg_view *view)
 {
 	struct wlr_box layout_box;
-	wlr_output_layout_get_box(view->server->output_layout, NULL, &layout_box);
+
+	if (view->assigned_output) {
+		/* Per-view mode: constrain to the assigned output */
+		wlr_output_layout_get_box(view->server->output_layout,
+					  view->assigned_output->wlr_output, &layout_box);
+	} else {
+		/* Default: use the full output layout */
+		wlr_output_layout_get_box(view->server->output_layout, NULL, &layout_box);
+	}
 
 	if (view_is_primary(view) || view_extends_output_layout(view, &layout_box)) {
 		view_maximize(view, &layout_box);
@@ -166,12 +174,44 @@ view_destroy(struct cg_view *view)
 	}
 }
 
+static struct cg_output *
+assign_next_output(struct cg_server *server)
+{
+	if (server->output_mode != CAGE_MULTI_OUTPUT_MODE_PER_VIEW) {
+		return NULL;
+	}
+
+	int count = wl_list_length(&server->outputs);
+	if (count == 0) {
+		return NULL;
+	}
+
+	int target = server->next_view_output % count;
+	server->next_view_output++;
+
+	int i = 0;
+	struct cg_output *output;
+	wl_list_for_each(output, &server->outputs, link) {
+		if (i == target) {
+			wlr_log(WLR_DEBUG, "Assigning view to output %s (index %d)",
+				output->wlr_output->name, target);
+			return output;
+		}
+		i++;
+	}
+
+	return NULL;
+}
+
 void
 view_init(struct cg_view *view, struct cg_server *server, enum cg_view_type type, const struct cg_view_impl *impl)
 {
 	view->server = server;
 	view->type = type;
 	view->impl = impl;
+
+	/* Assign output early so the initial configure sends the correct dimensions */
+	view->assigned_output = assign_next_output(server);
 }
 
 struct cg_view *

@@ -30,6 +30,9 @@ struct cg_view {
 	/* The view has a position in layout coordinates. */
 	int lx, ly;
 
+	/* Per-view output assignment (NULL = full layout, i.e. default behavior) */
+	struct cg_output *assigned_output;
+
 	enum cg_view_type type;
 	const struct cg_view_impl *impl;
 };

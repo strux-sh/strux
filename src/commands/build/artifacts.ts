@@ -37,6 +37,10 @@ import systemdNetworkService from "../../assets/scripts-base/artifacts/systemd/s
 // @ts-ignore
 import systemdEthernetNetwork from "../../assets/scripts-base/artifacts/systemd/20-ethernet.network" with { type: "text" }
 
+// Not Configured HTML (for unconfigured monitor outputs)
+// @ts-ignore
+import notConfiguredHTML from "../../assets/scripts-base/artifacts/not-configured.html" with { type: "text" }
+
 // Default Logo
 // @ts-ignore
 import defaultLogoPNG from "../../assets/template-base/logo.png" with { type: "file" }
@@ -160,6 +164,12 @@ export async function copyInitScripts(): Promise<void> {
     }
     if (!fileExists(join(scriptsDir, "strux.sh"))) {
         await Bun.write(join(scriptsDir, "strux.sh"), initStruxScript)
+    }
+
+    // Not-configured HTML page for unconfigured monitor outputs
+    const artifactsDir = join(Settings.projectPath, "dist", "artifacts")
+    if (!fileExists(join(artifactsDir, "not-configured.html"))) {
+        await Bun.write(join(artifactsDir, "not-configured.html"), notConfiguredHTML)
     }
 }
 

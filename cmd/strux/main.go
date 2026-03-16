@@ -409,7 +409,7 @@ func findRuntimeStartStruct(files []*ast.File) string {
 					return true
 				}
 
-				if ident.Name == runtimeAlias && selExpr.Sel.Name == "Start" && len(callExpr.Args) >= 1 {
+				if ident.Name == runtimeAlias && (selExpr.Sel.Name == "Start" || selExpr.Sel.Name == "Init") && len(callExpr.Args) >= 1 {
 					arg := callExpr.Args[0]
 
 					// Case 1: runtime.Start(&App{...}) - direct composite literal

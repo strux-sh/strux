@@ -375,6 +375,11 @@ export class RunnerClass {
         // Add volume mount
         args.push("-v", `${Settings.projectPath}:/project`)
 
+        // If local runtime is set, mount it into the container
+        if (Settings.localRuntime) {
+            args.push("-v", `${Settings.localRuntime}:/strux-runtime:ro`)
+        }
+
         // Add image and command (use bash since scripts use bash features)
         args.push("strux-builder", "/bin/bash", "-c", finalScript)
         let stdout = ""
@@ -546,6 +551,11 @@ export class RunnerClass {
 
         // Add volume mount
         args.push("-v", `${Settings.projectPath}:/project`)
+
+        // If local runtime is set, mount it into the container
+        if (Settings.localRuntime) {
+            args.push("-v", `${Settings.localRuntime}:/strux-runtime:ro`)
+        }
 
         // Add image and command
         args.push("strux-builder", "/bin/bash", "-c", finalScript)

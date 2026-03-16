@@ -227,6 +227,15 @@ output_destroy(struct cg_output *output)
 	struct cg_server *server = output->server;
 	bool was_nested_output = is_nested_output(output);
 
+	/* Clear assigned_output on any views bound to this output
+	 * to prevent dangling pointer access after free. */
+	struct cg_view *view;
+	wl_list_for_each(view, &server->views, link) {
+		if (view->assigned_output == output) {
+			view->assigned_output = NULL;
+		}
+	}
+
 	output->wlr_output->data = NULL;
 
 	wl_list_remove(&output->destroy.link);
@@ -246,6 +255,10 @@ output_destroy(struct cg_output *output)
 		output_enable(prev);
 		view_position_all(server);
 	}
+
+	/* Reposition views whose output was removed — they'll fall back
+	 * to the full layout since assigned_output is now NULL. */
+	view_position_all(server);
 }
 
 static void
@@ -332,6 +345,12 @@ handle_new_output(struct wl_listener *listener, void *data)
 
 	view_position_all(output->server);
 	update_output_manager_config(output->server);
+
+	/* Re-try input device mapping now that this output is available.
+	 * Input devices may have been registered before outputs existed. */
+	if (output->server->seat) {
+		seat_remap_input_devices(output->server->seat);
+	}
 }
 
 void

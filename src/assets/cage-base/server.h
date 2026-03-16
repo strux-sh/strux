@@ -20,6 +20,7 @@ struct cg_splash;
 enum cg_multi_output_mode {
 	CAGE_MULTI_OUTPUT_MODE_EXTEND,
 	CAGE_MULTI_OUTPUT_MODE_LAST,
+	CAGE_MULTI_OUTPUT_MODE_PER_VIEW,
 };
 
 struct cg_server {
@@ -69,9 +70,15 @@ struct cg_server {
 	bool terminated;
 	enum wlr_log_importance log_level;
 
+	// Per-view output assignment (CAGE_MULTI_OUTPUT_MODE_PER_VIEW)
+	int next_view_output;
+
 	// Strux splash screen
 	struct cg_splash *splash;
 	char *splash_image_path;
+
+	// Input device to output mapping file path
+	char *input_map_path;
 };
 
 void server_terminate(struct cg_server *server);

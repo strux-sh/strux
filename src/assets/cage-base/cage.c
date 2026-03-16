@@ -233,6 +233,7 @@ usage(FILE *file, const char *cage)
 		" -h\t Display this help message\n"
 		" -m extend Extend the display across all connected outputs (default)\n"
 		" -m last Use only the last connected output\n"
+		" -m per-view Assign each new view to the next output in order\n"
 		" -s\t Allow VT switching\n"
 		" -v\t Show the version number and exit\n"
 		" --splash-image=PATH\t Show splash screen from PNG image\n"
@@ -246,6 +247,7 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 {
 	static struct option long_options[] = {
 		{"splash-image", required_argument, NULL, 'S'},
+		{"input-map", required_argument, NULL, 'I'},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -266,6 +268,8 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 				server->output_mode = CAGE_MULTI_OUTPUT_MODE_LAST;
 			} else if (strcmp(optarg, "extend") == 0) {
 				server->output_mode = CAGE_MULTI_OUTPUT_MODE_EXTEND;
+			} else if (strcmp(optarg, "per-view") == 0) {
+				server->output_mode = CAGE_MULTI_OUTPUT_MODE_PER_VIEW;
 			}
 			break;
 		case 's':
@@ -276,6 +280,9 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 			exit(0);
 		case 'S':
 			server->splash_image_path = strdup(optarg);
+			break;
+		case 'I':
+			server->input_map_path = strdup(optarg);
 			break;
 		default:
 			usage(stderr, argv[0]);
@@ -649,6 +656,7 @@ end:
 	}
 	splash_destroy(server.splash);
 	free(server.splash_image_path);
+	free(server.input_map_path);
 	seat_destroy(server.seat);
 	/* This function is not null-safe, but we only ever get here
 	   with a proper wl_display. */

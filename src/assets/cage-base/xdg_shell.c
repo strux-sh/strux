@@ -14,6 +14,7 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 
+#include "output.h"
 #include "server.h"
 #include "view.h"
 #include "xdg_shell.h"
@@ -188,13 +189,19 @@ static void
 handle_xdg_shell_surface_request_fullscreen(struct wl_listener *listener, void *data)
 {
 	struct cg_xdg_shell_view *xdg_shell_view = wl_container_of(listener, xdg_shell_view, request_fullscreen);
+	struct cg_view *view = &xdg_shell_view->view;
 
 	/**
 	 * Certain clients do not like figuring out their own window geometry if they
 	 * display in fullscreen mode, so we set it here.
 	 */
 	struct wlr_box layout_box;
-	wlr_output_layout_get_box(xdg_shell_view->view.server->output_layout, NULL, &layout_box);
+	if (view->assigned_output) {
+		wlr_output_layout_get_box(view->server->output_layout,
+					  view->assigned_output->wlr_output, &layout_box);
+	} else {
+		wlr_output_layout_get_box(view->server->output_layout, NULL, &layout_box);
+	}
 	wlr_xdg_toplevel_set_size(xdg_shell_view->xdg_toplevel, layout_box.width, layout_box.height);
 
 	wlr_xdg_toplevel_set_fullscreen(xdg_shell_view->xdg_toplevel,

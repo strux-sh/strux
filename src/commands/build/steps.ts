@@ -61,17 +61,26 @@ export async function compileFrontend(): Promise<void> {
 
 /**
  * Compiles the main.go application for the target architecture.
+ * When --local-runtime is set, passes USE_LOCAL_RUNTIME=1 to the build script
+ * which injects a go.mod replace directive inside the container (never touches host files).
  */
 export async function compileApplication(): Promise<void> {
     const bspName = Settings.bspName!
+    const env: Record<string, string> = {
+        PRESELECTED_BSP: bspName,
+        BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
+    }
+
+    if (Settings.localRuntime) {
+        env.USE_LOCAL_RUNTIME = "1"
+        Logger.info("Using local runtime from: " + Settings.localRuntime)
+    }
+
     await Runner.runScriptInDocker(scriptBuildApp, {
         message: "Compiling Application...",
         messageOnError: "Failed to compile Application. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
-        }
+        env
     })
 }
 
@@ -146,6 +155,56 @@ export async function buildRootFS(): Promise<void> {
     })
 
     Logger.success("Root filesystem built successfully")
+}
+
+/**
+ * Writes the display configuration JSON to the BSP cache directory.
+ * This is copied to /strux/.display-config.json on the rootfs by strux-build-post.sh.
+ */
+export async function writeDisplayConfig(bspName: string): Promise<void> {
+    const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
+    const displayConfigPath = join(bspCacheDir, ".display-config.json")
+
+    const display = Settings.main?.display
+    if (display?.monitors && display.monitors.length > 0) {
+        // Use the display config from strux.yaml
+        const config = {
+            monitors: display.monitors.map(m => ({
+                path: m.path,
+                ...(m.resolution ? { resolution: m.resolution } : {}),
+                ...(m.names && m.names.length > 0 ? { names: m.names } : {}),
+            }))
+        }
+        await Bun.write(displayConfigPath, JSON.stringify(config))
+        Logger.info(`Display config: ${display.monitors.length} monitor(s)`)
+    } else {
+        // Default single-monitor config using BSP display resolution
+        const width = Settings.bsp?.display?.width ?? 1920
+        const height = Settings.bsp?.display?.height ?? 1080
+        const config = {
+            monitors: [{ path: "/", resolution: `${width}x${height}` }]
+        }
+        await Bun.write(displayConfigPath, JSON.stringify(config))
+    }
+
+    // Write input device mapping file (device_substring:output_name per line)
+    // Cage reads this to map touch/pointer devices to the correct output
+    const inputMapPath = join(bspCacheDir, ".input-map")
+    const lines: string[] = []
+    if (display?.monitors) {
+        for (const monitor of display.monitors) {
+            if (monitor.input_devices && monitor.names && monitor.names.length > 0) {
+                const outputName = monitor.names[0]
+                for (const device of monitor.input_devices) {
+                    lines.push(`${device}:${outputName}`)
+                }
+            }
+        }
+    }
+    if (lines.length > 0) {
+        await Bun.write(inputMapPath, lines.join("\n") + "\n")
+        Logger.info(`Input map: ${lines.length} device mapping(s)`)
+    }
 }
 
 /**

@@ -5,7 +5,7 @@
  */
 
 import { Command } from "commander"
-import { join } from "path"
+import { join, resolve } from "path"
 import { Settings, type ArchType, type TemplateType } from "./settings"
 import { STRUX_VERSION } from "./version"
 import { Logger } from "./utils/log"
@@ -94,13 +94,15 @@ program.command("build")
     .argument("<bsp>", "The board support package to build for")
     .option("--clean", "Clean the build cache before building")
     .option("--dev", "Build a development image")
-    .action(async (bspName: string, options: {clean?: boolean, dev?: boolean}) => {
+    .option("--local-runtime <path>", "Use a local strux repo for the Go runtime instead of the published module")
+    .action(async (bspName: string, options: {clean?: boolean, dev?: boolean, localRuntime?: string}) => {
 
         try {
             Logger.title("Building Strux OS Image for BSP: " + bspName)
             Settings.bspName = bspName
             Settings.clean = options.clean ?? false
             Settings.isDevMode = options.dev ?? false
+            Settings.localRuntime = options.localRuntime ? resolve(options.localRuntime) : null
             await build()
         } catch (err) {
             Logger.error(`Build failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -138,7 +140,8 @@ program.command("dev")
     .option("--vite", "Show Vite dev server output")
     .option("--no-app-debug", "Disable app output streaming")
     .option("--no-rebuild", "Skip the initial build and use existing artifacts")
-    .action(async (options: {remote?: boolean, clean?: boolean, debug?: boolean, vite?: boolean, appDebug?: boolean, rebuild?: boolean}) => {
+    .option("--local-runtime <path>", "Use a local strux repo for the Go runtime instead of the published module")
+    .action(async (options: {remote?: boolean, clean?: boolean, debug?: boolean, vite?: boolean, appDebug?: boolean, rebuild?: boolean, localRuntime?: string}) => {
 
         try {
 
@@ -149,6 +152,7 @@ program.command("dev")
             Settings.devViteDebug = options.vite ?? false
             Settings.devAppDebug = options.appDebug ?? true
             Settings.noRebuild = options.rebuild === false
+            Settings.localRuntime = options.localRuntime ? resolve(options.localRuntime) : null
             await dev()
 
         } catch (err) {

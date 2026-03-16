@@ -67,101 +67,8 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
-
 # ============================================================================
-# SECTION 3: PACKAGE COLLECTION AND SEPARATION
-# ============================================================================
-# This section collects packages from both global and BSP-specific configs,
-# then separates them into:
-# - Repository packages (installed via apt-get)
-# - .deb file paths (copied and installed via dpkg)
-#
-# Path resolution rules:
-# - Global packages: relative to project root (/project)
-# - BSP packages starting with ./: relative to BSP folder (/project/bsp/{bsp_name})
-# - BSP packages without ./: relative to project root
-# ============================================================================
-
-# Collect packages from global rootfs.packages
-GLOBAL_PACKAGES=$(yq '.rootfs.packages[]?' "$PROJECT_DIR/strux.yaml" 2>/dev/null || echo "")
-
-# Collect packages from BSP-specific rootfs.packages
-BSP_PACKAGES=$(yq '.bsp.rootfs.packages[]?' "$BSP_CONFIG" 2>/dev/null || echo "")
-
-# Separate repository packages from .deb file paths
-REPO_PACKAGES=""
-DEB_FILES=""
-
-# Process global packages (relative to project root)
-while IFS= read -r package; do
-    if [ -z "$package" ]; then
-        continue
-    fi
-    
-    # Check if it's a .deb file (ends with .deb)
-    if [[ "$package" == *.deb ]]; then
-        # Global packages are relative to project root
-        # Normalize path (remove ./ prefix if present)
-        normalized_package="${package#./}"
-        
-        # Resolve the path relative to project directory
-        if [ -f "$PROJECT_DIR/$normalized_package" ]; then
-            DEB_FILES="$DEB_FILES$normalized_package\n"
-        elif [ -f "$package" ]; then
-            # Absolute path
-            DEB_FILES="$DEB_FILES$package\n"
-        else
-            echo "Warning: .deb file not found: $package (checked: $PROJECT_DIR/$normalized_package)"
-        fi
-    else
-        # It's a repository package name
-        REPO_PACKAGES="$REPO_PACKAGES$package "
-    fi
-done <<< "$GLOBAL_PACKAGES"
-
-# Process BSP packages (paths starting with ./ are relative to BSP folder)
-while IFS= read -r package; do
-    if [ -z "$package" ]; then
-        continue
-    fi
-    
-    # Check if it's a .deb file (ends with .deb)
-    if [[ "$package" == *.deb ]]; then
-        # BSP packages: if starts with ./, resolve relative to BSP folder, otherwise relative to project root
-        if [[ "$package" == ./* ]]; then
-            # Remove ./ prefix and resolve relative to BSP folder
-            bsp_relative_path="${package#./}"
-            if [ -f "$BSP_FOLDER/$bsp_relative_path" ]; then
-                DEB_FILES="$DEB_FILES$BSP_FOLDER/$bsp_relative_path\n"
-            else
-                echo "Warning: .deb file not found: $package (checked: $BSP_FOLDER/$bsp_relative_path)"
-            fi
-        else
-            # Not starting with ./, resolve relative to project root (like global packages)
-            normalized_package="${package#./}"
-            if [ -f "$PROJECT_DIR/$normalized_package" ]; then
-                DEB_FILES="$DEB_FILES$normalized_package\n"
-            elif [ -f "$package" ]; then
-                # Absolute path
-                DEB_FILES="$DEB_FILES$package\n"
-            else
-                echo "Warning: .deb file not found: $package (checked: $PROJECT_DIR/$normalized_package)"
-            fi
-        fi
-    else
-        # It's a repository package name - check if already added (avoid duplicates)
-        if [[ ! " $REPO_PACKAGES " =~ " $package " ]]; then
-            REPO_PACKAGES="$REPO_PACKAGES$package "
-        fi
-    fi
-done <<< "$BSP_PACKAGES"
-
-# Trim trailing spaces/newlines
-REPO_PACKAGES=$(echo "$REPO_PACKAGES" | sed 's/[[:space:]]*$//')
-DEB_FILES=$(echo -e "$DEB_FILES" | grep -v '^$' || true)
-
-# ============================================================================
-# SECTION 4: BUILD ENVIRONMENT SETUP
+# SECTION 3: BUILD ENVIRONMENT SETUP
 # ============================================================================
 # This section sets up the build environment variables and prepares
 # the root filesystem directory.
@@ -196,7 +103,7 @@ mkdir -p "$ROOTFS_DIR"
 chmod -R 777 "$ROOTFS_DIR"
 
 # ============================================================================
-# SECTION 5: ROOT FILESYSTEM CREATION (DEBOOTSTRAP)
+# SECTION 4: ROOT FILESYSTEM CREATION (DEBOOTSTRAP)
 # ============================================================================
 # This section creates the base root filesystem using debootstrap.
 # It handles both native and cross-architecture builds:
@@ -242,7 +149,7 @@ else
 fi
 
 # ============================================================================
-# SECTION 6: SYSTEM CONFIGURATION AND CHROOT SETUP
+# SECTION 5: SYSTEM CONFIGURATION AND CHROOT SETUP
 # ============================================================================
 # This section configures the base system:
 # - Sets up APT sources
@@ -299,7 +206,7 @@ progress "Updating package lists..."
 run_in_chroot "apt-get update"
 
 # ============================================================================
-# SECTION 7: SYSTEM PACKAGE INSTALLATION
+# SECTION 6: SYSTEM PACKAGE INSTALLATION
 # ============================================================================
 # This section installs essential system packages required for Strux OS:
 # - Systemd and session management
@@ -387,71 +294,7 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     libseat1"
 
 # ============================================================================
-# SECTION 8: CUSTOM PACKAGE INSTALLATION
-# ============================================================================
-# This section installs user-specified packages from the configuration:
-# - Repository packages: Installed via apt-get
-# - .deb files: Copied to chroot and installed via dpkg
-# ============================================================================
-
-# Install repository packages from config
-if [ -n "$REPO_PACKAGES" ]; then
-    progress "Installing repository packages..."
-    run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        $REPO_PACKAGES"
-else
-    progress "No repository packages to install"
-fi
-
-# Copy and install custom .deb package files
-if [ -n "$DEB_FILES" ]; then
-    progress "Copying and installing custom .deb package files..."
-    
-    # Create temporary directory for .deb files in chroot
-    DEB_TEMP_DIR="$ROOTFS_DIR/tmp/deb-packages"
-    mkdir -p "$DEB_TEMP_DIR"
-    
-    # Copy each .deb file to chroot and install it
-    while IFS= read -r deb_file; do
-        if [ -z "$deb_file" ]; then
-            continue
-        fi
-        
-        # Normalize path (remove ./ prefix if present)
-        deb_file="${deb_file#./}"
-        
-        # Resolve the path - try relative to project directory first, then absolute
-        if [ -f "$PROJECT_DIR/$deb_file" ]; then
-            SOURCE_FILE="$PROJECT_DIR/$deb_file"
-        elif [ -f "$deb_file" ]; then
-            SOURCE_FILE="$deb_file"
-        else
-            echo "Warning: Skipping .deb file not found: $deb_file (checked: $PROJECT_DIR/$deb_file and $deb_file)"
-            continue
-        fi
-        
-        # Get just the filename
-        DEB_FILENAME=$(basename "$SOURCE_FILE")
-        TARGET_FILE="$DEB_TEMP_DIR/$DEB_FILENAME"
-        
-        # Copy .deb file to chroot
-        cp "$SOURCE_FILE" "$TARGET_FILE"
-        
-        # Install the .deb file inside chroot
-        progress "Installing $DEB_FILENAME..."
-        run_in_chroot "DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/deb-packages/$DEB_FILENAME || apt-get install -f -y"
-    done <<< "$DEB_FILES"
-    
-    # Clean up temporary directory
-    rm -rf "$DEB_TEMP_DIR"
-    run_in_chroot "rm -rf /tmp/deb-packages" || true
-else
-    progress "No .deb package files to install"
-fi
-
-
-# ============================================================================
-# SECTION 9: CLEANUP
+# SECTION 7: CLEANUP
 # ============================================================================
 # This section cleans up the build environment.
 # ============================================================================

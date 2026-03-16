@@ -31,7 +31,24 @@ func main() {
 		Title:   "${projectName}",
 		Counter: 0,
 	}
-	if err := runtime.Start(app); err != nil {
+
+	// Init starts the IPC bridge and returns the runtime for event access.
+	// Use runtime.Start(app) instead if you don't need events.
+	rt, err := runtime.Init(app)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rt.Stop()
+
+	// Listen for events from the frontend
+	rt.On("hello", func(data interface{}) {
+		log.Printf("Received hello event: %v", data)
+		// Send an event back to the frontend
+		rt.Emit("hello-reply", map[string]string{"message": "Hello from Go!"})
+	})
+
+	// Start HTTP server (blocks)
+	if err := rt.Serve(); err != nil {
 		log.Fatal(err)
 	}
 }
