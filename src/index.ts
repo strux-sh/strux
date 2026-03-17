@@ -16,8 +16,11 @@ import { run } from "./commands/run"
 import { dev } from "./commands/dev"
 import { usb, usbAdd, usbList } from "./commands/usb"
 import { kernelMenuconfig, kernelClean } from "./commands/kernel"
+import { UpdateChecker } from "./updatecheck"
 
 const program = new Command()
+
+await UpdateChecker.checkForUpdates()
 
 program
     .name("strux")

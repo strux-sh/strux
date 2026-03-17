@@ -2,6 +2,9 @@
 
 ## v0.2.0
 
+### New: Strux Version Checker
+Strux will automatically check for new versions and notify you when a new version is available in the CLI.
+
 ### New: Bidirectional Event System (`strux.ipc`)
 
 A new event system enables real-time, bidirectional communication between the Go backend and the JavaScript frontend — no polling, no callbacks-as-parameters, just fire-and-forget events in both directions.
