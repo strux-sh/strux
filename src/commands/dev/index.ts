@@ -15,9 +15,11 @@ import chokidar from "chokidar"
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
 import { fileExists } from "../../utils/path"
-import { compileApplication } from "../build/steps"
+import { compileApplication, compileCage, compileWPE, buildStruxClient } from "../build/steps"
+import { Runner } from "../../utils/run"
 import { build as buildCommand } from "../build"
 import { loadBuildCacheManifest, shouldRebuildStep, updateStepCache } from "../build/cache"
+import { forceRestoreAllArtifacts } from "../build/artifacts"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { createDevServer, stopDevServer, type DevServer } from "./server"
 import { run as runQEMU } from "../run"
@@ -45,7 +47,9 @@ let isShuttingDown = false
 
 // Build debounce/queue state
 let isBuilding = false
+let buildCooldown = false
 let pendingBuild: "full" | "app" | null = null
+let pendingBuildFiles: Set<string> = new Set()
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 const DEBOUNCE_MS = 300
 
@@ -147,6 +151,9 @@ export async function dev(): Promise<void> {
                         return
                     }
                     devServer.sendExecInput(consoleSessionId, data)
+                },
+                onConfigAction: (action) => {
+                    handleConfigAction(action)
                 },
                 initialStatus: "Starting dev session..."
             })
@@ -433,6 +440,13 @@ export async function dev(): Promise<void> {
                 ui.appendConsoleChunk(`\r\n[error] ${payload.error}\r\n`)
                 ui.setConsoleSessionActive(false)
                 ui.setConsoleInputMode(false)
+            },
+            onComponentAck: (payload: { componentType: string; status: string; message: string }) => {
+                if (payload.status === "updated") {
+                    ui.appendLog("build", chalk.green(`Component ${payload.componentType} updated: ${payload.message}`))
+                } else {
+                    ui.appendLog("build", chalk.red(`Component ${payload.componentType} failed: ${payload.message}`))
+                }
             }
         }
     })() : {}
@@ -497,6 +511,107 @@ export async function dev(): Promise<void> {
     // Keep the process running
     await new Promise((_resolve) => { /* Never resolves - keeps process alive */ })
 
+}
+
+
+async function handleConfigAction(action: "restore" | "rebuild-transfer" | "restart-service" | "reboot"): Promise<void> {
+    if (!devUI) return
+
+    devUI.setConfigBusy(true)
+
+    try {
+        if (action === "restore") {
+            Logger.info("Restoring all artifacts to built-in versions...")
+
+            // Remove the entire dist/artifacts/ directory
+            const artifactsDir = join(Settings.projectPath, "dist", "artifacts")
+            const { rm } = await import("fs/promises")
+            try {
+                await rm(artifactsDir, { recursive: true, force: true })
+            } catch {
+                // Directory may not exist
+            }
+
+            // Force-write all embedded files
+            await forceRestoreAllArtifacts()
+
+            Logger.success("All artifacts restored to built-in versions")
+            devUI.flashConfigSuccess("All artifacts restored to built-in versions")
+
+        } else if (action === "rebuild-transfer") {
+            if (!devServer?.isClientConnected()) {
+                Logger.error("Cannot transfer components: No device connected")
+                devUI.setConfigBusy(false)
+                return
+            }
+
+            const bspName = Settings.bspName!
+
+            Logger.info("Rebuilding Strux components...")
+
+            // Skip per-step chown during incremental rebuilds — do a single pass at the end
+            Runner.skipChown = true
+            try {
+                await compileCage()
+                await compileWPE()
+                await buildStruxClient(true)
+            } finally {
+                Runner.skipChown = false
+                await Runner.chownProjectFiles()
+            }
+
+            Logger.info("Components built, transferring to device...")
+
+            // Read the built binaries
+            const cagePath = join(Settings.projectPath, "dist", "cache", bspName, "cage")
+            const wpePath = join(Settings.projectPath, "dist", "cache", bspName, "libstrux-extension.so")
+            const clientPath = join(Settings.projectPath, "dist", "cache", bspName, "client")
+
+            const cageBinary = Buffer.from(await Bun.file(cagePath).arrayBuffer())
+            const wpeBinary = Buffer.from(await Bun.file(wpePath).arrayBuffer())
+            const clientBinary = Buffer.from(await Bun.file(clientPath).arrayBuffer())
+
+            // Send each component to the device
+            devServer.sendComponent("cage", cageBinary, "/usr/bin/cage")
+            devServer.sendComponent("wpe-extension", wpeBinary, "/usr/lib/wpe-web-extensions/libstrux-extension.so")
+            devServer.sendComponent("client", clientBinary, "/strux/client")
+
+            // Wait a moment for acks, then reboot
+            setTimeout(() => {
+                Logger.info("Sending reboot command to device...")
+                devServer?.sendReboot()
+            }, 2000)
+
+            Logger.success("Components transferred to device, rebooting...")
+
+        } else if (action === "restart-service") {
+            if (!devServer?.isClientConnected()) {
+                Logger.error("Cannot restart service: No device connected")
+                devUI.setConfigBusy(false)
+                return
+            }
+
+            devServer.sendRestartService()
+            Logger.success("Restart command sent to device")
+            devUI.flashConfigSuccess("Strux service restart command sent")
+
+        } else if (action === "reboot") {
+            if (!devServer?.isClientConnected()) {
+                Logger.error("Cannot reboot: No device connected")
+                devUI.setConfigBusy(false)
+                return
+            }
+
+            devServer.sendReboot()
+            Logger.success("Reboot command sent to device")
+            devUI.flashConfigSuccess("Reboot command sent to device")
+        }
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        Logger.error(`Config action failed: ${msg}`)
+    } finally {
+        devUI?.setConfigBusy(false)
+    }
 }
 
 
@@ -579,12 +694,22 @@ async function runFileWatcher(): Promise<void> {
         const buildType = filePath.endsWith(".yaml") ? "full" : "app"
 
         // If a build is in progress, queue the highest-priority build type
+        // and track which files changed so we can filter build-induced changes
         if (isBuilding) {
+            pendingBuildFiles.add(filePath)
             // "full" takes priority over "app"
             if (buildType === "full" || pendingBuild === null) {
                 pendingBuild = buildType === "full" ? "full" : (pendingBuild ?? "app")
             }
             return
+        }
+
+        // During build cooldown, ignore go.mod/go.sum changes from the build
+        // script's cleanup (restore trap fires after the Docker process exits)
+        if (buildCooldown && Settings.localRuntime) {
+            if (filePath.endsWith("go.mod") || filePath.endsWith("go.sum")) {
+                return
+            }
         }
 
         // Debounce rapid file changes
@@ -602,6 +727,7 @@ async function runFileWatcher(): Promise<void> {
 async function executeBuild(buildType: "full" | "app"): Promise<void> {
     isBuilding = true
     pendingBuild = null
+    pendingBuildFiles.clear()
 
     Logger.log("Changes detected, rebuilding application...")
 
@@ -616,12 +742,33 @@ async function executeBuild(buildType: "full" | "app"): Promise<void> {
         }
     } finally {
         isBuilding = false
+
+        // Brief cooldown after build completes to catch go.mod/go.sum restore
+        // events from the build script's EXIT trap (fires after Docker exits)
+        if (Settings.localRuntime) {
+            buildCooldown = true
+            setTimeout(() => { buildCooldown = false }, 1000)
+        }
     }
 
-    // If changes came in during the build, run the queued build
+    // If changes came in during the build, check whether they were real user
+    // edits or just build-induced artifacts (e.g. go.mod/go.sum modified by
+    // the local-runtime replace directive). Only re-trigger if there are
+    // meaningful changes.
     if (pendingBuild && !isShuttingDown) {
+        if (Settings.localRuntime) {
+            const meaningfulChanges = [...pendingBuildFiles].some(
+                f => !f.endsWith("go.mod") && !f.endsWith("go.sum")
+            )
+            if (!meaningfulChanges) {
+                pendingBuild = null
+                pendingBuildFiles.clear()
+                return
+            }
+        }
         const next = pendingBuild
         pendingBuild = null
+        pendingBuildFiles.clear()
         await executeBuild(next)
     }
 }
@@ -663,8 +810,14 @@ async function sendCurrentBinary(): Promise<void> {
 
 async function rebuildApplication(): Promise<void> {
 
-    // Compile the application
-    await compileApplication()
+    // Skip per-step chown for incremental rebuilds — single pass after
+    Runner.skipChown = true
+    try {
+        await compileApplication()
+    } finally {
+        Runner.skipChown = false
+        await Runner.chownProjectFiles()
+    }
 
     // Stream the application to the connected client
     await sendCurrentBinary()

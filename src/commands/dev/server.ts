@@ -113,6 +113,20 @@ interface BinaryAckPayload {
 }
 
 
+interface ComponentPayload {
+    componentType: "cage" | "wpe-extension" | "client"
+    data: string  // Base64 encoded binary data
+    destPath: string
+}
+
+
+interface ComponentAckPayload {
+    componentType: string
+    status: "updated" | "error"
+    message: string
+}
+
+
 interface DevServerOptions {
     port: number
     clientKey: string
@@ -125,6 +139,7 @@ interface DevServerOptions {
     onExecOutput?: (payload: ExecOutputPayload) => void
     onExecExit?: (payload: ExecExitPayload) => void
     onExecError?: (payload: ExecErrorPayload) => void
+    onComponentAck?: (payload: ComponentAckPayload) => void
 }
 
 
@@ -466,6 +481,10 @@ export class DevServer {
                 this.handleExecError(payload as ExecErrorPayload)
                 break
 
+            case "component-ack":
+                this.handleComponentAck(payload as ComponentAckPayload)
+                break
+
             default:
                 Logger.warning(`Unknown event type: ${eventType}`)
 
@@ -597,6 +616,20 @@ export class DevServer {
         }
 
         Logger.error(`Console error (${payload.sessionId}): ${payload.error}`)
+    }
+
+
+    private handleComponentAck(payload: ComponentAckPayload): void {
+        if (this.options.onComponentAck) {
+            this.options.onComponentAck(payload)
+            return
+        }
+
+        if (payload.status === "updated") {
+            Logger.success(`Component ${payload.componentType} updated: ${payload.message}`)
+        } else {
+            Logger.error(`Component ${payload.componentType} failed: ${payload.message}`)
+        }
     }
 
 
@@ -794,6 +827,67 @@ export class DevServer {
 
         return this.emit("exec-input", payload)
     }
+
+    /**
+     * Send a component binary to the connected client for replacement on device.
+     *
+     * @param componentType - The type of component being sent
+     * @param binary - The binary data to send
+     * @param destPath - The target filesystem path on the device
+     * @returns true if the event was sent successfully
+     */
+    public sendComponent(componentType: "cage" | "wpe-extension" | "client", binary: Buffer, destPath: string): boolean {
+
+        if (!this.client) {
+
+            Logger.warning("Cannot send component: No client connected")
+
+            return false
+
+        }
+
+        const base64Data = binary.toString("base64")
+
+        const payload: ComponentPayload = {
+            componentType,
+            data: base64Data,
+            destPath
+        }
+
+        Logger.log(`Streaming ${componentType} component to client (${binary.length} bytes) -> ${destPath}`)
+
+        return this.emit("new-component", payload)
+
+    }
+
+
+    /**
+     * Tell the connected client to restart the Strux service.
+     *
+     * @returns true if the event was sent successfully
+     */
+    public sendRestartService(): boolean {
+
+        Logger.log("Sending restart-service command to client")
+
+        return this.emit("restart-service", null)
+
+    }
+
+
+    /**
+     * Tell the connected client to reboot the device.
+     *
+     * @returns true if the event was sent successfully
+     */
+    public sendReboot(): boolean {
+
+        Logger.log("Sending reboot command to client")
+
+        return this.emit("reboot", null)
+
+    }
+
 
     /**
      * Get the server port.

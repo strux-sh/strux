@@ -130,6 +130,88 @@ How it works:
 - The project's `go.mod` and `go.sum` are backed up and restored via a shell `trap EXIT`, so host files are never modified — even if the build fails or is interrupted
 - Relative paths (e.g., `../`) are resolved to absolute paths before being passed to Docker
 
+### New: Nested Struct Method Binding
+
+Methods defined on nested structs are now automatically discovered and exposed to the JavaScript frontend — no need to proxy everything through the top-level App struct.
+
+If your Go app has a `Settings` field containing an `Audio` struct with methods:
+
+```go
+type App struct {
+    Settings settings.Settings
+}
+
+type Audio struct {
+    MasterVolume int
+    AudioOutput  string
+}
+
+func (a *Audio) SetMasterVolume(volume int) { ... }
+func (a *Audio) SetAudioOutputTo(output AudioOutput) { ... }
+```
+
+These methods are now callable from the frontend as `Audio.SetMasterVolume(80)` and appear in `strux.d.ts`:
+
+```typescript
+interface Audio {
+  MasterVolume: number;
+  AudioOutput: string;
+
+  SetMasterVolume(volume: number): Promise<void>;
+  SetAudioOutputTo(output: string): Promise<void>;
+}
+```
+
+**How it works:**
+- The Go runtime (`pkg/runtime`) recursively walks struct-typed fields on the app struct and discovers their exported methods via reflection, registering them alongside the app's own methods
+- The introspection tool (`strux-introspect`) now collects methods on all known structs — including those defined in external packages (e.g., a `settings/` subdirectory) — and includes them in the JSON output under each struct's definition
+- The `strux types` type generator produces method signatures on struct interfaces, not just fields
+- The WPE extension already supports multiple struct bindings, so no C-side changes were needed
+
+**Limitations:**
+- Method names must be unique across all structs (the runtime stores them in a flat map). If two structs define a method with the same name, the last one discovered wins.
+- Only methods are exposed on nested structs, not individual field getters/setters. Nested struct fields are accessible through the parent field (e.g., `App.Settings` returns the full object).
+
+### New: Named Type Alias Resolution
+
+The introspection tool now resolves named type aliases (e.g., `type AudioOutput string`) to their underlying primitive type instead of emitting `any`. This means Go patterns like:
+
+```go
+type AudioOutput string
+
+const (
+    AudioOutputHDMI    AudioOutput = "hdmi"
+    AudioOutputSpeaker AudioOutput = "speaker"
+)
+
+func (a *Audio) SetAudioOutputTo(output AudioOutput) { ... }
+```
+
+Will generate `SetAudioOutputTo(output: string): Promise<void>` in TypeScript instead of `SetAudioOutputTo(output: any)`. This works for any `type X <primitive>` pattern across both the main package and external packages.
+
+### New: Config Tab in Dev TUI
+
+The `strux dev` terminal interface now includes a **Config** tab with quick actions for managing Strux components and the device, accessible via the tab bar (Left/Right arrows).
+
+**Strux Component Management:**
+- **Restore Strux Artifacts to Built-in Version** — Deletes `dist/artifacts/` and rewrites all embedded files (plymouth, init scripts, systemd services, client Go source, cage source, WPE extension source) from the CLI's built-in defaults. Useful when you want to reset user-modified artifacts back to their original state.
+- **Rebuild Strux Components and Transfer To Device** — Rebuilds the Cage compositor, WPE extension, and Strux client binary inside Docker, then streams each binary to the connected device over WebSocket and reboots. This eliminates the need to reflash the entire image when iterating on Strux's own components.
+
+**System Tools:**
+- **Restart Strux Service** — Sends a `systemctl restart strux` command to the connected device.
+- **Reboot System** — Sends a reboot command to the connected device.
+
+**Device-side protocol additions:**
+- New `new-component` WebSocket event streams component binaries (base64-encoded) with a target filesystem path. The Go client writes to a temp file, verifies SHA256, and performs an atomic rename.
+- New `component-ack` event for the device to acknowledge each component update.
+- New `restart-service` and `reboot` events for remote system control.
+- Incremental rebuilds from the Config tab (and the existing Go hot-reload path) skip per-step Docker file permission fixes and run a single `chownProjectFiles()` pass at the end.
+
+### TUI Performance
+
+- Reduced flicker in the dev TUI by batching rapid state updates. The store now coalesces multiple updates within the same microtask into a single React re-render, instead of clearing and redrawing the terminal for each individual log line or spinner update.
+- Changed log line React keys from content-based (`${index}-${line}`) to index-based, preventing unnecessary DOM unmount/remount cycles when lines scroll.
+
 ### Optimizations
 
 - Moved custom package installation (both repository packages and `.deb` files) from the `rootfs-base` build step to `rootfs-post`. Previously, any change to `rootfs.packages` in `strux.yaml` or `bsp.rootfs.packages` in `bsp.yaml` would invalidate the base rootfs cache, triggering a full debootstrap + system package rebuild. Packages are now installed early in the post-processing step instead, so adding or removing a package only rebuilds the much faster `rootfs-post` step. The cache dependency graph has been updated accordingly — `rootfs-base` now only depends on `bsp.arch`, while `rootfs-post` tracks both package lists.

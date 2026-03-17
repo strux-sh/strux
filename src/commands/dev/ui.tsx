@@ -12,11 +12,14 @@ import { Box, Text, render, useInput, useStdin, useStdout } from "ink"
 import { Terminal } from "@xterm/headless"
 import { STRUX_VERSION } from "../../version"
 
-type TabId = "build" | "vite" | "app" | "cage" | "system" | "qemu" | "console"
+type TabId = "build" | "vite" | "app" | "cage" | "system" | "qemu" | "console" | "config"
+
+type ConfigAction = "restore" | "rebuild-transfer" | "restart-service" | "reboot"
 
 interface DevUIOptions {
     onExit: () => void
     onConsoleInput: (data: string) => void
+    onConfigAction?: (action: ConfigAction) => void
     initialStatus?: string
 }
 
@@ -35,6 +38,9 @@ interface DevUIState {
     spinnerLine: string
     scrollOffsets: Record<TabId, number>
     consoleRevision: number
+    configSelectedIndex: number
+    configBusy: boolean
+    configSuccessMessage: string
 }
 
 type DevUISubscriber = (state: DevUIState) => void
@@ -43,6 +49,7 @@ class DevUIStore {
     private state: DevUIState
     private subscribers = new Set<DevUISubscriber>()
     private consoleTerminal: Terminal
+    private emitScheduled = false
 
     constructor(initialStatus: string) {
         this.consoleTerminal = new Terminal({
@@ -64,7 +71,8 @@ class DevUIStore {
                 { id: "cage", label: "Cage Logs" },
                 { id: "system", label: "System Logs" },
                 { id: "qemu", label: "QEMU Serial" },
-                { id: "console", label: "Remote Console" }
+                { id: "console", label: "Remote Console" },
+                { id: "config", label: "Config" }
             ],
             logs: {
                 build: [],
@@ -73,7 +81,8 @@ class DevUIStore {
                 cage: [],
                 system: [],
                 qemu: [],
-                console: []
+                console: [],
+                config: []
             },
             spinnerLine: "",
             scrollOffsets: {
@@ -83,9 +92,13 @@ class DevUIStore {
                 cage: 0,
                 system: 0,
                 qemu: 0,
-                console: 0
+                console: 0,
+                config: 0
             },
-            consoleRevision: 0
+            consoleRevision: 0,
+            configSelectedIndex: 0,
+            configBusy: false,
+            configSuccessMessage: ""
         }
     }
 
@@ -185,15 +198,62 @@ class DevUIStore {
         this.emit()
     }
 
+    public setConfigSelectedIndex(index: number): void {
+        this.state = { ...this.state, configSelectedIndex: index }
+        this.emit()
+    }
+
+    public setConfigBusy(busy: boolean): void {
+        this.state = { ...this.state, configBusy: busy }
+        this.emit()
+    }
+
+    public setConfigSuccessMessage(message: string): void {
+        this.state = { ...this.state, configSuccessMessage: message }
+        this.emit()
+    }
+
     private emit(): void {
-        for (const subscriber of this.subscribers) {
-            subscriber(this.state)
-        }
+        if (this.emitScheduled) return
+        this.emitScheduled = true
+        queueMicrotask(() => {
+            this.emitScheduled = false
+            // Create a fresh reference so React's setState triggers a re-render
+            this.state = { ...this.state }
+            for (const subscriber of this.subscribers) {
+                subscriber(this.state)
+            }
+        })
     }
 }
 
-function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: (data: string) => void }) {
-    const { store, onExit, onConsoleInput } = props
+interface ConfigSection {
+    title: string
+    items: { label: string; action: ConfigAction }[]
+}
+
+const CONFIG_SECTIONS: ConfigSection[] = [
+    {
+        title: "Strux Component Management",
+        items: [
+            { label: "Restore Strux Artifacts to Built-in Version", action: "restore" },
+            { label: "Rebuild Strux Components and Transfer To Device", action: "rebuild-transfer" },
+        ]
+    },
+    {
+        title: "System Tools",
+        items: [
+            { label: "Restart Strux Service", action: "restart-service" },
+            { label: "Reboot System", action: "reboot" },
+        ]
+    },
+]
+
+// Flat list for keyboard navigation indexing
+const CONFIG_MENU_ITEMS = CONFIG_SECTIONS.flatMap(s => s.items)
+
+function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: (data: string) => void; onConfigAction?: (action: ConfigAction) => void }) {
+    const { store, onExit, onConsoleInput, onConfigAction } = props
     const [state, setState] = useState(store.getState())
     useStdin() // Keep Ink's stdin handling active
     const { stdout } = useStdout()
@@ -203,9 +263,11 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
     const storeRef = useRef(store)
     const onExitRef = useRef(onExit)
     const stdoutRef = useRef(stdout)
+    const onConfigActionRef = useRef(onConfigAction)
     storeRef.current = store
     onExitRef.current = onExit
     stdoutRef.current = stdout
+    onConfigActionRef.current = onConfigAction
 
     useEffect(() => store.subscribe(setState), [store])
 
@@ -221,6 +283,7 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
     const viewHeight = Math.max(5, rows - chromeHeight - (spinnerVisible ? 1 : 0))
     const cols = stdout?.columns ?? 80
     const isConsole = state.activeTab === "console"
+    const isConfig = state.activeTab === "config"
 
     useEffect(() => {
         if (isConsole) {
@@ -299,6 +362,27 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
             return
         }
 
+        // Config tab: Up/Down changes selection, Enter executes
+        if (activeTab === "config" && !s.configBusy) {
+            if (key.upArrow) {
+                const idx = Math.max(0, s.configSelectedIndex - 1)
+                storeRef.current.setConfigSelectedIndex(idx)
+                return
+            }
+            if (key.downArrow) {
+                const idx = Math.min(CONFIG_MENU_ITEMS.length - 1, s.configSelectedIndex + 1)
+                storeRef.current.setConfigSelectedIndex(idx)
+                return
+            }
+            if (key.return) {
+                const item = CONFIG_MENU_ITEMS[s.configSelectedIndex]
+                if (item && onConfigActionRef.current) {
+                    onConfigActionRef.current(item.action)
+                }
+                return
+            }
+        }
+
         if (key.leftArrow) {
             const idx = tabs.findIndex((t) => t.id === activeTab)
             const next = (idx - 1 + tabs.length) % tabs.length
@@ -370,9 +454,11 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
     const statusLine = state.activeTab === "console"
         ? `${state.status} | Console ${state.consoleSessionActive ? "connected" : "disconnected"} | Input ${state.consoleInputMode ? "on" : "off"}`
         : state.status
-    const controlsLine = state.activeTab === "console"
-        ? "Tabs: Left/Right | Scroll: Up/Down, PgUp/PgDn | Input: Enter | Exit Input: Ctrl+J | Clear: C | Quit: Q"
-        : "Tabs: Left/Right | Scroll: Up/Down, PgUp/PgDn | Clear: C | Quit: Q"
+    const controlsLine = isConfig
+        ? "Tabs: Left/Right | Select: Up/Down | Run: Enter | Quit: Q"
+        : state.activeTab === "console"
+            ? "Tabs: Left/Right | Scroll: Up/Down, PgUp/PgDn | Input: Enter | Exit Input: Ctrl+J | Clear: C | Quit: Q"
+            : "Tabs: Left/Right | Scroll: Up/Down, PgUp/PgDn | Clear: C | Quit: Q"
 
     return (
         <Box flexDirection="column" height={rows}>
@@ -393,12 +479,47 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
             </Box>
             <Box height={1} flexShrink={0} />
             <Box flexDirection="column" height={viewHeight + (spinnerVisible ? 1 : 0)} flexGrow={1}>
-                {activeLogs.map((line, index) => (
-                    <Text key={`${index}-${line}`}>{line}</Text>
-                ))}
-                {state.activeTab === "build" && state.spinnerLine ? (
-                    <Text color="cyanBright">{state.spinnerLine}</Text>
-                ) : null}
+                {isConfig ? (
+                    <Box flexDirection="column" paddingX={2} paddingTop={1}>
+                        {CONFIG_SECTIONS.map((section, sIdx) => {
+                            const sectionStartIndex = CONFIG_SECTIONS.slice(0, sIdx).reduce((sum, s) => sum + s.items.length, 0)
+                            return (
+                                <Box key={section.title} flexDirection="column" marginBottom={1}>
+                                    <Text bold>{section.title}</Text>
+                                    {section.items.map((item, iIdx) => {
+                                        const globalIndex = sectionStartIndex + iIdx
+                                        return (
+                                            <Text key={item.action}>
+                                                {state.configSelectedIndex === globalIndex ? (
+                                                    <Text color="cyan" bold>{`  > ${item.label}`}</Text>
+                                                ) : (
+                                                    <Text>{`    ${item.label}`}</Text>
+                                                )}
+                                            </Text>
+                                        )
+                                    })}
+                                </Box>
+                            )
+                        })}
+                        <Box height={1} />
+                        {state.configSuccessMessage ? (
+                            <Text color="green">  {state.configSuccessMessage}</Text>
+                        ) : state.configBusy ? (
+                            <Text color="yellow">  Running... check Build tab for output</Text>
+                        ) : (
+                            <Text dimColor>  Use Up/Down to select, Enter to run</Text>
+                        )}
+                    </Box>
+                ) : (
+                    <>
+                        {activeLogs.map((line, index) => (
+                            <Text key={index}>{line}</Text>
+                        ))}
+                        {state.activeTab === "build" && state.spinnerLine ? (
+                            <Text color="cyanBright">{state.spinnerLine}</Text>
+                        ) : null}
+                    </>
+                )}
             </Box>
             <Box height={1} flexShrink={0} />
             <Box backgroundColor="gray" paddingX={1} height={2} flexShrink={0} flexDirection="column">
@@ -426,7 +547,7 @@ export class DevUI {
     private mount(): void {
         if (this.mounted) return
         const instance = render(
-            <DevApp store={this.store} onExit={this.options.onExit} onConsoleInput={this.options.onConsoleInput} />,
+            <DevApp store={this.store} onExit={this.options.onExit} onConsoleInput={this.options.onConsoleInput} onConfigAction={this.options.onConfigAction} />,
             { exitOnCtrlC: false }
         )
         this.unmount = instance.unmount
@@ -459,6 +580,17 @@ export class DevUI {
 
     public setSpinnerLine(line: string): void {
         this.store.setSpinnerLine(line)
+    }
+
+    public setConfigBusy(busy: boolean): void {
+        this.store.setConfigBusy(busy)
+    }
+
+    public flashConfigSuccess(message: string, durationMs = 3000): void {
+        this.store.setConfigSuccessMessage(message)
+        setTimeout(() => {
+            this.store.setConfigSuccessMessage("")
+        }, durationMs)
     }
 
     public suspend(): void {

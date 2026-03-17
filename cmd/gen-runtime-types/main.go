@@ -293,8 +293,33 @@ func outputTypeScript(extensions []ExtensionInfo) {
 		sb.WriteString("}\n")
 	}
 
+	// Append strux.ipc types (injected by WPE extension, not a Go extension)
+	// These are hardcoded here because they're implemented in C, not discoverable via Go AST
+	ipcTypes := `  ipc: {
+    /**
+     * Register a listener for an event from the Go backend.
+     * Returns an unsubscribe function.
+     */
+    on(event: string, callback: (data: any) => void): () => void;
+    /**
+     * Remove a previously registered event listener.
+     */
+    off(event: string, callback: (data: any) => void): void;
+    /**
+     * Send an event to the Go backend.
+     */
+    send(event: string, data?: any): void;
+  };
+`
+	// Inject ipc into the Strux interface (before the closing brace)
+	struxInterface := sb.String()
+	closingBrace := "}\n"
+	if idx := strings.LastIndex(struxInterface, closingBrace); idx >= 0 {
+		struxInterface = struxInterface[:idx] + ipcTypes + closingBrace
+	}
+
 	// Output as exportable constant
-	fmt.Printf("export const STRUX_RUNTIME_TYPES = `// Strux Runtime API\n%s`;\n", sb.String())
+	fmt.Printf("export const STRUX_RUNTIME_TYPES = `// Strux Runtime API\n%s`;\n", struxInterface)
 }
 
 func formatParams(params []ParamDef) string {

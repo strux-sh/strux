@@ -222,8 +222,9 @@ connect_async_ipc (void)
 }
 
 // Send a channel handshake message and read acknowledgment
+// Uses GDataInputStream for the ack read to avoid conflicts with the async read loop
 static gboolean
-send_handshake (GOutputStream *output, GInputStream *input, const gchar *channel)
+send_handshake (GOutputStream *output, GDataInputStream *data_input, const gchar *channel)
 {
     gchar *handshake = g_strdup_printf("{\"type\":\"handshake\",\"channel\":\"%s\"}\n", channel);
     GError *error = NULL;
@@ -238,27 +239,19 @@ send_handshake (GOutputStream *output, GInputStream *input, const gchar *channel
     }
     g_free(handshake);
 
-    // Read acknowledgment (read byte-by-byte until newline)
-    GString *response = g_string_new(NULL);
-    gchar byte;
-    gssize bytes_read;
-
-    while (TRUE) {
-        bytes_read = g_input_stream_read(input, &byte, 1, NULL, &error);
-        if (bytes_read <= 0) {
-            if (error) {
-                fprintf(stderr, "Strux Extension: Failed to read %s handshake ack: %s\n", channel, error->message);
-                g_error_free(error);
-            }
-            g_string_free(response, TRUE);
-            return FALSE;
+    // Read acknowledgment using GDataInputStream (synchronous line read)
+    gsize length;
+    gchar *line = g_data_input_stream_read_line(data_input, &length, NULL, &error);
+    if (!line) {
+        if (error) {
+            fprintf(stderr, "Strux Extension: Failed to read %s handshake ack: %s\n", channel, error->message);
+            g_error_free(error);
         }
-        if (byte == '\n') break;
-        g_string_append_c(response, byte);
+        return FALSE;
     }
 
-    fprintf(stderr, "Strux Extension: %s handshake acknowledged\n", channel);
-    g_string_free(response, TRUE);
+    fprintf(stderr, "Strux Extension: %s handshake acknowledged: %s\n", channel, line);
+    g_free(line);
     return TRUE;
 }
 
@@ -294,7 +287,7 @@ connect_event_ipc (void)
     event_data_input = g_data_input_stream_new(event_input);
 
     // Send handshake to identify as event channel
-    if (!send_handshake(event_output, event_input, "events")) {
+    if (!send_handshake(event_output, event_data_input, "events")) {
         fprintf(stderr, "Strux Extension: Event channel handshake failed\n");
         g_object_unref(event_connection);
         event_connection = NULL;
@@ -1409,6 +1402,101 @@ inject_ipc_api (JSCContext *js_context)
     g_object_unref(global);
 }
 
+// Recursively bind children from the struct tree.
+// parent_obj is the JS object to attach children to.
+// children_obj is the JSON object mapping field names to child struct data.
+// path_prefix is the dotted path so far (e.g., "Settings" or "Settings.Audio").
+static void
+bind_children (JSCContext *js_context, JSCValue *parent_obj, JsonObject *children_obj, const gchar *path_prefix)
+{
+    JsonObjectIter child_iter;
+    const gchar *child_name;
+    JsonNode *child_node;
+
+    json_object_iter_init(&child_iter, children_obj);
+    while (json_object_iter_next(&child_iter, &child_name, &child_node)) {
+        JsonObject *child_data = json_node_get_object(child_node);
+
+        // Create JS object for this child
+        JSCValue *child_js_obj = jsc_value_new_object(js_context, NULL, NULL);
+        jsc_value_object_set_property(parent_obj, child_name, child_js_obj);
+
+        // Build the path for this child
+        gchar *child_path;
+        if (path_prefix && strlen(path_prefix) > 0) {
+            child_path = g_strdup_printf("%s.%s", path_prefix, child_name);
+        } else {
+            child_path = g_strdup(child_name);
+        }
+
+        // Bind methods
+        if (json_object_has_member(child_data, "methods")) {
+            JsonArray *methods = json_object_get_array_member(child_data, "methods");
+            guint num_methods = json_array_get_length(methods);
+
+            fprintf(stderr, "Strux Extension: Injecting %u methods for %s\n",
+                    num_methods, child_path);
+
+            for (guint i = 0; i < num_methods; i++) {
+                JsonObject *method_info = json_array_get_object_element(methods, i);
+                const gchar *method_name = json_object_get_string_member(method_info, "name");
+
+                // Full IPC method name: e.g. "Settings.Audio.SetMasterVolume"
+                gchar *full_method_name = g_strdup_printf("%s.%s", child_path, method_name);
+
+                JSCValue *func = jsc_value_new_function_variadic(
+                    js_context,
+                    method_name,
+                    G_CALLBACK(go_method_callback_variadic),
+                    full_method_name,  // freed by GDestroyNotify
+                    (GDestroyNotify)g_free,
+                    JSC_TYPE_VALUE
+                );
+
+                jsc_value_object_set_property(child_js_obj, method_name, func);
+
+                fprintf(stderr, "Strux Extension: Injected %s.%s()\n", child_path, method_name);
+
+                g_object_unref(func);
+            }
+        }
+
+        // Bind fields with dotted path for __getField/__setField
+        if (json_object_has_member(child_data, "fields")) {
+            JsonArray *fields = json_object_get_array_member(child_data, "fields");
+            guint num_fields = json_array_get_length(fields);
+
+            fprintf(stderr, "Strux Extension: Injecting %u fields for %s\n",
+                    num_fields, child_path);
+
+            for (guint i = 0; i < num_fields; i++) {
+                JsonObject *field_info = json_array_get_object_element(fields, i);
+                const gchar *field_name = json_object_get_string_member(field_info, "name");
+                const gchar *field_type = json_object_get_string_member(field_info, "type");
+
+                // Full field path: e.g. "Settings.Audio.MasterVolume"
+                gchar *full_field_name = g_strdup_printf("%s.%s", child_path, field_name);
+
+                inject_field_property(js_context, child_js_obj, full_field_name, field_type);
+
+                fprintf(stderr, "Strux Extension: Injected %s.%s (%s)\n",
+                        child_path, field_name, field_type);
+
+                g_free(full_field_name);
+            }
+        }
+
+        // Recursively bind nested children
+        if (json_object_has_member(child_data, "children")) {
+            JsonObject *nested_children = json_object_get_object_member(child_data, "children");
+            bind_children(js_context, child_js_obj, nested_children, child_path);
+        }
+
+        g_free(child_path);
+        g_object_unref(child_js_obj);
+    }
+}
+
 // Inject Go method bindings into JavaScript
 static void
 inject_bindings (JSCContext *js_context)
@@ -1528,6 +1616,12 @@ inject_bindings (JSCContext *js_context)
                                 fprintf(stderr, "Strux Extension: Injected window.go.%s.%s.%s (%s)\n",
                                         pkg_name, struct_name, field_name, field_type);
                             }
+                        }
+
+                        // Bind nested struct children
+                        if (json_object_has_member(struct_data, "children")) {
+                            JsonObject *children = json_object_get_object_member(struct_data, "children");
+                            bind_children(js_context, struct_js_obj, children, "");
                         }
 
                         // Create top-level shortcut: window.<StructName> = window.go.<pkg>.<StructName>

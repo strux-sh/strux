@@ -9,5 +9,20 @@ interface Strux {
     Reboot(): Promise<void>;
     Shutdown(): Promise<void>;
   };
+  ipc: {
+    /**
+     * Register a listener for an event from the Go backend.
+     * Returns an unsubscribe function.
+     */
+    on(event: string, callback: (data: any) => void): () => void;
+    /**
+     * Remove a previously registered event listener.
+     */
+    off(event: string, callback: (data: any) => void): void;
+    /**
+     * Send an event to the Go backend.
+     */
+    send(event: string, data?: any): void;
+  };
 }
 `

@@ -326,3 +326,92 @@ export async function copyAllInitialArtifacts(): Promise<void> {
     await copyPlymouthArtifacts()
     await copyBootSplashLogo()
 }
+
+/**
+ * Force-restores ALL artifacts to their built-in versions, overwriting any user modifications.
+ * This writes every embedded file regardless of whether it already exists on disk.
+ */
+export async function forceRestoreAllArtifacts(): Promise<void> {
+    const artifactsDir = join(Settings.projectPath, "dist", "artifacts")
+    const plymouthDir = join(artifactsDir, "plymouth")
+    const scriptsDir = join(artifactsDir, "scripts")
+    const systemdDir = join(artifactsDir, "systemd")
+    const clientSrcPath = join(artifactsDir, "client")
+    const cageSrcPath = join(artifactsDir, "cage")
+    const wpeExtSrcPath = join(artifactsDir, "wpe-extension")
+
+    // Ensure all directories exist
+    const { mkdir } = await import("fs/promises")
+    await Promise.all([
+        mkdir(plymouthDir, { recursive: true }),
+        mkdir(scriptsDir, { recursive: true }),
+        mkdir(systemdDir, { recursive: true }),
+        mkdir(clientSrcPath, { recursive: true }),
+        mkdir(cageSrcPath, { recursive: true }),
+        mkdir(wpeExtSrcPath, { recursive: true }),
+    ])
+
+    // Plymouth
+    await Bun.write(join(plymouthDir, "strux.plymouth"), artifactPlymouthTheme)
+    await Bun.write(join(plymouthDir, "strux.script"), artifactPlymouthScript)
+    await Bun.write(join(plymouthDir, "plymouthd.conf"), artifactPlymouthConf)
+
+    // Init scripts
+    await Bun.write(join(scriptsDir, "init.sh"), initScript)
+    await Bun.write(join(scriptsDir, "strux-network.sh"), initNetworkScript)
+    await Bun.write(join(scriptsDir, "strux.sh"), initStruxScript)
+    await Bun.write(join(scriptsDir, "strux-run-cog.sh"), runCogScript)
+
+    // Not-configured HTML
+    await Bun.write(join(artifactsDir, "not-configured.html"), notConfiguredHTML)
+
+    // Systemd services
+    await Bun.write(join(systemdDir, "strux.service"), systemdStruxService)
+    await Bun.write(join(systemdDir, "strux-network.service"), systemdNetworkService)
+    await Bun.write(join(systemdDir, "20-ethernet.network"), systemdEthernetNetwork)
+
+    // Go client source files
+    await Bun.write(join(clientSrcPath, "main.go"), clientGoMain)
+    await Bun.write(join(clientSrcPath, "binary.go"), clientGoBinary)
+    await Bun.write(join(clientSrcPath, "cage.go"), clientGoCage)
+    await Bun.write(join(clientSrcPath, "config.go"), clientGoConfig)
+    await Bun.write(join(clientSrcPath, "hosts.go"), clientGoHosts)
+    await Bun.write(join(clientSrcPath, "logger.go"), clientGoLogger)
+    await Bun.write(join(clientSrcPath, "logs.go"), clientGoLogs)
+    await Bun.write(join(clientSrcPath, "socket.go"), clientGoSocket)
+    await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
+    await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
+    await Bun.write(join(clientSrcPath, "websocket.go"), clientGoWebsocket)
+    await Bun.write(join(clientSrcPath, "go.mod"), clientGoMod)
+    await Bun.write(join(clientSrcPath, "go.sum"), clientGoSum)
+
+    // Cage compositor source files
+    await Bun.write(join(cageSrcPath, "cage.c"), cageMain)
+    await Bun.write(join(cageSrcPath, "output.c"), cageOutput)
+    await Bun.write(join(cageSrcPath, "output.h"), cageOutputH)
+    await Bun.write(join(cageSrcPath, "seat.c"), cageSeat)
+    await Bun.write(join(cageSrcPath, "seat.h"), cageSeatH)
+    await Bun.write(join(cageSrcPath, "view.c"), cageView)
+    await Bun.write(join(cageSrcPath, "view.h"), cageViewH)
+    await Bun.write(join(cageSrcPath, "xdg_shell.c"), cageXdgShell)
+    await Bun.write(join(cageSrcPath, "xdg_shell.h"), cageXdgShellH)
+    await Bun.write(join(cageSrcPath, "xwayland.c"), cageXwayland)
+    await Bun.write(join(cageSrcPath, "xwayland.h"), cageXwaylandH)
+    await Bun.write(join(cageSrcPath, "idle_inhibit_v1.c"), cageIdleInhibit)
+    await Bun.write(join(cageSrcPath, "idle_inhibit_v1.h"), cageIdleInhibitH)
+    await Bun.write(join(cageSrcPath, "splash.c"), cageSplash)
+    await Bun.write(join(cageSrcPath, "splash.h"), cageSplashH)
+    await Bun.write(join(cageSrcPath, "server.h"), cageServerH)
+    await Bun.write(join(cageSrcPath, "config.h.in"), cageConfigH)
+    await Bun.write(join(cageSrcPath, "meson.build"), cageMesonBuild)
+    await Bun.write(join(cageSrcPath, "meson_options.txt"), cageMesonOptions)
+    await Bun.write(join(cageSrcPath, "LICENSE"), cageLicense)
+    await Bun.write(join(cageSrcPath, "cage.1.scd"), cageManPage)
+    await Bun.write(join(cageSrcPath, "README.md"), cageReadme)
+
+    // WPE extension source files
+    await Bun.write(join(wpeExtSrcPath, "extension.c"), wpeExtensionC)
+    await Bun.write(join(wpeExtSrcPath, "CMakeLists.txt"), wpeExtensionCMake)
+
+    Logger.success("All artifacts restored to built-in versions")
+}

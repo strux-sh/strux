@@ -42,6 +42,7 @@ export type MethodDef = z.infer<typeof MethodDefSchema>;
 // Struct definition
 export const StructDefSchema = z.object({
     fields: z.array(FieldDefSchema),
+    methods: z.array(MethodDefSchema).optional(),
 })
 export type StructDef = z.infer<typeof StructDefSchema>;
 

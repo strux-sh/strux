@@ -29,7 +29,8 @@ type AppInfo struct {
 
 // StructDef describes a struct definition
 type StructDef struct {
-	Fields []FieldDef `json:"fields"`
+	Fields  []FieldDef  `json:"fields"`
+	Methods []MethodDef `json:"methods,omitempty"`
 }
 
 // FieldDef describes a struct field
@@ -132,13 +133,19 @@ func introspect(filePath string) error {
 	// Collect all structs and their fields
 	structFields := make(map[string][]FieldDef)
 	knownStructs := make(map[string]bool)
+	typeAliases := make(map[string]string) // named type -> underlying type (e.g., "AudioOutput" -> "string")
 
-	// First pass: discover all struct types across all files
+	// First pass: discover all struct types and type aliases across all files
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			if typeSpec, ok := n.(*ast.TypeSpec); ok {
 				if _, ok := typeSpec.Type.(*ast.StructType); ok {
 					knownStructs[typeSpec.Name.Name] = true
+				} else {
+					// Track non-struct type aliases (e.g., type AudioOutput string)
+					underlying := exprToString(typeSpec.Type)
+					typeAliases[typeSpec.Name.Name] = underlying
+					globalTypeAliases[typeSpec.Name.Name] = underlying
 				}
 			}
 			return true
@@ -154,7 +161,7 @@ func introspect(filePath string) error {
 	}
 
 	// Second pass: extract struct fields and methods across all files
-	var methods []MethodDef
+	structMethods := make(map[string][]MethodDef)
 
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -183,7 +190,7 @@ func introspect(filePath string) error {
 				}
 			}
 
-			// Collect methods on the app struct
+			// Collect methods on all known structs
 			if funcDecl, ok := n.(*ast.FuncDecl); ok {
 				if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
 					recvType := funcDecl.Recv.List[0].Type
@@ -198,11 +205,11 @@ func introspect(filePath string) error {
 						recvTypeName = t.Name
 					}
 
-					if recvTypeName == appStructName {
+					if recvTypeName != "" && knownStructs[recvTypeName] {
 						methodName := funcDecl.Name.Name
 						if isExported(methodName) {
 							method := extractMethod(funcDecl, knownStructs)
-							methods = append(methods, method)
+							structMethods[recvTypeName] = append(structMethods[recvTypeName], method)
 						}
 					}
 				}
@@ -211,6 +218,9 @@ func introspect(filePath string) error {
 			return true
 		})
 	}
+
+	// Extract app methods for convenience
+	methods := structMethods[appStructName]
 
 	// Resolve external package types recursively (e.g., security.TorStatus -> network.Connection -> ...)
 	// Build the global import alias -> path map, starting from the main package files
@@ -224,8 +234,16 @@ func introspect(filePath string) error {
 	// resolvedTypes tracks which qualified types have already been resolved to avoid circular refs
 	resolvedTypes := make(map[string]bool)
 
-	// Seed the initial set of qualified types from app fields and methods
-	pendingTypes := collectQualifiedTypes(structFields[appStructName], methods)
+	// Seed the initial set of qualified types from all struct fields and methods
+	var allMethods []MethodDef
+	for _, ms := range structMethods {
+		allMethods = append(allMethods, ms...)
+	}
+	var allFields []FieldDef
+	for _, fs := range structFields {
+		allFields = append(allFields, fs...)
+	}
+	pendingTypes := collectQualifiedTypes(allFields, allMethods)
 
 	// Recursively resolve external types until no new ones are discovered
 	for len(pendingTypes) > 0 {
@@ -255,12 +273,15 @@ func introspect(filePath string) error {
 		var newlyResolved []FieldDef
 		for pkgAlias, typeNames := range pkgTypes {
 			importPath := importMap[pkgAlias]
-			extStructs, extImports := resolveExternalPackage(dir, importPath, typeNames, knownStructs)
+			extStructs, extMethods, extImports := resolveExternalPackage(dir, importPath, typeNames, knownStructs)
 			for name, fields := range extStructs {
 				structFields[name] = fields
 				knownStructs[name] = true
 				qualifiedToTS[pkgAlias+"."+name] = name
 				newlyResolved = append(newlyResolved, fields...)
+			}
+			for name, methods := range extMethods {
+				structMethods[name] = append(structMethods[name], methods...)
 			}
 			// Merge the external package's imports so we can resolve its dependencies
 			for alias, path := range extImports {
@@ -284,15 +305,19 @@ func introspect(filePath string) error {
 			structFields[appStructName] = appFields
 		}
 
-		// Re-resolve method params and return types
-		for i, m := range methods {
-			for j, p := range m.Params {
-				methods[i].Params[j].TSType = goTypeToTSWithQualified(p.GoType, knownStructs, qualifiedToTS)
-			}
-			for j, rt := range m.ReturnTypes {
-				methods[i].ReturnTypes[j].TSType = goTypeToTSWithQualified(rt.GoType, knownStructs, qualifiedToTS)
+		// Re-resolve method params and return types for all structs
+		for structName, smethods := range structMethods {
+			for i, m := range smethods {
+				for j, p := range m.Params {
+					structMethods[structName][i].Params[j].TSType = goTypeToTSWithQualified(p.GoType, knownStructs, qualifiedToTS)
+				}
+				for j, rt := range m.ReturnTypes {
+					structMethods[structName][i].ReturnTypes[j].TSType = goTypeToTSWithQualified(rt.GoType, knownStructs, qualifiedToTS)
+				}
 			}
 		}
+		// Refresh app methods reference after re-resolution
+		methods = structMethods[appStructName]
 
 		// Re-resolve all external struct fields too
 		for name, fields := range structFields {
@@ -318,10 +343,13 @@ func introspect(filePath string) error {
 		Extensions: make(map[string]any),
 	}
 
-	// Add all structs except the app struct
+	// Add all structs except the app struct, including their methods
 	for name, fields := range structFields {
 		if name != appStructName {
-			output.Structs[name] = StructDef{Fields: fields}
+			output.Structs[name] = StructDef{
+				Fields:  fields,
+				Methods: structMethods[name],
+			}
 		}
 	}
 
@@ -333,6 +361,10 @@ func introspect(filePath string) error {
 
 // runtimeImportPath is the import path for the strux runtime package
 const runtimeImportPath = "github.com/strux-dev/strux/pkg/runtime"
+
+// globalTypeAliases maps named types to their underlying primitive type (e.g., "AudioOutput" -> "string").
+// Populated during AST parsing and used by goTypeToTS to resolve non-struct named types.
+var globalTypeAliases = make(map[string]string)
 
 // findRuntimeStartStruct finds the struct type passed to runtime.Start() by:
 // 1. Finding the import alias for the strux runtime package
@@ -560,8 +592,9 @@ func collectQualifiedTypesFromFields(fields []FieldDef) []string {
 // It uses `go list -json` to find the package directory, then parses the source files.
 // Same-package struct dependencies are transitively included (e.g., if Circuit references Connection,
 // both are returned). Returns the resolved structs and the package's own import map (for recursive resolution).
-func resolveExternalPackage(projectDir string, importPath string, typeNames []string, existingStructs map[string]bool) (map[string][]FieldDef, map[string]string) {
+func resolveExternalPackage(projectDir string, importPath string, typeNames []string, existingStructs map[string]bool) (map[string][]FieldDef, map[string][]MethodDef, map[string]string) {
 	result := make(map[string][]FieldDef)
+	resultMethods := make(map[string][]MethodDef)
 	extImports := make(map[string]string)
 
 	// Use `go list -json` to find the package directory
@@ -569,7 +602,7 @@ func resolveExternalPackage(projectDir string, importPath string, typeNames []st
 	cmd.Dir = projectDir
 	output, err := cmd.Output()
 	if err != nil {
-		return result, extImports
+		return result, resultMethods, extImports
 	}
 
 	// Extract "Dir" from the JSON output
@@ -577,14 +610,14 @@ func resolveExternalPackage(projectDir string, importPath string, typeNames []st
 		Dir string `json:"Dir"`
 	}
 	if err := json.Unmarshal(output, &pkgInfo); err != nil || pkgInfo.Dir == "" {
-		return result, extImports
+		return result, resultMethods, extImports
 	}
 
 	// Parse the external package directory
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, pkgInfo.Dir, nil, 0)
 	if err != nil {
-		return result, extImports
+		return result, resultMethods, extImports
 	}
 
 	// Discover all struct types and collect imports from this package
@@ -595,38 +628,60 @@ func resolveExternalPackage(projectDir string, importPath string, typeNames []st
 
 	// allStructFields stores every struct's fields in this package for dependency walking
 	allStructFields := make(map[string][]FieldDef)
+	allStructMethods := make(map[string][]MethodDef)
 
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Files {
 			collectImports(file, extImports)
 			ast.Inspect(file, func(n ast.Node) bool {
-				typeSpec, ok := n.(*ast.TypeSpec)
-				if !ok {
-					return true
-				}
-				structType, ok := typeSpec.Type.(*ast.StructType)
-				if !ok {
-					return true
+				// Collect struct type definitions
+				if typeSpec, ok := n.(*ast.TypeSpec); ok {
+					if structType, ok := typeSpec.Type.(*ast.StructType); ok {
+						structName := typeSpec.Name.Name
+						extKnownStructs[structName] = true
+
+						var fields []FieldDef
+						for _, field := range structType.Fields.List {
+							if len(field.Names) > 0 {
+								fieldName := field.Names[0].Name
+								if isExported(fieldName) {
+									goType := exprToString(field.Type)
+									fields = append(fields, FieldDef{
+										Name:   fieldName,
+										GoType: goType,
+										TSType: goTypeToTS(goType, extKnownStructs),
+									})
+								}
+							}
+						}
+						allStructFields[structName] = fields
+					} else {
+						// Track non-struct type aliases in external packages
+						underlying := exprToString(typeSpec.Type)
+						globalTypeAliases[typeSpec.Name.Name] = underlying
+					}
 				}
 
-				structName := typeSpec.Name.Name
-				extKnownStructs[structName] = true
-
-				var fields []FieldDef
-				for _, field := range structType.Fields.List {
-					if len(field.Names) > 0 {
-						fieldName := field.Names[0].Name
-						if isExported(fieldName) {
-							goType := exprToString(field.Type)
-							fields = append(fields, FieldDef{
-								Name:   fieldName,
-								GoType: goType,
-								TSType: goTypeToTS(goType, extKnownStructs),
-							})
+				// Collect methods on structs
+				if funcDecl, ok := n.(*ast.FuncDecl); ok {
+					if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+						recvType := funcDecl.Recv.List[0].Type
+						var recvTypeName string
+						switch t := recvType.(type) {
+						case *ast.StarExpr:
+							if ident, ok := t.X.(*ast.Ident); ok {
+								recvTypeName = ident.Name
+							}
+						case *ast.Ident:
+							recvTypeName = t.Name
+						}
+						if recvTypeName != "" && isExported(funcDecl.Name.Name) {
+							method := extractMethod(funcDecl, extKnownStructs)
+							allStructMethods[recvTypeName] = append(allStructMethods[recvTypeName], method)
 						}
 					}
 				}
-				allStructFields[structName] = fields
+
 				return true
 			})
 		}
@@ -664,9 +719,12 @@ func resolveExternalPackage(projectDir string, importPath string, typeNames []st
 		if fields, ok := allStructFields[name]; ok {
 			result[name] = fields
 		}
+		if methods, ok := allStructMethods[name]; ok {
+			resultMethods[name] = methods
+		}
 	}
 
-	return result, extImports
+	return result, resultMethods, extImports
 }
 
 // goTypeToTSWithQualified converts Go types to TypeScript, handling qualified names
@@ -838,6 +896,10 @@ func goTypeToTS(goType string, knownStructs map[string]bool) string {
 		// Check if it's a known struct type
 		if knownStructs != nil && knownStructs[goType] {
 			return goType
+		}
+		// Resolve named type aliases to their underlying type (e.g., AudioOutput -> string)
+		if underlying, ok := globalTypeAliases[goType]; ok {
+			return goTypeToTS(underlying, knownStructs)
 		}
 		return "any"
 	}

@@ -14,6 +14,7 @@ import { Runner } from "../../utils/run"
 import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
 import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles } from "./artifacts"
+import { generateTypes } from "../types"
 
 // Build Scripts
 // @ts-ignore
@@ -40,13 +41,18 @@ import scriptBuildBootloader from "../../assets/scripts-base/strux-build-bootloa
  * Also regenerates TypeScript types before compilation.
  */
 export async function compileFrontend(): Promise<void> {
-    // Use the strux types command to refresh the strux.d.ts file
-    await Runner.runCommand("strux types", {
-        message: "Generating TypeScript types...",
-        messageOnError: "Failed to generate TypeScript types. Please generate them manually.",
-        exitOnError: true,
-        cwd: Settings.projectPath
+    // Generate types directly instead of shelling out to `strux types`,
+    // so we use the local strux-introspect binary if available
+    const mainGoPath = join(Settings.projectPath, "main.go")
+    const result = await generateTypes({
+        mainGoPath,
+        outputDir: join(Settings.projectPath, "frontend", "src"),
     })
+    if (!result.success) {
+        Logger.error(result.error ?? "Failed to generate TypeScript types. Please generate them manually.")
+        process.exit(1)
+    }
+    Logger.info(`Generated ${result.methodCount} methods, ${result.fieldCount} fields`)
 
     await Runner.runScriptInDocker(scriptBuildFrontend, {
         message: "Compiling Frontend...",

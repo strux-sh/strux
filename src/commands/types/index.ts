@@ -26,9 +26,17 @@ function getStruxBinaryDir(): string {
 
 /**
  * Get the path to strux-introspect binary
- * First checks in the same directory as strux binary, then checks OS PATH
+ * Priority: 1) parent of strux.yaml (local dev build), 2) same dir as strux binary, 3) OS PATH
  */
 async function getIntrospectBinaryPath(): Promise<string> {
+    // Check parent directory of strux.yaml (one level up from project root)
+    const projectParent = dirname(process.cwd())
+    const projectParentPath = join(projectParent, "strux-introspect")
+    const projectParentFile = Bun.file(projectParentPath)
+    if (await projectParentFile.exists()) {
+        return projectParentPath
+    }
+
     const binaryDir = getStruxBinaryDir()
     const localPath = join(binaryDir, "strux-introspect")
 
@@ -237,6 +245,16 @@ export function generateTypeScriptDefinitions(
             for (const field of structDef.fields) {
                 block.push(`  ${field.name}: ${field.tsType};`)
             }
+            if (structDef.methods && structDef.methods.length > 0) {
+                if (structDef.fields.length > 0) {
+                    block.push("")
+                }
+                for (const method of structDef.methods) {
+                    const params = formatMethodParams(method)
+                    const returnType = formatReturnType(method)
+                    block.push(`  ${method.name}(${params}): ${returnType};`)
+                }
+            }
             block.push("}")
             appendInterfaceBlock(block)
         }
@@ -402,6 +420,13 @@ function findUsedStructs(
             for (const rt of method.returnTypes) {
                 checkTypeForStruct(rt.tsType, knownStructNames, used)
             }
+        }
+    }
+
+    // Include structs that have methods (they'll be exposed as JS objects)
+    for (const [name, structDef] of Object.entries(structs)) {
+        if (structDef.methods && structDef.methods.length > 0) {
+            used.add(name)
         }
     }
 
