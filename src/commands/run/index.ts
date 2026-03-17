@@ -141,12 +141,19 @@ export async function run(options: RunOptions = {}) {
 
 
     // Build network configuration
-    // In dev mode, forward the WebKit Inspector HTTP port (default 9223) from host to guest if enabled
-    const inspectorPort = Settings.main?.dev?.inspector?.port ?? 9223
+    // In dev mode, forward WebKit Inspector HTTP ports (one per monitor) from host to guest if enabled
+    const inspectorBasePort = Settings.main?.dev?.inspector?.port ?? 9223
     const inspectorEnabled = Settings.main?.dev?.inspector?.enabled ?? false
-    const netdevConfig = options.devMode && inspectorEnabled
-        ? `user,id=net0,hostfwd=tcp::${inspectorPort}-:${inspectorPort}`
-        : "user,id=net0"
+    let netdevConfig = "user,id=net0"
+
+    if (options.devMode && inspectorEnabled) {
+        const monitorCount = Settings.main?.display?.monitors?.length ?? 1
+        const portForwards = Array.from({ length: monitorCount }, (_, i) => {
+            const port = inspectorBasePort + i
+            return `hostfwd=tcp::${port}-:${port}`
+        })
+        netdevConfig = `user,id=net0,${portForwards.join(",")}`
+    }
 
     // Build the QEMU Arguments
     const args: string[] = [

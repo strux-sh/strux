@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -282,15 +283,24 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 		c.process.Env = append(c.process.Env, extra...)
 	}
 
-	// Add WebKit Inspector HTTP server if enabled (dev mode)
-	// Must bind to 0.0.0.0 so it's accessible via QEMU port forwarding
-	// (127.0.0.1 is not reachable from the host through QEMU's hostfwd)
+	// Write WebKit Inspector config for per-Cog port assignment (dev mode)
+	// Each Cog instance reads the base port and atomically increments a counter
+	// so multiple monitors don't collide on the same inspector port.
 	if opts.Inspector != nil && opts.Inspector.Enabled {
-		inspectorAddr := fmt.Sprintf("0.0.0.0:%d", opts.Inspector.Port)
-		c.process.Env = append(c.process.Env,
-			fmt.Sprintf("WEBKIT_INSPECTOR_HTTP_SERVER=%s", inspectorAddr),
-		)
-		c.logger.Info("WebKit Inspector HTTP server enabled on port %d", opts.Inspector.Port)
+		// Write base port file for strux-run-cog.sh to read
+		basePortStr := fmt.Sprintf("%d", opts.Inspector.Port)
+		if err := os.WriteFile("/tmp/strux-inspector-base-port", []byte(basePortStr), 0644); err != nil {
+			c.logger.Error("Failed to write inspector base port file: %v", err)
+		}
+		// Reset the counter file so port assignment starts fresh
+		if err := os.WriteFile("/tmp/strux-inspector-counter", []byte("0"), 0644); err != nil {
+			c.logger.Error("Failed to reset inspector counter file: %v", err)
+		}
+		c.logger.Info("WebKit Inspector enabled, base port %d (per-Cog assignment via strux-run-cog.sh)", opts.Inspector.Port)
+	} else {
+		// Clean up inspector files if inspector is disabled
+		os.Remove("/tmp/strux-inspector-base-port")
+		os.Remove("/tmp/strux-inspector-counter")
 	}
 
 	// Open log file
@@ -354,6 +364,22 @@ func loadCageEnv(path string) []string {
 		}
 	}
 	return envs
+}
+
+// GetDeviceIP returns the first non-loopback IPv4 address of the device
+func GetDeviceIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }
 
 // logWriter is a simple io.Writer that logs each line

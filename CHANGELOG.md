@@ -21,7 +21,7 @@ unsub();
 strux.ipc.off("download-progress", handler);
 ```
 
-**Go API** (via `runtime.Init`):
+**Go API** (via `runtime.Init`) **NOTE: This replaces the current runtime flow**:
 ```go
 rt, _ := runtime.Init(app)
 
@@ -93,27 +93,44 @@ display:
 - Cage calls `/strux/strux-run-cog.sh <output_name> <url>` for each output
 - This script is written to `dist/artifacts/scripts/` on first build and can be customized to add Cog flags, environment variables, or swap browsers entirely
 
-### New: Global Struct Shortcuts (Breaking Change)
+### New: Tree-Based Struct Bindings (Breaking Change)
 
-Go struct bindings are now accessible directly from the global scope, without the `window.go.<package>.<Struct>` prefix. The struct name from your Go code becomes a top-level global in the browser.
+The runtime and WPE extension now use a tree-based architecture for exposing Go structs to JavaScript. Instead of creating a separate top-level global for every struct, the binding tree mirrors your Go struct hierarchy. Only the app struct gets a `window.<StructName>` shortcut — nested structs are accessed through their parent fields.
 
-**Before:**
+**Before (v0.1.x):**
 ```javascript
 const result = await window.go.main.App.Greet("Alice");
-window.go.main.App.Title = "New Title";
+```
+
+**Before (flat nested structs — briefly in early v0.2.0 builds):**
+```javascript
+// Every struct got its own global — polluted the namespace
+await Audio.SetMasterVolume(80);
+await Settings.GetSettings();
 ```
 
 **After:**
 ```javascript
+// App struct is the only top-level shortcut
 const result = await App.Greet("Alice");
 App.Title = "New Title";
+
+// Nested structs are accessed through the field path
+await App.Settings.Audio.SetMasterVolume(80);
+await App.Settings.Audio.SetAudioOutputTo("HDMI");
+const vol = App.Settings.Audio.MasterVolume; // field getter
 ```
 
-The full `window.go.main.App` path still works — the shortcut is an alias pointing to the same object. The struct name in Go determines the global name: if your struct is called `Dashboard`, the shortcut is `Dashboard.Method()`.
+The `window.go.main.App` path still works as an alias. The generated `strux.d.ts` includes method signatures on nested struct interfaces, so TypeScript understands the full tree.
 
-The generated `strux.d.ts` now includes a `const` declaration for the shortcut alongside the existing `Window` interface augmentation, so TypeScript recognizes both access patterns.
+**How it works:**
+- The Go runtime builds a tree from the app struct by recursively walking struct-typed fields. Each node holds its methods, primitive fields, and children (nested struct fields).
+- The `__getBindings` IPC response includes a `children` key on each struct node, mapping field names to their child struct data. Nested structs are no longer separate top-level entries in the package.
+- The WPE extension recursively processes `children`, creating nested JS objects (e.g., `App.Settings.Audio`) with methods and field getters/setters bound to dotted IPC paths.
+- Methods use full field-path names for IPC dispatch (e.g., `Settings.Audio.SetMasterVolume`). Fields use dotted paths for `__getField`/`__setField` (e.g., `Settings.Audio.MasterVolume`).
+- The runtime's `getField`/`setField` traverse the struct hierarchy to resolve dotted paths.
 
-**Why this could be breaking:** If you already have a global variable or DOM element with the same name as your Go struct (e.g., a global `App` variable), the injected shortcut will shadow it.
+**Why this is breaking:** If you were relying on nested structs being available as top-level globals (e.g., `window.Audio`), they no longer are. Access them through the app struct's field path instead.
 
 ### New: `--local-runtime` Flag
 
@@ -129,38 +146,6 @@ How it works:
 - Inside the container, `go mod edit -replace` injects a temporary replace directive before building
 - The project's `go.mod` and `go.sum` are backed up and restored via a shell `trap EXIT`, so host files are never modified — even if the build fails or is interrupted
 - Relative paths (e.g., `../`) are resolved to absolute paths before being passed to Docker
-
-### New: Nested Struct Method Binding
-
-Methods defined on nested structs are now automatically discovered and exposed to the JavaScript frontend — no need to proxy everything through the top-level App struct.
-
-If your Go app has a `Settings` field containing an `Audio` struct with methods:
-
-```go
-type App struct {
-    Settings settings.Settings
-}
-
-type Audio struct {
-    MasterVolume int
-    AudioOutput  string
-}
-
-func (a *Audio) SetMasterVolume(volume int) { ... }
-func (a *Audio) SetAudioOutputTo(output AudioOutput) { ... }
-```
-
-These methods are now callable from the frontend as `Audio.SetMasterVolume(80)` and appear in `strux.d.ts`:
-
-```typescript
-interface Audio {
-  MasterVolume: number;
-  AudioOutput: string;
-
-  SetMasterVolume(volume: number): Promise<void>;
-  SetAudioOutputTo(output: string): Promise<void>;
-}
-```
 
 **How it works:**
 - The Go runtime (`pkg/runtime`) recursively walks struct-typed fields on the app struct and discovers their exported methods via reflection, registering them alongside the app's own methods
@@ -195,17 +180,19 @@ The `strux dev` terminal interface now includes a **Config** tab with quick acti
 
 **Strux Component Management:**
 - **Restore Strux Artifacts to Built-in Version** — Deletes `dist/artifacts/` and rewrites all embedded files (plymouth, init scripts, systemd services, client Go source, cage source, WPE extension source) from the CLI's built-in defaults. Useful when you want to reset user-modified artifacts back to their original state.
-- **Rebuild Strux Components and Transfer To Device** — Rebuilds the Cage compositor, WPE extension, and Strux client binary inside Docker, then streams each binary to the connected device over WebSocket and reboots. This eliminates the need to reflash the entire image when iterating on Strux's own components.
+- **Rebuild Strux Components and Transfer To Device** — Rebuilds the Cage compositor, WPE extension, and Strux client binary inside Docker, then streams each binary to the connected device over WebSocket along with all Strux scripts (`init.sh`, `strux.sh`, `strux-network.sh`, `strux-run-cog.sh`) from `dist/artifacts/scripts/`, and reboots. This eliminates the need to reflash the entire image when iterating on Strux's own components or scripts.
 
 **System Tools:**
 - **Restart Strux Service** — Sends a `systemctl restart strux` command to the connected device.
 - **Reboot System** — Sends a reboot command to the connected device.
 
 **Device-side protocol additions:**
-- New `new-component` WebSocket event streams component binaries (base64-encoded) with a target filesystem path. The Go client writes to a temp file, verifies SHA256, and performs an atomic rename.
+- New `new-component` WebSocket event streams component binaries and scripts (base64-encoded) with a target filesystem path. Supported component types: `cage`, `wpe-extension`, `client`, and `script`. The Go client writes to a temp file, verifies SHA256, and performs an atomic rename.
 - New `component-ack` event for the device to acknowledge each component update.
 - New `restart-service` and `reboot` events for remote system control.
 - Incremental rebuilds from the Config tab (and the existing Go hot-reload path) skip per-step Docker file permission fixes and run a single `chownProjectFiles()` pass at the end.
+
+We plan on adding additional information and tooling to this part of the terminal interface in the future.
 
 ### TUI Performance
 
@@ -216,6 +203,7 @@ The `strux dev` terminal interface now includes a **Config** tab with quick acti
 
 - Moved custom package installation (both repository packages and `.deb` files) from the `rootfs-base` build step to `rootfs-post`. Previously, any change to `rootfs.packages` in `strux.yaml` or `bsp.rootfs.packages` in `bsp.yaml` would invalidate the base rootfs cache, triggering a full debootstrap + system package rebuild. Packages are now installed early in the post-processing step instead, so adding or removing a package only rebuilds the much faster `rootfs-post` step. The cache dependency graph has been updated accordingly — `rootfs-base` now only depends on `bsp.arch`, while `rootfs-post` tracks both package lists.
 - Skip file permission fix (`chown`) when all build steps are cached. Previously, `strux dev` and `strux build` would always spawn a Docker container at the end of the build to fix file ownership — even when every step was cached and no Docker commands actually ran. The build pipeline now tracks whether any step or BSP script executed, and only runs the `chown` pass when something actually produced files.
+- Fixed WebKit Inspector port collision with multiple monitors. Previously, `WEBKIT_INSPECTOR_HTTP_SERVER` was set as an environment variable on the Cage compositor process. All Cog browser instances spawned by Cage inherited the same port, causing only the first monitor's inspector to bind successfully. The inspector port is now assigned per-Cog instance via the `strux-run-cog.sh` launcher script using an atomic counter — each Cog gets `base_port + N` (e.g., 9223, 9224, 9225). QEMU port forwarding now forwards all inspector ports automatically based on the number of configured monitors. The device also reports its IP and inspector port assignments back to the dev server via a new `device-info` WebSocket event, and the **Config** tab in the dev TUI now displays the device IP address alongside clickable inspector URLs for each monitor path.
 
 ### Bug Fixes
 

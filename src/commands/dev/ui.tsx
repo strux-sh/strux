@@ -16,6 +16,16 @@ type TabId = "build" | "vite" | "app" | "cage" | "system" | "qemu" | "console" |
 
 type ConfigAction = "restore" | "rebuild-transfer" | "restart-service" | "reboot"
 
+interface InspectorPortInfo {
+    path: string
+    port: number
+}
+
+interface DeviceInfo {
+    ip: string
+    inspectorPorts: InspectorPortInfo[]
+}
+
 interface DevUIOptions {
     onExit: () => void
     onConsoleInput: (data: string) => void
@@ -41,6 +51,7 @@ interface DevUIState {
     configSelectedIndex: number
     configBusy: boolean
     configSuccessMessage: string
+    deviceInfo: DeviceInfo | null
 }
 
 type DevUISubscriber = (state: DevUIState) => void
@@ -98,7 +109,8 @@ class DevUIStore {
             consoleRevision: 0,
             configSelectedIndex: 0,
             configBusy: false,
-            configSuccessMessage: ""
+            configSuccessMessage: "",
+            deviceInfo: null
         }
     }
 
@@ -210,6 +222,11 @@ class DevUIStore {
 
     public setConfigSuccessMessage(message: string): void {
         this.state = { ...this.state, configSuccessMessage: message }
+        this.emit()
+    }
+
+    public setDeviceInfo(info: DeviceInfo): void {
+        this.state = { ...this.state, deviceInfo: info }
         this.emit()
     }
 
@@ -481,6 +498,20 @@ function DevApp(props: { store: DevUIStore; onExit: () => void; onConsoleInput: 
             <Box flexDirection="column" height={viewHeight + (spinnerVisible ? 1 : 0)} flexGrow={1}>
                 {isConfig ? (
                     <Box flexDirection="column" paddingX={2} paddingTop={1}>
+                        {state.deviceInfo && (
+                            <Box flexDirection="column" marginBottom={1}>
+                                <Text bold>Device Info</Text>
+                                <Text>{`    IP: ${state.deviceInfo.ip}`}</Text>
+                                {state.deviceInfo.inspectorPorts.length > 0 && (
+                                    <>
+                                        <Text>{"    Inspector:"}</Text>
+                                        {state.deviceInfo.inspectorPorts.map((p) => (
+                                            <Text key={p.port} color="cyan">{`      ${p.path} → http://${state.deviceInfo!.ip}:${p.port}`}</Text>
+                                        ))}
+                                    </>
+                                )}
+                            </Box>
+                        )}
                         {CONFIG_SECTIONS.map((section, sIdx) => {
                             const sectionStartIndex = CONFIG_SECTIONS.slice(0, sIdx).reduce((sum, s) => sum + s.items.length, 0)
                             return (
@@ -584,6 +615,10 @@ export class DevUI {
 
     public setConfigBusy(busy: boolean): void {
         this.store.setConfigBusy(busy)
+    }
+
+    public setDeviceInfo(info: DeviceInfo): void {
+        this.store.setDeviceInfo(info)
     }
 
     public flashConfigSuccess(message: string, durationMs = 3000): void {

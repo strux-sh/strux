@@ -114,7 +114,7 @@ interface BinaryAckPayload {
 
 
 interface ComponentPayload {
-    componentType: "cage" | "wpe-extension" | "client"
+    componentType: "cage" | "wpe-extension" | "client" | "script"
     data: string  // Base64 encoded binary data
     destPath: string
 }
@@ -124,6 +124,18 @@ interface ComponentAckPayload {
     componentType: string
     status: "updated" | "error"
     message: string
+}
+
+
+interface DeviceInfoInspectorPort {
+    path: string
+    port: number
+}
+
+
+interface DeviceInfoPayload {
+    ip: string
+    inspectorPorts: DeviceInfoInspectorPort[]
 }
 
 
@@ -140,6 +152,7 @@ interface DevServerOptions {
     onExecExit?: (payload: ExecExitPayload) => void
     onExecError?: (payload: ExecErrorPayload) => void
     onComponentAck?: (payload: ComponentAckPayload) => void
+    onDeviceInfo?: (payload: DeviceInfoPayload) => void
 }
 
 
@@ -485,6 +498,10 @@ export class DevServer {
                 this.handleComponentAck(payload as ComponentAckPayload)
                 break
 
+            case "device-info":
+                this.handleDeviceInfo(payload as DeviceInfoPayload)
+                break
+
             default:
                 Logger.warning(`Unknown event type: ${eventType}`)
 
@@ -629,6 +646,19 @@ export class DevServer {
             Logger.success(`Component ${payload.componentType} updated: ${payload.message}`)
         } else {
             Logger.error(`Component ${payload.componentType} failed: ${payload.message}`)
+        }
+    }
+
+
+    private handleDeviceInfo(payload: DeviceInfoPayload): void {
+        if (this.options.onDeviceInfo) {
+            this.options.onDeviceInfo(payload)
+            return
+        }
+
+        Logger.info(`Device IP: ${payload.ip}`)
+        for (const port of payload.inspectorPorts) {
+            Logger.info(`  Inspector: ${port.path} -> http://${payload.ip}:${port.port}`)
         }
     }
 
@@ -836,7 +866,7 @@ export class DevServer {
      * @param destPath - The target filesystem path on the device
      * @returns true if the event was sent successfully
      */
-    public sendComponent(componentType: "cage" | "wpe-extension" | "client", binary: Buffer, destPath: string): boolean {
+    public sendComponent(componentType: "cage" | "wpe-extension" | "client" | "script", binary: Buffer, destPath: string): boolean {
 
         if (!this.client) {
 

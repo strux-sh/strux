@@ -363,17 +363,6 @@ export async function dev(): Promise<void> {
                 streamLines(proc.stderr, (line) => devUI?.appendLog("qemu", line))
             }
 
-            // Display WebKit Inspector URL if explicitly enabled in strux.yaml
-            const inspectorEnabled = Settings.main?.dev?.inspector?.enabled ?? false
-            const inspectorPort = Settings.main?.dev?.inspector?.port ?? 9223
-
-            if (inspectorEnabled) {
-
-                Logger.info(`WebKit Inspector: http://localhost:${inspectorPort}`)
-                Logger.info("(Open in any browser to debug the frontend)")
-
-            }
-
             // Handle QEMU exit
             proc.exited.then((code) => {
 
@@ -446,6 +435,21 @@ export async function dev(): Promise<void> {
                     ui.appendLog("build", chalk.green(`Component ${payload.componentType} updated: ${payload.message}`))
                 } else {
                     ui.appendLog("build", chalk.red(`Component ${payload.componentType} failed: ${payload.message}`))
+                }
+            },
+            onDeviceInfo: (payload: { ip: string; inspectorPorts: { path: string; port: number }[] }) => {
+                // In QEMU mode, inspector ports are forwarded to localhost
+                const displayIp = Settings.isRemoteOnly ? payload.ip : "localhost"
+                ui.setDeviceInfo({
+                    ip: displayIp,
+                    inspectorPorts: payload.inspectorPorts,
+                })
+
+                if (payload.inspectorPorts.length > 0) {
+                    Logger.info(`Device IP: ${displayIp}`)
+                    for (const p of payload.inspectorPorts) {
+                        Logger.info(`  Inspector: ${p.path} -> http://${displayIp}:${p.port}`)
+                    }
                 }
             }
         }
@@ -571,10 +575,23 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rest
             const wpeBinary = Buffer.from(await Bun.file(wpePath).arrayBuffer())
             const clientBinary = Buffer.from(await Bun.file(clientPath).arrayBuffer())
 
+            // Read the scripts from dist/artifacts
+            const scriptsDir = join(Settings.projectPath, "dist", "artifacts", "scripts")
+            const initShBuf = Buffer.from(await Bun.file(join(scriptsDir, "init.sh")).arrayBuffer())
+            const struxShBuf = Buffer.from(await Bun.file(join(scriptsDir, "strux.sh")).arrayBuffer())
+            const networkShBuf = Buffer.from(await Bun.file(join(scriptsDir, "strux-network.sh")).arrayBuffer())
+            const runCogShBuf = Buffer.from(await Bun.file(join(scriptsDir, "strux-run-cog.sh")).arrayBuffer())
+
             // Send each component to the device
             devServer.sendComponent("cage", cageBinary, "/usr/bin/cage")
             devServer.sendComponent("wpe-extension", wpeBinary, "/usr/lib/wpe-web-extensions/libstrux-extension.so")
             devServer.sendComponent("client", clientBinary, "/strux/client")
+
+            // Send scripts to the device
+            devServer.sendComponent("script", initShBuf, "/init")
+            devServer.sendComponent("script", struxShBuf, "/strux/strux.sh")
+            devServer.sendComponent("script", networkShBuf, "/usr/bin/strux-network.sh")
+            devServer.sendComponent("script", runCogShBuf, "/strux/strux-run-cog.sh")
 
             // Wait a moment for acks, then reboot
             setTimeout(() => {

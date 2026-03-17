@@ -124,13 +124,16 @@ func main() {
 	if config.Inspector.Enabled {
 		logger.Info("WebKit Inspector enabled - ensuring network interface is ready...")
 		if !cage.WaitForNetworkReadyWithPort(10*time.Second, config.Inspector.Port) {
-			logger.Warn("Network interface check failed, but continuing anyway...")
+			logger.Warn("Network interface check failed for base port, but continuing anyway...")
 		}
 	}
 
 	// Give everything a moment to stabilize before launching Cage
 	logger.Info("All checks complete, waiting 2 seconds before launching Cage...")
 	time.Sleep(2 * time.Second)
+
+	// Load display config to compute inspector ports
+	displayConfig, _ := loadDisplaySettings()
 
 	// Launch Cage and Cog with inspector if enabled
 	if err := launchDevMode(cogURL, &config.Inspector); err != nil {
@@ -140,6 +143,9 @@ func main() {
 	}
 
 	logger.Info("Dev client connected and ready")
+
+	// Report device info (IP + inspector ports) to the dev server
+	sendDeviceInfo(socket, &config.Inspector, displayConfig)
 
 	// Wait for shutdown signal
 	waitForShutdown()
@@ -232,6 +238,38 @@ func launchDevMode(cogURL string, inspector *InspectorConfig) error {
 		Inspector:     inspector,
 		DisplayConfig: displayConfig,
 	})
+}
+
+// sendDeviceInfo reports the device IP and inspector port assignments to the dev server
+func sendDeviceInfo(socket *SocketClient, inspector *InspectorConfig, displayConfig *DisplayConfig) {
+	ip := GetDeviceIP()
+	if ip == "" {
+		ip = "unknown"
+	}
+
+	var ports []DeviceInfoInspectorPort
+
+	if inspector != nil && inspector.Enabled {
+		basePort := inspector.Port
+
+		if displayConfig != nil && len(displayConfig.Monitors) > 0 {
+			// One inspector port per monitor, assigned sequentially
+			for i, monitor := range displayConfig.Monitors {
+				ports = append(ports, DeviceInfoInspectorPort{
+					Path: monitor.Path,
+					Port: basePort + i,
+				})
+			}
+		} else {
+			// Single monitor fallback
+			ports = append(ports, DeviceInfoInspectorPort{
+				Path: "/",
+				Port: basePort,
+			})
+		}
+	}
+
+	socket.SendDeviceInfo(ip, ports)
 }
 
 // waitForShutdown blocks until SIGINT or SIGTERM is received

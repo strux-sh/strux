@@ -116,6 +116,18 @@ type ComponentAckPayload struct {
 	Message       string `json:"message"`
 }
 
+// DeviceInfoInspectorPort describes one inspector port for one monitor path
+type DeviceInfoInspectorPort struct {
+	Path string `json:"path"`
+	Port int    `json:"port"`
+}
+
+// DeviceInfoPayload reports device IP and inspector ports to the dev server
+type DeviceInfoPayload struct {
+	IP             string                    `json:"ip"`
+	InspectorPorts []DeviceInfoInspectorPort `json:"inspectorPorts"`
+}
+
 // SocketClient handles WebSocket communication with the dev server
 type SocketClient struct {
 	ws         *WSClient
@@ -599,5 +611,23 @@ func (s *SocketClient) SendComponentAck(componentType, status, message string) {
 
 	if err := s.ws.Emit("component-ack", payload); err != nil {
 		s.logger.Error("Failed to send component ack: %v", err)
+	}
+}
+
+// SendDeviceInfo reports device IP and inspector port assignments to the dev server
+func (s *SocketClient) SendDeviceInfo(ip string, inspectorPorts []DeviceInfoInspectorPort) {
+	if s.ws == nil {
+		return
+	}
+
+	payload := DeviceInfoPayload{
+		IP:             ip,
+		InspectorPorts: inspectorPorts,
+	}
+
+	s.logger.Info("Sending device info: IP=%s, inspectorPorts=%d", ip, len(inspectorPorts))
+
+	if err := s.ws.Emit("device-info", payload); err != nil {
+		s.logger.Error("Failed to send device info: %v", err)
 	}
 }
