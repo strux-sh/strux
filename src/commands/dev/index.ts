@@ -561,7 +561,9 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rest
                 await buildStruxClient(true)
             } finally {
                 Runner.skipChown = false
-                await Runner.chownProjectFiles()
+                if (!Settings.noChown) {
+                    await Runner.chownProjectFiles()
+                }
             }
 
             Logger.info("Components built, transferring to device...")
@@ -833,7 +835,9 @@ async function rebuildApplication(): Promise<void> {
         await compileApplication()
     } finally {
         Runner.skipChown = false
-        await Runner.chownProjectFiles()
+        if (!Settings.noChown) {
+            await Runner.chownProjectFiles()
+        }
     }
 
     // Stream the application to the connected client

@@ -39,6 +39,9 @@ export class SettingsConfig {
     // Skip the initial build in dev mode (use existing artifacts)
     noRebuild = false
 
+    // Skip file permission fixing (chown) after builds
+    noChown = false
+
     // To show debug information from the QEMU system when it is running
     qemuSystemDebug = false
 

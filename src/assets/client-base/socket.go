@@ -130,14 +130,15 @@ type DeviceInfoPayload struct {
 
 // SocketClient handles WebSocket communication with the dev server
 type SocketClient struct {
-	ws         *WSClient
-	clientKey  string
-	logger     *Logger
-	mu         sync.Mutex
-	connected  bool
-	host       Host
-	logStreams *LogStreamer
-	exec       *ExecManager
+	ws           *WSClient
+	clientKey    string
+	logger       *Logger
+	mu           sync.Mutex
+	connected    bool
+	hasConnected bool // true after first successful connection (to detect reconnections)
+	host         Host
+	logStreams   *LogStreamer
+	exec         *ExecManager
 }
 
 // NewSocketClient creates a new WebSocket client
@@ -181,9 +182,17 @@ func (s *SocketClient) Connect(host Host) error {
 	// Set up connection lifecycle callbacks
 	ws.OnConnect(func() {
 		s.mu.Lock()
+		reconnecting := s.hasConnected
 		s.connected = true
+		s.hasConnected = true
 		s.mu.Unlock()
 		s.logger.Info("WebSocket connected")
+
+		// On reconnection, re-request binary and re-emit device info
+		if reconnecting {
+			s.logger.Info("Re-initializing after reconnection...")
+			s.RequestBinary()
+		}
 	})
 
 	ws.OnDisconnect(func() {

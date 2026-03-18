@@ -411,16 +411,17 @@ func (w *WSClient) pingLoop() {
 	}
 }
 
-// attemptReconnect tries to reconnect to the server
+// attemptReconnect tries to reconnect to the server indefinitely
 func (w *WSClient) attemptReconnect() {
 	w.mu.RLock()
-	maxRetries := w.maxReconnectTry
 	delay := w.reconnectDelay
 	url := w.url
 	w.mu.RUnlock()
 
-	for i := 0; i < maxRetries; i++ {
-		w.logger.Info("Reconnection attempt %d/%d...", i+1, maxRetries)
+	attempt := 0
+	for {
+		attempt++
+		w.logger.Info("Reconnection attempt %d...", attempt)
 
 		time.Sleep(delay)
 
@@ -429,12 +430,10 @@ func (w *WSClient) attemptReconnect() {
 			return
 		}
 
-		// Exponential backoff
+		// Exponential backoff, capped at 30 seconds
 		delay = delay * 2
 		if delay > 30*time.Second {
 			delay = 30 * time.Second
 		}
 	}
-
-	w.logger.Error("Failed to reconnect after %d attempts", maxRetries)
 }

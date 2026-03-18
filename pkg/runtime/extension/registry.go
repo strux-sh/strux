@@ -155,6 +155,24 @@ func (r *Registry) ExecuteMethod(namespace, subNamespace, methodName string, par
 			sourceValue := reflect.ValueOf(params[i])
 			if sourceValue.Type().ConvertibleTo(expectedType) {
 				args[i] = sourceValue.Convert(expectedType)
+			} else if expectedType.Kind() == reflect.Slice && sourceValue.Kind() == reflect.Slice {
+				// Handle []interface{} -> []T conversion (e.g. JSON arrays)
+				sliceVal := reflect.MakeSlice(expectedType, sourceValue.Len(), sourceValue.Len())
+				elemType := expectedType.Elem()
+				for j := 0; j < sourceValue.Len(); j++ {
+					elem := sourceValue.Index(j).Interface()
+					if elem == nil {
+						sliceVal.Index(j).Set(reflect.Zero(elemType))
+					} else {
+						elemValue := reflect.ValueOf(elem)
+						if elemValue.Type().ConvertibleTo(elemType) {
+							sliceVal.Index(j).Set(elemValue.Convert(elemType))
+						} else {
+							return nil, fmt.Errorf("parameter %d: element %d cannot be converted to %s", i, j, elemType)
+						}
+					}
+				}
+				args[i] = sliceVal
 			} else {
 				return nil, fmt.Errorf("parameter %d cannot be converted to %s", i, expectedType)
 			}

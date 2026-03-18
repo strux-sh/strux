@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.1
+
+### Bug Fixes
+
+- Fixed nested struct field getters returning `undefined`. The WPE extension's `bind_children` function was passing the full dotted IPC path (e.g., `Settings.Audio.AudioOutput`) as both the `Object.defineProperty` key and the `__getField` IPC path. JavaScript treated the dotted string as a literal property name, so `App.Settings.Audio.AudioOutput` was `undefined` while `App.Settings.Audio["Settings.Audio.AudioOutput"]` held the getter. Split `inject_field_property` into `inject_field_property_with_path` which accepts separate arguments for the JS property name (short, e.g., `AudioOutput`) and the IPC field path (full, e.g., `Settings.Audio.AudioOutput`). The original `inject_field_property` is now a convenience wrapper for top-level fields where both names are the same.
+- Fixed device client giving up on dev server reconnection after 5 failed attempts. The WebSocket client now retries indefinitely with exponential backoff (2s → 4s → 8s → 16s → 30s cap) instead of stopping after `maxReconnectTry` attempts. On successful reconnection, the client re-requests the current binary from the dev server so log streams and binary state are re-established.
+- Fixed `Stream has outstanding operation` error on the event socket after page reload or navigation. When a page reloads, the WPE extension closes the old event socket and opens a new one. However, the old async read callback could still fire after the new connection was established. If it did, it would call `start_event_read_loop()` which started a second concurrent read on the new stream — GLib rejects this with "outstanding operation", killing the event socket. The fix checks whether the callback's source stream matches the current `event_data_input`; stale callbacks from old connections are silently discarded.
+- Fixed async method calls hanging when Go methods return no result and no error. When a Go method returns `(nil, nil)`, both `result` and `error` fields are omitted from the JSON response due to `omitempty`. The WPE extension's `async_read_callback` only resolved or rejected the promise when it found one of those keys — if neither was present, the promise was never settled. Added a fallback that resolves with `undefined` when the response contains neither `result` nor `error`.
+- Fixed array and object arguments being silently dropped when calling Go methods from JavaScript. The WPE extension's `js_call_go_method` only handled string, number, and boolean argument types — arrays and objects fell through to `null`. Additionally, the Go registry's `ExecuteMethod` could not convert `[]interface{}` (from JSON unmarshaling) to typed slices like `[]string`. Fixed both sides: the extension now serializes arrays/objects via `JSON.stringify` into the IPC message, and the registry now handles `[]interface{}` → `[]T` slice conversion via reflection.
+
+### Minor Improvements
+
+- Added `--no-chown` flag to `strux dev` and `strux build`. Skips the Docker file permission fix (`chown`) that runs after builds. Useful when iterating quickly and file ownership isn't a concern — saves a few seconds per rebuild cycle.
+
 ## v0.2.0
 
 ### New: Strux Version Checker

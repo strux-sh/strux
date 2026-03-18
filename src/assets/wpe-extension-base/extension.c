@@ -415,6 +415,19 @@ event_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_da
     gchar *line = g_data_input_stream_read_line_finish(G_DATA_INPUT_STREAM(source_object),
                                                          res, &length, &error);
 
+    // Check if this callback is from a stale (old) connection.
+    // After page reload, the old event socket is closed and a new one opened.
+    // The old async read can still fire — if we let it call start_event_read_loop(),
+    // it would start a second read on the new stream, causing "outstanding operation".
+    g_mutex_lock(&event_mutex);
+    gboolean stale = (G_DATA_INPUT_STREAM(source_object) != event_data_input);
+    g_mutex_unlock(&event_mutex);
+    if (stale) {
+        if (error) g_error_free(error);
+        if (line) g_free(line);
+        return;
+    }
+
     if (!line || error) {
         if (error) {
             fprintf(stderr, "Strux Extension: Event socket read error: %s\n", error->message);
@@ -534,7 +547,8 @@ async_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_da
         }
 
         if (promise) {
-            if (json_object_has_member(response_obj, "error")) {
+            if (json_object_has_member(response_obj, "error") &&
+                strlen(json_object_get_string_member(response_obj, "error")) > 0) {
                 const gchar *error_msg = json_object_get_string_member(response_obj, "error");
                 JSCValue *error_obj = jsc_value_new_string(promise->context, error_msg);
                 (void)jsc_value_function_call(promise->reject, JSC_TYPE_VALUE, error_obj, G_TYPE_NONE);
@@ -603,6 +617,12 @@ async_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_da
 
                 (void)jsc_value_function_call(promise->resolve, JSC_TYPE_VALUE, result, G_TYPE_NONE);
                 if (result) g_object_unref(result);
+            } else {
+                // No "error" and no "result" key — resolve with undefined
+                // (happens when Go method returns nil, nil and both are omitempty)
+                JSCValue *undef = jsc_value_new_undefined(promise->context);
+                (void)jsc_value_function_call(promise->resolve, JSC_TYPE_VALUE, undef, G_TYPE_NONE);
+                g_object_unref(undef);
             }
 
             g_hash_table_remove(pending_promises, ctx->call_id);
@@ -743,6 +763,25 @@ js_call_go_method (const gchar *method_name, GPtrArray *arguments, JSCContext *c
             } else if (jsc_value_is_boolean(arg)) {
                 gboolean bool_val = jsc_value_to_boolean(arg);
                 json_builder_add_boolean_value(builder, bool_val);
+            } else if (jsc_value_is_array(arg) || jsc_value_is_object(arg)) {
+                // Serialize array/object via JSON.stringify and parse into the builder
+                JSCValue *json_func = jsc_context_evaluate(context, "JSON.stringify", -1);
+                JSCValue *json_str_val = jsc_value_function_call(json_func, JSC_TYPE_VALUE, arg, G_TYPE_NONE);
+                gchar *json_str_arg = jsc_value_to_string(json_str_val);
+
+                JsonParser *arg_parser = json_parser_new();
+                if (json_parser_load_from_data(arg_parser, json_str_arg, -1, NULL)) {
+                    JsonNode *arg_node = json_node_copy(json_parser_get_root(arg_parser));
+                    json_builder_add_value(builder, arg_node);
+                } else {
+                    // Fallback: send as string
+                    json_builder_add_string_value(builder, json_str_arg);
+                }
+
+                g_object_unref(arg_parser);
+                g_free(json_str_arg);
+                g_object_unref(json_str_val);
+                g_object_unref(json_func);
             } else {
                 json_builder_add_null_value(builder);
             }
@@ -1052,73 +1091,71 @@ field_user_data_free (gpointer user_data)
     g_free(data);
 }
 
-// Inject a field as a JavaScript property with getter/setter
+// Inject a field as a JavaScript property with getter/setter.
+// prop_name is the JS property name (e.g. "MasterVolume").
+// ipc_field_path is the dotted path sent to __getField/__setField (e.g. "Settings.Audio.MasterVolume").
+// For top-level fields these are the same; for nested children they differ.
 static void
-inject_field_property (JSCContext *context, JSCValue *object, const gchar *field_name, const gchar *field_type)
+inject_field_property_with_path (JSCContext *context, JSCValue *object, const gchar *prop_name, const gchar *ipc_field_path, const gchar *field_type)
 {
-    // Create user data with field name and type
+    // Create user data — stores the IPC path for getter/setter calls
     FieldUserData *user_data = g_new(FieldUserData, 1);
-    user_data->field_name = g_strdup(field_name);
+    user_data->field_name = g_strdup(ipc_field_path);
     user_data->field_type = g_strdup(field_type);
 
-    // Create getter function
     JSCValue *getter = jsc_value_new_function(
-        context,
-        NULL,
+        context, NULL,
         G_CALLBACK(field_getter_callback_typed),
         user_data,
-        (GDestroyNotify)field_user_data_free,  // Free when getter is destroyed
-        JSC_TYPE_VALUE,
-        0,
-        G_TYPE_NONE
+        (GDestroyNotify)field_user_data_free,
+        JSC_TYPE_VALUE, 0, G_TYPE_NONE
     );
 
-    // Create another user data for setter (since both need independent ownership)
     FieldUserData *setter_data = g_new(FieldUserData, 1);
-    setter_data->field_name = g_strdup(field_name);
+    setter_data->field_name = g_strdup(ipc_field_path);
     setter_data->field_type = g_strdup(field_type);
 
-    // Create setter function
     JSCValue *setter = jsc_value_new_function(
-        context,
-        NULL,
+        context, NULL,
         G_CALLBACK(field_setter_callback),
         setter_data,
         (GDestroyNotify)field_user_data_free,
-        G_TYPE_NONE,
-        1,
-        JSC_TYPE_VALUE
+        G_TYPE_NONE, 1, JSC_TYPE_VALUE
     );
 
-    // Use Object.defineProperty via JavaScript to define the property
     JSCValue *global = jsc_context_get_global_object(context);
     JSCValue *object_constructor = jsc_value_object_get_property(global, "Object");
     JSCValue *define_property = jsc_value_object_get_property(object_constructor, "defineProperty");
 
-    // Create property descriptor object
     JSCValue *descriptor = jsc_value_new_object(context, NULL, NULL);
     jsc_value_object_set_property(descriptor, "get", getter);
     jsc_value_object_set_property(descriptor, "set", setter);
     jsc_value_object_set_property(descriptor, "enumerable", jsc_value_new_boolean(context, TRUE));
     jsc_value_object_set_property(descriptor, "configurable", jsc_value_new_boolean(context, TRUE));
 
-    // Call Object.defineProperty(object, field_name, descriptor)
-    JSCValue *field_name_str = jsc_value_new_string(context, field_name);
+    // Use prop_name (short name) for the JS property, NOT the full IPC path
+    JSCValue *prop_name_str = jsc_value_new_string(context, prop_name);
     JSCValue *result = jsc_value_function_call(define_property,
         JSC_TYPE_VALUE, object,
-        JSC_TYPE_VALUE, field_name_str,
+        JSC_TYPE_VALUE, prop_name_str,
         JSC_TYPE_VALUE, descriptor,
         G_TYPE_NONE);
 
     g_object_unref(result);
-    g_object_unref(field_name_str);
+    g_object_unref(prop_name_str);
     g_object_unref(descriptor);
     g_object_unref(define_property);
     g_object_unref(object_constructor);
     g_object_unref(global);
     g_object_unref(getter);
     g_object_unref(setter);
-    // Note: user_data is freed by getter's GDestroyNotify, setter_data by setter's
+}
+
+// Convenience wrapper for top-level fields where prop name == IPC path
+static void
+inject_field_property (JSCContext *context, JSCValue *object, const gchar *field_name, const gchar *field_type)
+{
+    inject_field_property_with_path(context, object, field_name, field_name, field_type);
 }
 
 // ============================================================================
@@ -1477,7 +1514,7 @@ bind_children (JSCContext *js_context, JSCValue *parent_obj, JsonObject *childre
                 // Full field path: e.g. "Settings.Audio.MasterVolume"
                 gchar *full_field_name = g_strdup_printf("%s.%s", child_path, field_name);
 
-                inject_field_property(js_context, child_js_obj, full_field_name, field_type);
+                inject_field_property_with_path(js_context, child_js_obj, field_name, full_field_name, field_type);
 
                 fprintf(stderr, "Strux Extension: Injected %s.%s (%s)\n",
                         child_path, field_name, field_type);

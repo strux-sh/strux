@@ -325,7 +325,7 @@ export async function build(): Promise<void> {
         // Docker runs as root so all created files are root-owned on the host.
         // Skip if everything was cached — no Docker commands ran, so no files changed ownership.
         Runner.skipChown = false
-        if (anyStepRan) {
+        if (anyStepRan && !Settings.noChown) {
             await Runner.chownProjectFiles()
         }
     }
