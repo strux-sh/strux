@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.2
+
+### Minor Changes
+
+- New projects now include a default single-monitor display configuration in `strux.yaml` with `Virtual-1` output name. Previously the display block was entirely commented out, requiring manual setup.
+
 ## v0.2.1
 
 ### Bug Fixes

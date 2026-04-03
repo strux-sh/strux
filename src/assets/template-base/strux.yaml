@@ -6,6 +6,14 @@ bsp: qemu
 hostname: ${projectName}
 
 # --- Display Configuration ---
+display:
+  monitors:
+    - path: /
+      resolution: 1920x1080
+      names:
+        - Virtual-1
+
+# --- Multi-Monitor Example ---
 # display:
 #   monitors:
 #     - path: /
