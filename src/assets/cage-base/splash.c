@@ -570,8 +570,10 @@ void splash_hide(struct cg_splash *splash)
 		wlr_scene_node_set_enabled(&splash->tree->node, false);
 	}
 
-	// Restore cursor
-	if (splash->server->seat && splash->server->seat->cursor &&
+	// Restore cursor (unless hidden by STRUX_HIDE_CURSOR)
+	const char *hide_cursor = getenv("STRUX_HIDE_CURSOR");
+	if (!(hide_cursor && strcmp(hide_cursor, "1") == 0) &&
+	    splash->server->seat && splash->server->seat->cursor &&
 	    splash->server->seat->xcursor_manager) {
 		wlr_cursor_set_xcursor(splash->server->seat->cursor,
 				       splash->server->seat->xcursor_manager, "default");

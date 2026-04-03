@@ -43,6 +43,10 @@ import systemdEthernetNetwork from "../../assets/scripts-base/artifacts/systemd/
 // @ts-ignore
 import notConfiguredHTML from "../../assets/scripts-base/artifacts/not-configured.html" with { type: "text" }
 
+// Cog autoplay-policy patch (backported from cog 0.19.1)
+// @ts-ignore
+import cogAutoplayPatch from "../../assets/scripts-base/artifacts/patches/cog-autoplay-policy.patch" with { type: "text" }
+
 // Default Logo
 // @ts-ignore
 import defaultLogoPNG from "../../assets/template-base/logo.png" with { type: "file" }
@@ -317,6 +321,19 @@ export async function copyWPEExtensionSourceFiles(wpeExtSrcPath: string): Promis
 }
 
 /**
+ * Copies patch files to dist/artifacts/patches/.
+ * Always overwrites — patches are not user-modifiable.
+ */
+export async function copyPatches(): Promise<void> {
+    const patchesDir = join(Settings.projectPath, "dist", "artifacts", "patches")
+
+    const { mkdir } = await import("fs/promises")
+    await mkdir(patchesDir, { recursive: true })
+
+    await Bun.write(join(patchesDir, "cog-autoplay-policy.patch"), cogAutoplayPatch)
+}
+
+/**
  * Copies all initial artifacts needed for the build.
  * This includes init scripts, systemd services, and plymouth files.
  */
@@ -325,6 +342,7 @@ export async function copyAllInitialArtifacts(): Promise<void> {
     await copySystemdServices()
     await copyPlymouthArtifacts()
     await copyBootSplashLogo()
+    await copyPatches()
 }
 
 /**
@@ -340,6 +358,8 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     const cageSrcPath = join(artifactsDir, "cage")
     const wpeExtSrcPath = join(artifactsDir, "wpe-extension")
 
+    const patchesDir = join(artifactsDir, "patches")
+
     // Ensure all directories exist
     const { mkdir } = await import("fs/promises")
     await Promise.all([
@@ -349,6 +369,7 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
         mkdir(clientSrcPath, { recursive: true }),
         mkdir(cageSrcPath, { recursive: true }),
         mkdir(wpeExtSrcPath, { recursive: true }),
+        mkdir(patchesDir, { recursive: true }),
     ])
 
     // Plymouth
@@ -412,6 +433,9 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     // WPE extension source files
     await Bun.write(join(wpeExtSrcPath, "extension.c"), wpeExtensionC)
     await Bun.write(join(wpeExtSrcPath, "CMakeLists.txt"), wpeExtensionCMake)
+
+    // Patches
+    await Bun.write(join(patchesDir, "cog-autoplay-policy.patch"), cogAutoplayPatch)
 
     Logger.success("All artifacts restored to built-in versions")
 }

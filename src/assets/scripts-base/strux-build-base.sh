@@ -263,6 +263,8 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     shared-mime-info
 
 # Install cog from Forky (v0.18.5 fixes issues present in Trixie's version)
+# The patched cog binary (with --autoplay-policy support) is built in
+# strux-build-wpe.sh and copied over this in strux-build-post.sh.
 progress "Installing cog 0.18.5 from Debian Forky..."
 run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y -t forky cog"
 

@@ -187,7 +187,7 @@ export async function build(): Promise<void> {
         await runBspScripts("after_cage")
 
         // ========================================
-        // WPE WEBKIT EXTENSION
+        // WPE WEBKIT EXTENSION AND COG
         // ========================================
         await runBspScripts("before_wpe")
         if (await checkStepCache("wpe")) {

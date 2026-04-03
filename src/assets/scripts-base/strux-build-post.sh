@@ -340,6 +340,13 @@ chmod +x "$ROOTFS_DIR/strux/client"
 mkdir -p "$ROOTFS_DIR/usr/lib/wpe-web-extensions"
 cp "$BSP_CACHE/libstrux-extension.so" "$ROOTFS_DIR/usr/lib/wpe-web-extensions/libstrux-extension.so"
 
+# Copy patched Cog binary (with --autoplay-policy support) over the Debian package version
+if [ -f "$BSP_CACHE/cog" ]; then
+    cp "$BSP_CACHE/cog" "$ROOTFS_DIR/usr/bin/cog"
+    chmod +x "$ROOTFS_DIR/usr/bin/cog"
+    progress "Installed patched Cog binary"
+fi
+
 # If the .dev-env.json file exists, copy it to the rootfs (from BSP-specific cache)
 if [ -f "$BSP_CACHE/.dev-env.json" ]; then
     cp "$BSP_CACHE/.dev-env.json" "$ROOTFS_DIR/strux/.dev-env.json"
@@ -363,11 +370,11 @@ chmod +x "$ROOTFS_DIR/strux/strux-run-cog.sh"
 # Copy "not configured" HTML page for unconfigured monitor outputs
 cp "$PROJECT_DIR/dist/artifacts/not-configured.html" "$ROOTFS_DIR/strux/.not-configured.html" 2>/dev/null || true
 
-# Read custom Cage environment variables from bsp.yaml
-CAGE_ENV_COUNT=$(yq -r '.bsp.cage.env // [] | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
-if [ "$CAGE_ENV_COUNT" -gt 0 ]; then
-    progress "Writing custom Cage environment variables..."
-    yq -r '.bsp.cage.env[]' "$BSP_CONFIG" > "$ROOTFS_DIR/strux/.cage-env"
+# Copy pre-built Cage environment file from cache (generated during cage build step)
+CAGE_ENV_SRC="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}/.cage-env"
+if [ -f "$CAGE_ENV_SRC" ]; then
+    progress "Copying Cage environment file..."
+    cp "$CAGE_ENV_SRC" "$ROOTFS_DIR/strux/.cage-env"
 fi
 
 

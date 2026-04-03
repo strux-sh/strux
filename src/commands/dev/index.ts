@@ -572,10 +572,12 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rest
             const cagePath = join(Settings.projectPath, "dist", "cache", bspName, "cage")
             const wpePath = join(Settings.projectPath, "dist", "cache", bspName, "libstrux-extension.so")
             const clientPath = join(Settings.projectPath, "dist", "cache", bspName, "client")
+            const cogPath = join(Settings.projectPath, "dist", "cache", bspName, "cog")
 
             const cageBinary = Buffer.from(await Bun.file(cagePath).arrayBuffer())
             const wpeBinary = Buffer.from(await Bun.file(wpePath).arrayBuffer())
             const clientBinary = Buffer.from(await Bun.file(clientPath).arrayBuffer())
+            const cogBinary = Buffer.from(await Bun.file(cogPath).arrayBuffer())
 
             // Read the scripts from dist/artifacts
             const scriptsDir = join(Settings.projectPath, "dist", "artifacts", "scripts")
@@ -588,12 +590,20 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rest
             devServer.sendComponent("cage", cageBinary, "/usr/bin/cage")
             devServer.sendComponent("wpe-extension", wpeBinary, "/usr/lib/wpe-web-extensions/libstrux-extension.so")
             devServer.sendComponent("client", clientBinary, "/strux/client")
+            devServer.sendComponent("cog", cogBinary, "/usr/bin/cog")
 
             // Send scripts to the device
             devServer.sendComponent("script", initShBuf, "/init")
             devServer.sendComponent("script", struxShBuf, "/strux/strux.sh")
             devServer.sendComponent("script", networkShBuf, "/usr/bin/strux-network.sh")
             devServer.sendComponent("script", runCogShBuf, "/strux/strux-run-cog.sh")
+
+            // Send cage environment file if it exists
+            const cageEnvPath = join(Settings.projectPath, "dist", "cache", bspName, ".cage-env")
+            if (await Bun.file(cageEnvPath).exists()) {
+                const cageEnvBuf = Buffer.from(await Bun.file(cageEnvPath).arrayBuffer())
+                devServer.sendComponent("script", cageEnvBuf, "/strux/.cage-env")
+            }
 
             // Wait a moment for acks, then reboot
             setTimeout(() => {

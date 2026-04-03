@@ -175,6 +175,7 @@ const RootFSSchema = z.object({
 // Cage compositor configuration schema
 const CageSchema = z.object({
     env: z.array(z.string()).optional(),
+    hide_cursor: z.boolean().optional(),
 })
 
 // BSP configuration schema

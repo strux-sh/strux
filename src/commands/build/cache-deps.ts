@@ -138,8 +138,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         internalAssets: ["@build-wpe-script"],
         // Fallback to internal assets if dist/extension/ doesn't exist yet (first build)
         fallbackInternalAssets: ["@wpe-extension-sources"],
-        // BSP-specific cache (architecture-dependent .so)
-        artifacts: ["cache/{bsp}/libstrux-extension.so"]
+        // BSP-specific cache (architecture-dependent .so + patched cog binary)
+        artifacts: ["cache/{bsp}/libstrux-extension.so", "cache/{bsp}/cog"]
     },
 
     client: {

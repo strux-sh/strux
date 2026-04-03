@@ -132,6 +132,8 @@ import cageReadme from "../../assets/cage-base/README.md" with { type: "text" }
 import wpeExtensionC from "../../assets/wpe-extension-base/extension.c" with { type: "text" }
 // @ts-ignore
 import wpeExtensionCMake from "../../assets/wpe-extension-base/CMakeLists.txt" with { type: "text" }
+// @ts-ignore
+import cogAutoplayPatch from "../../assets/scripts-base/artifacts/patches/cog-autoplay-policy.patch" with { type: "text" }
 
 // Dockerfile
 // @ts-ignore
@@ -209,10 +211,11 @@ export function computeInternalAssetHashes(): Record<string, string> {
             cageReadme
         ),
 
-        // WPE WebKit extension sources
+        // WPE WebKit extension sources + Cog autoplay patch
         "@wpe-extension-sources": hashStrings(
             wpeExtensionC,
-            wpeExtensionCMake
+            wpeExtensionCMake,
+            cogAutoplayPatch
         ),
 
         // Plymouth theme assets

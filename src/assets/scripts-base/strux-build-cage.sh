@@ -358,4 +358,31 @@ cp build/cage "$CAGE_BINARY" || {
 # Make the binary executable
 chmod +x "$CAGE_BINARY"
 
+# ============================================================================
+# GENERATE CAGE ENVIRONMENT FILE
+# ============================================================================
+# Build the .cage-env file from bsp.yaml cage configuration
+# ============================================================================
+
+CAGE_ENV_FILE="$CACHE_DIR/.cage-env"
+
+progress "Generating Cage environment file..."
+
+# Start with custom env vars from bsp.yaml
+CAGE_ENV_COUNT=$(yq -r '.bsp.cage.env // [] | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
+if [ "$CAGE_ENV_COUNT" -gt 0 ]; then
+    yq -r '.bsp.cage.env[]' "$BSP_CONFIG" > "$CAGE_ENV_FILE"
+else
+    > "$CAGE_ENV_FILE"
+fi
+
+# Append STRUX_HIDE_CURSOR if hide_cursor is set
+HIDE_CURSOR=$(yq -r '.bsp.cage.hide_cursor // false' "$BSP_CONFIG" 2>/dev/null || echo "false")
+if [ "$HIDE_CURSOR" = "true" ]; then
+    progress "Enabling cursor hiding..."
+    echo "STRUX_HIDE_CURSOR=1" >> "$CAGE_ENV_FILE"
+fi
+
+progress "Cage environment file written to $CAGE_ENV_FILE"
+
 progress "Cage compiled successfully"

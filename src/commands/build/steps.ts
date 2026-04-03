@@ -117,7 +117,7 @@ export async function compileCage(): Promise<void> {
 }
 
 /**
- * Compiles the WPE WebKit extension for the target architecture.
+ * Compiles the WPE WebKit extension and patched Cog browser for the target architecture.
  */
 export async function compileWPE(): Promise<void> {
     const bspName = Settings.bspName!
@@ -132,8 +132,8 @@ export async function compileWPE(): Promise<void> {
     await copyWPEExtensionSourceFiles(wpeExtSrcPath)
 
     await Runner.runScriptInDocker(scriptBuildWPE, {
-        message: "Compiling WPE Extension...",
-        messageOnError: "Failed to compile WPE Extension. Please check the build logs for more information.",
+        message: "Compiling WPE Extension and Cog...",
+        messageOnError: "Failed to compile WPE Extension and Cog. Please check the build logs for more information.",
         exitOnError: true,
         env: {
             PRESELECTED_BSP: bspName,

@@ -77,6 +77,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpe-1.0-dev \
     libwpebackend-fdo-1.0-dev \
     libwpewebkit-2.0-dev \
+    libepoxy-dev \
+    # Cog browser build dependencies
+    libcairo2-dev \
+    libegl-dev \
     # wlroots and Wayland development
     libwlroots-0.18-dev \
     libwayland-dev \
@@ -171,6 +175,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpewebkit-2.0-dev:arm64 \
     libjson-glib-dev:arm64 \
     libsoup-3.0-dev:arm64 \
+    libepoxy-dev:arm64 \
+    libcairo2-dev:arm64 \
+    libegl-dev:arm64 \
     && rm -rf /var/lib/apt/lists/*
 
 # x86_64 cross-architecture development libraries (if building on ARM64)
@@ -190,6 +197,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpewebkit-2.0-dev:amd64 \
     libjson-glib-dev:amd64 \
     libsoup-3.0-dev:amd64 \
+    libepoxy-dev:amd64 \
+    libcairo2-dev:amd64 \
+    libegl-dev:amd64 \
     && rm -rf /var/lib/apt/lists/*
 
 # ARMHF (ARMv7) cross-architecture development libraries
@@ -212,6 +222,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpewebkit-2.0-dev:armhf \
     libjson-glib-dev:armhf \
     libsoup-3.0-dev:armhf \
+    libepoxy-dev:armhf \
+    libcairo2-dev:armhf \
+    libegl-dev:armhf \
     && rm -rf /var/lib/apt/lists/*
 
 # Use login shell for RUN commands so .bashrc is sourced automatically
