@@ -270,7 +270,10 @@ export class BSPYamlValidator {
             if (validated.bsp.arch) {
                 // Map arch values to Settings.ArchType
                 const arch = validated.bsp.arch.toLowerCase()
-                if (arch === "arm64" || arch === "aarch64") {
+                if (arch === "host") {
+                    // "host" resolves to whatever the host machine's architecture is
+                    Settings.targetArch = Settings.arch
+                } else if (arch === "arm64" || arch === "aarch64") {
                     Settings.targetArch = "arm64"
                 } else if (arch === "x86_64" || arch === "amd64") {
                     Settings.targetArch = "x86_64"

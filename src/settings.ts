@@ -12,7 +12,7 @@ import type { StruxYaml } from "./types/main-yaml"
 import type { BSPYaml } from "./types/bsp-yaml"
 
 export type TemplateType = "vanilla" | "react" | "vue"
-export type ArchType = "arm64" | "x86_64" | "armhf"
+export type ArchType = "arm64" | "x86_64" | "armhf" | "host"
 
 
 export class SettingsConfig {
