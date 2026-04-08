@@ -105,40 +105,42 @@ jobs:
           path: strux-${{ matrix.target }}
 
   build-docker:
-    name: Build & Push Docker Image
-    runs-on: ubuntu-latest
+    name: Build Docker Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     needs: [get-version, build-bun, build-go]
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            bun-target: linux-x64
+          - arch: arm64
+            runner: ubuntu-latest-arm64
+            bun-target: linux-arm64
     env:
       VERSION: ${{ needs.get-version.outputs.version }}
+      IMAGE: ghcr.io/strux-sh/strux-builder
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Linux Bun binaries
+      - name: Download Bun binary
         uses: actions/download-artifact@v4
         with:
-          pattern: 'strux-linux-*'
-          path: docker-binaries/
-          merge-multiple: true
+          name: strux-${{ matrix.bun-target }}
 
-      - name: Download Linux Go binaries
+      - name: Download Go binary
         uses: actions/download-artifact@v4
         with:
-          pattern: 'strux-introspect-linux-*'
-          path: docker-binaries/
-          merge-multiple: true
+          name: strux-introspect-linux-${{ matrix.arch }}
 
       - name: Prepare build context
         run: |
-          # Place binaries named by arch for multi-arch COPY
-          cp docker-binaries/strux-linux-x64 strux-binary-amd64
-          cp docker-binaries/strux-linux-arm64 strux-binary-arm64
-          cp docker-binaries/strux-introspect-linux-amd64 strux-introspect-amd64
-          cp docker-binaries/strux-introspect-linux-arm64 strux-introspect-arm64
+          cp strux-${{ matrix.bun-target }} strux-binary-${{ matrix.arch }}
+          cp strux-introspect-linux-${{ matrix.arch }} strux-introspect-${{ matrix.arch }}
 
-          # Append lines to copy binaries into the image
           cp src/assets/scripts-base/Dockerfile Dockerfile.builder
           cat >> Dockerfile.builder << 'DEOF'
 
@@ -151,14 +153,9 @@ jobs:
 
           echo "=== Dockerfile.builder tail ==="
           tail -10 Dockerfile.builder
-          echo "=== Build context files ==="
-          ls -la strux-binary-* strux-introspect-*
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Set up QEMU for multi-arch
-        uses: docker/setup-qemu-action@v3
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -172,10 +169,40 @@ jobs:
         with:
           context: .
           file: Dockerfile.builder
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.arch }}
           push: true
           tags: |
-            ghcr.io/strux-sh/strux-builder:${{ env.VERSION }}
-            ghcr.io/strux-sh/strux-builder:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+  merge-docker-manifest:
+    name: Merge Docker Manifest
+    runs-on: ubuntu-latest
+    needs: [get-version, build-docker]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+      IMAGE: ghcr.io/strux-sh/strux-builder
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          docker manifest create ${{ env.IMAGE }}:${{ env.VERSION }} \
+            ${{ env.IMAGE }}:${{ env.VERSION }}-amd64 \
+            ${{ env.IMAGE }}:${{ env.VERSION }}-arm64
+
+          docker manifest create ${{ env.IMAGE }}:latest \
+            ${{ env.IMAGE }}:${{ env.VERSION }}-amd64 \
+            ${{ env.IMAGE }}:${{ env.VERSION }}-arm64
+
+          docker manifest push ${{ env.IMAGE }}:${{ env.VERSION }}
+          docker manifest push ${{ env.IMAGE }}:latest
