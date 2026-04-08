@@ -169,9 +169,7 @@ jobs:
           docker buildx create --name bigbuilder --use \
             --driver docker-container \
             --driver-opt network=host \
-            --driver-opt env.QEMU_CPU=max \
-            --buildkitd-flags '--oci-worker-no-process-sandbox' \
-            --config /dev/null
+            --driver-opt env.QEMU_CPU=max
           docker buildx inspect --bootstrap
 
       - name: Login to GHCR
