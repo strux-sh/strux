@@ -164,7 +164,15 @@ jobs:
 
       - name: Set up Docker Buildx (self-hosted)
         if: matrix.arch == 'arm64'
-        run: docker buildx use bigbuilder
+        run: |
+          docker buildx rm bigbuilder 2>/dev/null || true
+          docker buildx create --name bigbuilder --use \
+            --driver docker-container \
+            --driver-opt network=host \
+            --driver-opt env.QEMU_CPU=max \
+            --buildkitd-flags '--oci-worker-no-process-sandbox' \
+            --config /dev/null
+          docker buildx inspect --bootstrap
 
       - name: Login to GHCR
         uses: docker/login-action@v3
