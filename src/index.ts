@@ -30,7 +30,7 @@ program
     .option("--local-builder", "Build Docker image locally instead of pulling from GHCR")
     .hook("preAction", (command: Command) => {
 
-        const options = command.opts()
+        const options = command.optsWithGlobals()
 
         if (options.verbose) {
             Settings.verbose = true

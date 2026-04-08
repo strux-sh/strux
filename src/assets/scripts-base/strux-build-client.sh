@@ -117,7 +117,7 @@ GOOS=linux \
 GOARCH="$GO_ARCH" \
 GOARM="${GOARM:-}" \
 CC="$CROSS_COMPILER" \
-go build -buildvcs=false -o "$BUILD_TMP/client-$BSP_NAME" .
+go build -buildvcs=false -ldflags "-X main.Version=${STRUX_VERSION:-unknown}" -o "$BUILD_TMP/client-$BSP_NAME" .
 
 # Copy the built binary to the BSP-specific cache directory
 cp "$BUILD_TMP/client-$BSP_NAME" "$CACHE_DIR/client"

@@ -276,6 +276,8 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-vaapi \
     gstreamer1.0-gl"
 
 

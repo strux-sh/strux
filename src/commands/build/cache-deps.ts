@@ -16,6 +16,7 @@ export type BuildStep =
     | "application"
     | "cage"
     | "wpe"
+    | "screen"
     | "client"
     | "kernel"
     | "bootloader"
@@ -140,6 +141,17 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         fallbackInternalAssets: ["@wpe-extension-sources"],
         // BSP-specific cache (architecture-dependent .so + patched cog binary)
         artifacts: ["cache/{bsp}/libstrux-extension.so", "cache/{bsp}/cog"]
+    },
+
+    screen: {
+        // Screen capture daemon sources are copied to dist/artifacts/screen/
+        directories: ["dist/artifacts/screen/"],
+        yamlKeys: [
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
+        ],
+        internalAssets: ["@build-screen-script"],
+        fallbackInternalAssets: ["@screen-sources"],
+        artifacts: ["cache/{bsp}/screen"]
     },
 
     client: {

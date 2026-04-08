@@ -13,7 +13,7 @@ import { Settings } from "../../settings"
 import { Runner } from "../../utils/run"
 import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
-import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles } from "./artifacts"
+import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles } from "./artifacts"
 import { generateTypes } from "../types"
 
 // Build Scripts
@@ -29,6 +29,8 @@ import scriptBuildWPE from "../../assets/scripts-base/strux-build-wpe.sh" with {
 import scriptBuildBase from "../../assets/scripts-base/strux-build-base.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildPost from "../../assets/scripts-base/strux-build-post.sh" with { type: "text" }
+// @ts-ignore
+import scriptBuildScreen from "../../assets/scripts-base/strux-build-screen.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildClient from "../../assets/scripts-base/strux-build-client.sh" with { type: "text" }
 // @ts-ignore
@@ -134,6 +136,32 @@ export async function compileWPE(): Promise<void> {
     await Runner.runScriptInDocker(scriptBuildWPE, {
         message: "Compiling WPE Extension and Cog...",
         messageOnError: "Failed to compile WPE Extension and Cog. Please check the build logs for more information.",
+        exitOnError: true,
+        env: {
+            PRESELECTED_BSP: bspName,
+            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
+        }
+    })
+}
+
+/**
+ * Compiles the screen capture daemon (strux-screen) for the target architecture.
+ */
+export async function compileScreen(): Promise<void> {
+    const bspName = Settings.bspName!
+
+    // Screen daemon source directory in artifacts
+    const screenSrcPath = join(Settings.projectPath, "dist", "artifacts", "screen")
+
+    // Create directory if it doesn't exist
+    if (!directoryExists(screenSrcPath)) await mkdir(screenSrcPath, { recursive: true })
+
+    // Copy screen source files if they don't exist (first build)
+    await copyScreenSourceFiles(screenSrcPath)
+
+    await Runner.runScriptInDocker(scriptBuildScreen, {
+        message: "Compiling screen capture daemon...",
+        messageOnError: "Failed to compile screen daemon. Please check the build logs for more information.",
         exitOnError: true,
         env: {
             PRESELECTED_BSP: bspName,
@@ -271,7 +299,8 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
         exitOnError: true,
         env: {
             PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
+            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+            STRUX_VERSION: Settings.struxVersion!
         }
     })
 

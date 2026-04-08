@@ -32,6 +32,7 @@ import {
     compileApplication,
     compileCage,
     compileWPE,
+    compileScreen,
     buildRootFS,
     buildStruxClient,
     extractKernel,
@@ -196,6 +197,15 @@ export async function build(): Promise<void> {
             await cacheStep("wpe")
         }
         await runBspScripts("after_wpe")
+
+        // ========================================
+        // SCREEN CAPTURE DAEMON
+        // ========================================
+        if (await checkStepCache("screen")) {
+            anyStepRan = true
+            await compileScreen()
+            await cacheStep("screen")
+        }
 
         // ========================================
         // STRUX CLIENT BINARY

@@ -218,7 +218,7 @@ export class RunnerClass {
      * - If --local-builder flag is set, build from the embedded Dockerfile (original behavior)
      * - Otherwise, try to pull the versioned image from GHCR, fall back to local build on failure
      */
-    public async prepareDockerImage(cachedDockerHash?: string): Promise<{ imageHash: string; rebuilt: boolean }> {
+    public async prepareDockerImage(cachedDockerHash?: string, force?: boolean): Promise<{ imageHash: string; rebuilt: boolean }> {
         const currentHash = getDockerfileHash()
 
         // If we're already inside the builder container, no Docker image needed
@@ -229,9 +229,9 @@ export class RunnerClass {
             return { imageHash: currentHash, rebuilt: false }
         }
 
-        // If --local-builder flag is set, use the original local build logic
-        if (Settings.localBuilder) {
-            return this.buildDockerImageLocally(currentHash, cachedDockerHash)
+        // If --local-builder flag is set or force rebuild requested, use local build logic
+        if (Settings.localBuilder || force) {
+            return this.buildDockerImageLocally(currentHash, cachedDockerHash, force)
         }
 
         // Default: try to pull the versioned image from GHCR
@@ -280,10 +280,50 @@ export class RunnerClass {
     /**
      * Builds the Docker image locally from the embedded Dockerfile.
      */
-    private async buildDockerImageLocally(currentHash: string, cachedDockerHash?: string): Promise<{ imageHash: string; rebuilt: boolean }> {
+    /**
+     * Gets the Dockerfile hash label from the existing strux-builder Docker image.
+     * Returns null if the image doesn't exist or has no label.
+     */
+    private async getImageDockerfileHash(): Promise<string | null> {
+        try {
+            const proc = Bun.spawn(
+                ["docker", "inspect", "--format", "{{index .Config.Labels \"strux.dockerfile.hash\"}}", "strux-builder"],
+                { stdout: "pipe", stderr: "pipe" }
+            )
+            const exitCode = await proc.exited
+            if (exitCode !== 0) return null
+            const output = await new Response(proc.stdout).text()
+            const hash = output.trim()
+            return hash && hash !== "<no value>" ? hash : null
+        } catch {
+            return null
+        }
+    }
+
+    private async buildDockerImageLocally(currentHash: string, cachedDockerHash?: string, force?: boolean): Promise<{ imageHash: string; rebuilt: boolean }> {
         const imageExists = await this.checkImageExists("strux-builder")
-        const hashChanged = cachedDockerHash !== undefined && cachedDockerHash !== currentHash
-        const needsRebuild = !imageExists || hashChanged
+
+        // Determine if rebuild is needed by comparing hashes.
+        // Priority: explicit cached hash > image label > session hash
+        let compareHash = cachedDockerHash ?? this.lastDockerImageHash
+        if (compareHash === undefined && imageExists) {
+            // No cached or session hash — check the image label to see if it
+            // was built from this Dockerfile version
+            const labelHash = await this.getImageDockerfileHash()
+            if (labelHash !== null) {
+                compareHash = labelHash
+            } else {
+                // Image exists but has no hash label — it came from GHCR or an
+                // old local build. Force rebuild so we get a properly labeled image.
+                Logger.log("Existing image has no Dockerfile hash label, rebuilding...")
+            }
+        }
+        const hashChanged = compareHash !== undefined && compareHash !== currentHash
+        // Rebuild if: no image, hash mismatch, forced, or image has no label (unlabeled GHCR image)
+        const noLabel = imageExists && compareHash === undefined && cachedDockerHash === undefined && this.lastDockerImageHash === undefined
+        const needsRebuild = !imageExists || hashChanged || force || noLabel
+
+        Logger.log(`Local builder: imageExists=${imageExists}, compareHash=${compareHash}, currentHash=${currentHash}, needsRebuild=${needsRebuild}`)
 
         if (!needsRebuild) {
             this.dockerImageReady = true
@@ -292,9 +332,9 @@ export class RunnerClass {
             return { imageHash: currentHash, rebuilt: false }
         }
 
-        // If hash changed, remove old image first
-        if (imageExists && hashChanged) {
-            Logger.log("Dockerfile changed, rebuilding Docker image...")
+        // Remove old image if it exists
+        if (imageExists) {
+            Logger.log("Rebuilding Docker image...")
             try {
                 await Bun.spawn(["docker", "rmi", "-f", "strux-builder"], {
                     stdout: "pipe",
@@ -329,8 +369,8 @@ export class RunnerClass {
         // Copy the dockerfile into dist/artifacts folder in the project directory
         await Bun.write(join(Settings.projectPath, "dist", "artifacts", "Dockerfile"), scriptsBaseDockerfile)
 
-        // Build Docker image using the Dockerfile
-        await this.runCommand("docker build -t strux-builder -f dist/artifacts/Dockerfile .", {
+        // Build Docker image using the Dockerfile, labeling with the hash for future comparison
+        await this.runCommand(`docker build -t strux-builder --label "strux.dockerfile.hash=${currentHash}" -f dist/artifacts/Dockerfile .`, {
             message: "Building Docker image locally...",
             exitOnError: true,
             cwd: Settings.projectPath

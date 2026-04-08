@@ -215,6 +215,9 @@ func (l *LogStreamer) StartEarlyLogStream(streamID string, callback LogCallback)
 
 // startCommandStream starts a command and reads its output
 func (l *LogStreamer) startCommandStream(stream *LogStream) error {
+	// Force color output from journalctl even when piped
+	stream.cmd.Env = append(os.Environ(), "SYSTEMD_COLORS=1")
+
 	// Get stdout pipe
 	stdout, err := stream.cmd.StdoutPipe()
 	if err != nil {

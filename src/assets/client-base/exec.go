@@ -1,7 +1,8 @@
 //
-// Strux Client - Exec Manager
+// Strux Client - Exec Manager (SSH/PTY)
 //
 // Provides interactive shell sessions over WebSocket using a PTY.
+// Supports auto-attaching to an existing session on reconnect.
 //
 
 package main
@@ -26,19 +27,40 @@ type ExecManager struct {
 	sessions map[string]*ExecSession
 	mu       sync.Mutex
 	logger   *Logger
-	onOutput func(sessionID, stream, data string)
+	onOutput func(sessionID, data string)
 	onExit   func(sessionID string, code int)
-	onError  func(sessionID string, err error)
 }
 
-func NewExecManager(onOutput func(string, string, string), onExit func(string, int), onError func(string, error)) *ExecManager {
+func NewExecManager(onOutput func(string, string), onExit func(string, int)) *ExecManager {
 	return &ExecManager{
 		sessions: make(map[string]*ExecSession),
 		logger:   NewLogger("ExecManager"),
 		onOutput: onOutput,
 		onExit:   onExit,
-		onError:  onError,
 	}
+}
+
+// AttachToExisting checks if there's an existing session and re-maps it to the new sessionID.
+// Returns true if an existing session was found and attached.
+func (m *ExecManager) AttachToExisting(newSessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// If there's already a session with this ID, it's already attached
+	if _, exists := m.sessions[newSessionID]; exists {
+		return true
+	}
+
+	// Find any existing session and re-map it
+	for oldID, session := range m.sessions {
+		m.logger.Info("Re-attaching existing PTY session %s as %s", oldID, newSessionID)
+		delete(m.sessions, oldID)
+		session.id = newSessionID
+		m.sessions[newSessionID] = session
+		return true
+	}
+
+	return false
 }
 
 func (m *ExecManager) Start(sessionID string, shell string) error {
@@ -97,6 +119,23 @@ func (m *ExecManager) SendInput(sessionID string, data string) error {
 	return err
 }
 
+func (m *ExecManager) Resize(sessionID string, rows, cols int) {
+	m.mu.Lock()
+	session, exists := m.sessions[sessionID]
+	m.mu.Unlock()
+
+	if !exists || session.pty == nil {
+		return
+	}
+
+	if err := pty.Setsize(session.pty, &pty.Winsize{
+		Rows: uint16(rows),
+		Cols: uint16(cols),
+	}); err != nil {
+		m.logger.Error("Failed to resize PTY: %v", err)
+	}
+}
+
 func (m *ExecManager) Stop(sessionID string) {
 	m.mu.Lock()
 	session, exists := m.sessions[sessionID]
@@ -143,14 +182,12 @@ func (m *ExecManager) readLoop(session *ExecSession) {
 
 		n, err := session.pty.Read(buf)
 		if err != nil {
-			if m.onError != nil {
-				m.onError(session.id, err)
-			}
+			// PTY closed — not an error worth reporting separately
 			return
 		}
 
 		if n > 0 && m.onOutput != nil {
-			m.onOutput(session.id, "stdout", string(buf[:n]))
+			m.onOutput(session.id, string(buf[:n]))
 		}
 	}
 }

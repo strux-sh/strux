@@ -13,6 +13,10 @@ import { Settings } from "../../settings"
 import { fileExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
 
+// Dockerfile (for Docker builder image)
+// @ts-ignore
+import scriptsBaseDockerfile from "../../assets/scripts-base/Dockerfile" with { type: "text" }
+
 // Plymouth Files
 //@ts-ignore
 import artifactPlymouthTheme from "../../assets/scripts-base/artifacts/plymouth/strux.plymouth" with { type: "text" }
@@ -75,6 +79,8 @@ import clientGoExec from "../../assets/client-base/exec.go" with { type: "text" 
 // @ts-ignore
 import clientGoWebsocket from "../../assets/client-base/websocket.go" with {type: "text"}
 // @ts-ignore
+import clientGoScreen from "../../assets/client-base/screen.go" with { type: "text" }
+// @ts-ignore
 import clientGoMod from "../../assets/client-base/go.mod" with { type: "text" }
 // @ts-ignore
 import clientGoSum from "../../assets/client-base/go.sum" with { type: "text" }
@@ -136,6 +142,25 @@ import cageReadme from "../../assets/cage-base/README.md" with { type: "text" }
 import wpeExtensionC from "../../assets/wpe-extension-base/extension.c" with { type: "text" }
 // @ts-ignore
 import wpeExtensionCMake from "../../assets/wpe-extension-base/CMakeLists.txt" with { type: "text" }
+
+// ============================================================================
+// Screen Capture Daemon Source Files
+// Source: src/assets/screen-base/
+// ============================================================================
+// @ts-ignore
+import screenMainC from "../../assets/screen-base/main.c" with { type: "text" }
+// @ts-ignore
+import screenCaptureC from "../../assets/screen-base/capture.c" with { type: "text" }
+// @ts-ignore
+import screenCaptureH from "../../assets/screen-base/capture.h" with { type: "text" }
+// @ts-ignore
+import screenPipelineC from "../../assets/screen-base/pipeline.c" with { type: "text" }
+// @ts-ignore
+import screenPipelineH from "../../assets/screen-base/pipeline.h" with { type: "text" }
+// @ts-ignore
+import screenMesonBuild from "../../assets/screen-base/meson.build" with { type: "text" }
+// @ts-ignore
+import screenProtocolXml from "../../assets/screen-base/protocols/wlr-screencopy-unstable-v1.xml" with { type: "text" }
 
 /**
  * Copies Plymouth theme files to dist/artifacts/plymouth/ if they don't exist.
@@ -262,6 +287,7 @@ export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> 
         await Bun.write(join(clientSrcPath, "socket.go"), clientGoSocket)
         await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
         await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
+        await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
         await Bun.write(join(clientSrcPath, "websocket.go"), clientGoWebsocket)
         await Bun.write(join(clientSrcPath, "go.mod"), clientGoMod)
         await Bun.write(join(clientSrcPath, "go.sum"), clientGoSum)
@@ -271,6 +297,11 @@ export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> 
     if (!fileExists(join(clientSrcPath, "exec.go"))) {
         Logger.log("Adding missing exec.go to client base...")
         await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
+    }
+
+    if (!fileExists(join(clientSrcPath, "screen.go"))) {
+        Logger.log("Adding missing screen.go to client base...")
+        await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
     }
 }
 
@@ -321,6 +352,26 @@ export async function copyWPEExtensionSourceFiles(wpeExtSrcPath: string): Promis
 }
 
 /**
+ * Copies screen capture daemon source files to dist/artifacts/screen/ if they don't exist.
+ * Files are only written on first build - users can modify them afterwards.
+ */
+export async function copyScreenSourceFiles(screenSrcPath: string): Promise<void> {
+    if (!fileExists(join(screenSrcPath, "main.c"))) {
+        Logger.log("Copying screen capture daemon source files...")
+        const { mkdir } = await import("fs/promises")
+        await mkdir(join(screenSrcPath, "protocols"), { recursive: true })
+
+        await Bun.write(join(screenSrcPath, "main.c"), screenMainC)
+        await Bun.write(join(screenSrcPath, "capture.c"), screenCaptureC)
+        await Bun.write(join(screenSrcPath, "capture.h"), screenCaptureH)
+        await Bun.write(join(screenSrcPath, "pipeline.c"), screenPipelineC)
+        await Bun.write(join(screenSrcPath, "pipeline.h"), screenPipelineH)
+        await Bun.write(join(screenSrcPath, "meson.build"), screenMesonBuild)
+        await Bun.write(join(screenSrcPath, "protocols", "wlr-screencopy-unstable-v1.xml"), screenProtocolXml)
+    }
+}
+
+/**
  * Copies patch files to dist/artifacts/patches/.
  * Always overwrites — patches are not user-modifiable.
  */
@@ -357,6 +408,7 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     const clientSrcPath = join(artifactsDir, "client")
     const cageSrcPath = join(artifactsDir, "cage")
     const wpeExtSrcPath = join(artifactsDir, "wpe-extension")
+    const screenSrcPath = join(artifactsDir, "screen")
 
     const patchesDir = join(artifactsDir, "patches")
 
@@ -369,6 +421,8 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
         mkdir(clientSrcPath, { recursive: true }),
         mkdir(cageSrcPath, { recursive: true }),
         mkdir(wpeExtSrcPath, { recursive: true }),
+        mkdir(screenSrcPath, { recursive: true }),
+        mkdir(join(screenSrcPath, "protocols"), { recursive: true }),
         mkdir(patchesDir, { recursive: true }),
     ])
 
@@ -402,6 +456,7 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     await Bun.write(join(clientSrcPath, "socket.go"), clientGoSocket)
     await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
     await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
+    await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
     await Bun.write(join(clientSrcPath, "websocket.go"), clientGoWebsocket)
     await Bun.write(join(clientSrcPath, "go.mod"), clientGoMod)
     await Bun.write(join(clientSrcPath, "go.sum"), clientGoSum)
@@ -434,8 +489,20 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     await Bun.write(join(wpeExtSrcPath, "extension.c"), wpeExtensionC)
     await Bun.write(join(wpeExtSrcPath, "CMakeLists.txt"), wpeExtensionCMake)
 
+    // Screen capture daemon source files
+    await Bun.write(join(screenSrcPath, "main.c"), screenMainC)
+    await Bun.write(join(screenSrcPath, "capture.c"), screenCaptureC)
+    await Bun.write(join(screenSrcPath, "capture.h"), screenCaptureH)
+    await Bun.write(join(screenSrcPath, "pipeline.c"), screenPipelineC)
+    await Bun.write(join(screenSrcPath, "pipeline.h"), screenPipelineH)
+    await Bun.write(join(screenSrcPath, "meson.build"), screenMesonBuild)
+    await Bun.write(join(screenSrcPath, "protocols", "wlr-screencopy-unstable-v1.xml"), screenProtocolXml)
+
     // Patches
     await Bun.write(join(patchesDir, "cog-autoplay-policy.patch"), cogAutoplayPatch)
+
+    // Dockerfile (for --local-builder Docker image builds)
+    await Bun.write(join(artifactsDir, "Dockerfile"), scriptsBaseDockerfile)
 
     Logger.success("All artifacts restored to built-in versions")
 }

@@ -12,9 +12,9 @@ import { Box, Text, render, useInput, useStdin, useStdout } from "ink"
 import { Terminal } from "@xterm/headless"
 import { STRUX_VERSION } from "../../version"
 
-type TabId = "build" | "vite" | "app" | "cage" | "system" | "qemu" | "console" | "config"
+type TabId = "build" | "vite" | "app" | "cage" | "system" | "qemu" | "console" | "screen" | "config"
 
-type ConfigAction = "restore" | "rebuild-transfer" | "restart-service" | "reboot"
+type ConfigAction = "restore" | "rebuild-transfer" | "rebuild-builder" | "restart-service" | "reboot"
 
 interface InspectorPortInfo {
     path: string
@@ -83,6 +83,7 @@ class DevUIStore {
                 { id: "system", label: "System Logs" },
                 { id: "qemu", label: "QEMU Serial" },
                 { id: "console", label: "Remote Console" },
+                { id: "screen", label: "Screen" },
                 { id: "config", label: "Config" }
             ],
             logs: {
@@ -93,6 +94,7 @@ class DevUIStore {
                 system: [],
                 qemu: [],
                 console: [],
+                screen: [],
                 config: []
             },
             spinnerLine: "",
@@ -104,6 +106,7 @@ class DevUIStore {
                 system: 0,
                 qemu: 0,
                 console: 0,
+                screen: 0,
                 config: 0
             },
             consoleRevision: 0,
@@ -255,6 +258,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
         items: [
             { label: "Restore Strux Artifacts to Built-in Version", action: "restore" },
             { label: "Rebuild Strux Components and Transfer To Device", action: "rebuild-transfer" },
+            { label: "Rebuild Strux-Builder Docker Image with Built-in Artifacts", action: "rebuild-builder" },
         ]
     },
     {

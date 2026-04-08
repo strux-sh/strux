@@ -711,22 +711,19 @@ jobs:
           name: homebrew-formula
           path: .
 
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: strux-sh/homebrew-strux
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
       - name: Push to Homebrew tap
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          # Clone the tap repository using credential helper to avoid token in URL
-          git clone https://github.com/strux-sh/homebrew-strux.git tap
+          cp strux.rb tap/Formula/strux.rb
           cd tap
-          git remote set-url origin https://github.com/strux-sh/homebrew-strux.git
-          git config http.https://github.com/.extraheader "Authorization: basic $(echo -n "x-access-token:${HOMEBREW_TAP_TOKEN}" | base64)"
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-
-          # Copy the formula
-          cp ../strux.rb Formula/strux.rb
-
-          # Commit and push
           git add Formula/strux.rb
           git commit -m "Update strux to ${VERSION}" || echo "No changes to commit"
           git push
