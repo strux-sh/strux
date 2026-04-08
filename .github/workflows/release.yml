@@ -181,7 +181,7 @@ jobs:
             runner: ubuntu-latest
             bun-target: linux-x64
           - arch: arm64
-            runner: ubuntu-latest-arm64
+            runner: [self-hosted, Linux, X64]
             bun-target: linux-arm64
     env:
       VERSION: ${{ needs.get-version.outputs.version }}
@@ -213,6 +213,10 @@ jobs:
           COPY strux-introspect-${TARGETARCH} /usr/local/bin/strux-introspect
           RUN chmod +x /usr/local/bin/strux /usr/local/bin/strux-introspect
           DEOF
+
+      - name: Set up QEMU (for cross-arch builds)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
