@@ -4,10 +4,11 @@ FROM debian:trixie-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Enable multiarch support for cross-compilation
-# Add architectures if they're not already enabled (ignore errors if already added)
-RUN (dpkg --add-architecture arm64 || true) && \
-    (dpkg --add-architecture amd64 || true) && \
-    (dpkg --add-architecture armhf || true)
+# Add architectures one at a time with separate apt-get updates to reduce peak memory
+# (required for QEMU-emulated builds where parsing all package lists at once causes OOM)
+RUN (dpkg --add-architecture arm64 || true) && apt-get update && rm -rf /var/lib/apt/lists/*
+RUN (dpkg --add-architecture amd64 || true) && apt-get update && rm -rf /var/lib/apt/lists/*
+RUN (dpkg --add-architecture armhf || true) && apt-get update && rm -rf /var/lib/apt/lists/*
 
 # Install Go for cross-compiling user applications with CGO support
 RUN apt-get update && apt-get install -y golang
