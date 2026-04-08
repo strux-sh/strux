@@ -27,17 +27,18 @@ program
     .description("A Framework for Building Kiosk-Style Operating Systems")
     .version(STRUX_VERSION)
     .option("--verbose", "Enable verbose output")
+    .option("--local-builder", "Build Docker image locally instead of pulling from GHCR")
     .hook("preAction", (command: Command) => {
 
         const options = command.opts()
 
         if (options.verbose) {
-
-            // We enable verbose output
             Settings.verbose = true
-
         }
 
+        if (options.localBuilder) {
+            Settings.localBuilder = true
+        }
 
     })
 

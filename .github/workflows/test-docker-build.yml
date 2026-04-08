@@ -1,0 +1,176 @@
+name: Test Docker Builder Image
+
+on:
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+  BUN_VERSION: '1.3.6'
+
+jobs:
+  get-version:
+    name: Get Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version from package.json
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  generate-types:
+    name: Generate Runtime Types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Generate types
+        run: go run ./cmd/gen-runtime-types -format=ts > src/types/strux-runtime.ts
+      - name: Upload generated types
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-types
+          path: src/types/strux-runtime.ts
+
+  build-go:
+    name: Build Go (linux-${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: generate-types
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build strux-introspect
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w" -o strux-introspect-linux-${{ matrix.arch }} ./cmd/strux/main.go
+      - name: Upload Go binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: strux-introspect-linux-${{ matrix.arch }}
+          path: strux-introspect-linux-${{ matrix.arch }}
+
+  build-bun:
+    name: Build Bun CLI (linux-${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: [get-version, generate-types]
+    strategy:
+      matrix:
+        include:
+          - target: linux-x64
+          - target: linux-arm64
+    env:
+      STRUX_VERSION: ${{ needs.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Download generated types
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-types
+          path: src/types/
+      - name: Install dependencies
+        run: bun install
+      - name: Build executable
+        run: |
+          bun build src/index.ts --compile --target=bun-${{ matrix.target }} --outfile strux-${{ matrix.target }} --define:process.env.STRUX_VERSION="\"${STRUX_VERSION}\""
+      - name: Upload Bun binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: strux-${{ matrix.target }}
+          path: strux-${{ matrix.target }}
+
+  build-docker:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [get-version, build-bun, build-go]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux Bun binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'strux-linux-*'
+          path: docker-binaries/
+          merge-multiple: true
+
+      - name: Download Linux Go binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'strux-introspect-linux-*'
+          path: docker-binaries/
+          merge-multiple: true
+
+      - name: Prepare build context
+        run: |
+          # Place binaries named by arch for multi-arch COPY
+          cp docker-binaries/strux-linux-x64 strux-binary-amd64
+          cp docker-binaries/strux-linux-arm64 strux-binary-arm64
+          cp docker-binaries/strux-introspect-linux-amd64 strux-introspect-amd64
+          cp docker-binaries/strux-introspect-linux-arm64 strux-introspect-arm64
+
+          # Append lines to copy binaries into the image
+          cp src/assets/scripts-base/Dockerfile Dockerfile.builder
+          cat >> Dockerfile.builder << 'DEOF'
+
+          # --- Added by CI: bake strux CLI and introspect binary into the image ---
+          ARG TARGETARCH
+          COPY strux-binary-${TARGETARCH} /usr/local/bin/strux
+          COPY strux-introspect-${TARGETARCH} /usr/local/bin/strux-introspect
+          RUN chmod +x /usr/local/bin/strux /usr/local/bin/strux-introspect
+          DEOF
+
+          echo "=== Dockerfile.builder tail ==="
+          tail -10 Dockerfile.builder
+          echo "=== Build context files ==="
+          ls -la strux-binary-* strux-introspect-*
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU for multi-arch
+        uses: docker/setup-qemu-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.builder
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/strux-sh/strux-builder:${{ env.VERSION }}
+            ghcr.io/strux-sh/strux-builder:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

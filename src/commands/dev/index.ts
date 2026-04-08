@@ -118,13 +118,15 @@ export async function dev(): Promise<void> {
         if (viteProcess) {
             viteProcess.kill()
             // Also explicitly stop the Docker container in case bash ignores SIGTERM
-            try {
-                Bun.spawn(["docker", "stop", "-t", "3", "strux-vite-dev"], {
-                    stdout: "pipe",
-                    stderr: "pipe",
-                })
-            } catch {
-                // Container may already be stopped
+            if (!Settings.inContainer) {
+                try {
+                    Bun.spawn(["docker", "stop", "-t", "3", "strux-vite-dev"], {
+                        stdout: "pipe",
+                        stderr: "pipe",
+                    })
+                } catch {
+                    // Container may already be stopped
+                }
             }
         }
 
@@ -284,48 +286,65 @@ export async function dev(): Promise<void> {
         }
     }
 
-    // Start the Vite dev server for the frontend inside Docker
-    // This ensures consistent Linux-native npm packages and proper caching
-    Logger.title("Starting Vite Dev Server (Docker)")
+    // Start the Vite dev server for the frontend
+    if (Settings.inContainer) {
+        // Running inside the builder container — run Vite directly
+        Logger.title("Starting Vite Dev Server")
 
-    // Build Docker command for Vite dev server
-    // Uses the same strux-builder image with port mapping for HMR
-    // Remove any leftover container from a previous session that didn't clean up
-    try {
-        Bun.spawn(["docker", "rm", "-f", "strux-vite-dev"], {
-            stdout: "pipe",
-            stderr: "pipe",
+        viteProcess = Bun.spawn(["/bin/bash", "-c", "cd /project/frontend && npm install && npm run dev -- --host 0.0.0.0 --port 5173"], {
+            stdio: useUi ? ["pipe", "pipe", "pipe"] : ["inherit", "inherit", "inherit"],
+            cwd: Settings.projectPath,
         })
-    } catch {
-        // Ignore - container may not exist
+
+        if (useUi && viteProcess.stdout) {
+            streamLines(viteProcess.stdout as any, (line) => devUI?.appendLog("vite", line))
+        }
+        if (useUi && viteProcess.stderr) {
+            streamLines(viteProcess.stderr as any, (line) => devUI?.appendLog("vite", line))
+        }
+
+        Logger.success("Vite dev server started on http://localhost:5173")
+    } else {
+        // Running on the host — start Vite inside Docker
+        Logger.title("Starting Vite Dev Server (Docker)")
+
+        // Remove any leftover container from a previous session that didn't clean up
+        try {
+            Bun.spawn(["docker", "rm", "-f", "strux-vite-dev"], {
+                stdout: "pipe",
+                stderr: "pipe",
+            })
+        } catch {
+            // Ignore - container may not exist
+        }
+
+        const viteDockerArgs: string[] = [
+            "docker", "run", "--rm",
+            "--name", "strux-vite-dev",
+            "-v", `${Settings.projectPath}:/project`,
+            "-p", "5173:5173",  // Vite dev server port
+            "-w", "/project/frontend",
+            // Enable polling for file watching (Docker doesn't propagate native fs events well)
+            "-e", "CHOKIDAR_USEPOLLING=true",
+            "-e", "CHOKIDAR_INTERVAL=100",
+            "strux-builder",
+            "/bin/bash", "-c",
+            "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+        ]
+
+        viteProcess = Bun.spawn(viteDockerArgs, {
+            stdio: useUi ? ["pipe", "pipe", "pipe"] : ["inherit", "inherit", "inherit"]
+        })
+
+        if (useUi && viteProcess.stdout) {
+            streamLines(viteProcess.stdout as any, (line) => devUI?.appendLog("vite", line))
+        }
+        if (useUi && viteProcess.stderr) {
+            streamLines(viteProcess.stderr as any, (line) => devUI?.appendLog("vite", line))
+        }
+
+        Logger.success("Vite dev server started on http://localhost:5173 (running in Docker)")
     }
-
-    const viteDockerArgs: string[] = [
-        "docker", "run", "--rm",
-        "--name", "strux-vite-dev",
-        "-v", `${Settings.projectPath}:/project`,
-        "-p", "5173:5173",  // Vite dev server port
-        "-w", "/project/frontend",
-        // Enable polling for file watching (Docker doesn't propagate native fs events well)
-        "-e", "CHOKIDAR_USEPOLLING=true",
-        "-e", "CHOKIDAR_INTERVAL=100",
-        "strux-builder",
-        "/bin/bash", "-c",
-        "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
-    ]
-
-    viteProcess = Bun.spawn(viteDockerArgs, {
-        stdio: useUi ? ["pipe", "pipe", "pipe"] : ["inherit", "inherit", "inherit"]
-    })
-
-    if (useUi && viteProcess.stdout) {
-        streamLines(viteProcess.stdout as any, (line) => devUI?.appendLog("vite", line))
-    }
-    if (useUi && viteProcess.stderr) {
-        streamLines(viteProcess.stderr as any, (line) => devUI?.appendLog("vite", line))
-    }
-
-    Logger.success("Vite dev server started on http://localhost:5173 (running in Docker)")
 
     // Handle Vite process exit
     viteProcess.exited.then((code) => {

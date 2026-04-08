@@ -258,6 +258,9 @@ ENV PATH="$BUN_INSTALL/bin:${PATH}"
 # This ensures scripts run via /bin/sh -c can access node/npm
 ENV PATH="/opt/nodejs/current/bin:${PATH}"
 
+# Signal to strux that it's running inside the builder container
+ENV STRUX_IN_CONTAINER=1
+
 # Create workspace directory
 WORKDIR /build
 

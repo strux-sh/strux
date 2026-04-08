@@ -2,6 +2,28 @@
 
 ## v0.3.0
 
+### New: Pre-built Docker Builder Image
+
+The build system now pulls a pre-built `strux-builder` Docker image from GHCR (`ghcr.io/strux-sh/strux-builder:<version>`) instead of building it locally from a Dockerfile on every machine. This dramatically speeds up first-time setup and CLI upgrades — a `docker pull` replaces what was previously a full image build with cross-compilers, WebKit dev libraries, and dozens of packages.
+
+The published image also includes the `strux` CLI and `strux-introspect` binaries, enabling direct use as a CI runner image. In CI environments like GitLab CI, you can build Strux OS images without Docker-in-Docker:
+
+```yaml
+build:
+  image: ghcr.io/strux-sh/strux-builder:0.3.0
+  script:
+    - strux build qemu
+```
+
+**How it works:**
+- When `strux build` runs, it first tries to pull `ghcr.io/strux-sh/strux-builder:<version>` and tags it locally as `strux-builder`
+- If the pull fails (offline, registry down, pre-release version), it falls back to building from the embedded Dockerfile — so offline development always works
+- When strux detects it's running inside the builder container (via `STRUX_IN_CONTAINER=1`), it runs build scripts directly instead of spawning nested Docker containers
+- Verbose output is auto-enabled in container/CI environments when no TTY is detected
+
+**New CLI flag:**
+- `--local-builder` — Forces a local Dockerfile build instead of pulling from GHCR. Useful for offline work, custom Dockerfile modifications, or development on strux itself
+
 ### Minor Changes
 
 - Added `host` as a BSP architecture option. When `arch: host` is set in `bsp.yaml`, the build targets the host machine's native architecture instead of a hardcoded value. New projects created with `strux init` now default to `arch: host` instead of baking in the specific host architecture at init time.

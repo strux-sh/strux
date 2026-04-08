@@ -58,11 +58,31 @@ export class SettingsConfig {
     // When set, injects a go.mod replace directive and mounts the repo into Docker
     localRuntime: string | null = null
 
+    // Whether strux is running inside the builder container (detected from STRUX_IN_CONTAINER env var)
+    inContainer = false
+
+    // Force local Docker image build instead of pulling from GHCR
+    localBuilder = false
+
+    // The GHCR image reference for the builder, based on the current strux version
+    get builderImage(): string {
+        return `ghcr.io/strux-sh/strux-builder:${this.struxVersion}`
+    }
+
 
     constructor() {
 
         // Default Verbosity
         this.verbose = false
+
+        // Detect if running inside the builder container
+        if (process.env.STRUX_IN_CONTAINER === "1") {
+            this.inContainer = true
+            // Auto-enable verbose in container (CI environments want full output)
+            if (!process.stdout.isTTY) {
+                this.verbose = true
+            }
+        }
 
         // Default Template
         this.template = "vanilla"

@@ -166,6 +166,78 @@ jobs:
           name: strux-${{ matrix.target }}
           path: strux-${{ matrix.target }}${{ matrix.os == 'windows' && '.exe' || '' }}
 
+  # Build and push the strux-builder Docker image to GHCR
+  build-docker:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [get-version, build-bun, build-go]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux Bun binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'strux-linux-*'
+          path: docker-binaries/
+          merge-multiple: true
+
+      - name: Download Linux Go binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'strux-introspect-linux-*'
+          path: docker-binaries/
+          merge-multiple: true
+
+      - name: Prepare build context
+        run: |
+          # Place binaries named by arch for multi-arch COPY
+          cp docker-binaries/strux-linux-x64 strux-binary-amd64
+          cp docker-binaries/strux-linux-arm64 strux-binary-arm64
+          cp docker-binaries/strux-introspect-linux-amd64 strux-introspect-amd64
+          cp docker-binaries/strux-introspect-linux-arm64 strux-introspect-arm64
+
+          # Append lines to copy binaries into the image
+          cp src/assets/scripts-base/Dockerfile Dockerfile.builder
+          cat >> Dockerfile.builder << 'DEOF'
+
+          # --- Added by CI: bake strux CLI and introspect binary into the image ---
+          ARG TARGETARCH
+          COPY strux-binary-${TARGETARCH} /usr/local/bin/strux
+          COPY strux-introspect-${TARGETARCH} /usr/local/bin/strux-introspect
+          RUN chmod +x /usr/local/bin/strux /usr/local/bin/strux-introspect
+          DEOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU for multi-arch
+        uses: docker/setup-qemu-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.builder
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/strux-sh/strux-builder:${{ env.VERSION }}
+            ghcr.io/strux-sh/strux-builder:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # Create .deb package for Linux
   build-deb:
     name: Build .deb Package
