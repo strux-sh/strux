@@ -6,6 +6,12 @@
 
 - Cog browser is now compiled from source during the build process. The Debian-packaged Cog 0.18.5 lacks support for configuring the WebKit autoplay policy, which was added in Cog 0.19.1 (not available in any Debian repository). The build now clones Cog 0.18.5 from source, applies a backported patch that adds the `--autoplay-policy` CLI flag, and cross-compiles it alongside the WPE extension. The patched binary is installed over the Debian package version. The Cog launch script (`strux-run-cog.sh`) now passes `--autoplay-policy=allow`, permitting unmuted media autoplay without requiring a user gesture.
 
+## v0.2.2
+
+### Minor Changes
+
+- New projects now include a default single-monitor display configuration in `strux.yaml` with `Virtual-1` output name. Previously the display block was entirely commented out, requiring manual setup.
+
 ## v0.2.1
 
 ### Bug Fixes
