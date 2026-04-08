@@ -1,6 +1,11 @@
 name: Test Docker Builder Image
 
 on:
+  push:
+    branches:
+      - feature/v0.3.0
+    paths:
+      - '.github/workflows/test-docker-build.yml'
   workflow_dispatch:
 
 env:
