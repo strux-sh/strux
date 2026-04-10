@@ -160,6 +160,7 @@ const DETACH_BYTE = 0x1c
 function rewriteCursorKeys(s: string, applicationMode: boolean): string {
 
     if (!applicationMode || s.length < 3) return s
+    // eslint-disable-next-line
     if (s.indexOf("\x1b[") === -1) return s
 
     let out = ""

@@ -44,7 +44,7 @@ export function DetailPanel({ store, resource, logs, focused, filter, sshActive,
                     <Text bold color={theme.colors.primary}>
                         {resource.label}
                     </Text>
-                    <Text color={theme.colors.accent}>SSH</Text>
+                    <Text color={theme.colors.accent}>Shell</Text>
                     <Text color={theme.colors.muted} wrap="truncate">
                         Ctrl-\ detach · s reattach · exit in shell ends session
                     </Text>

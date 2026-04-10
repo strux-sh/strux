@@ -33,6 +33,7 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
 
     client.onDisconnect((_ws) => {
         Logger.warning("Client disconnected")
+        dev.ssh.clearAll()
         dev.ui.store.updateStatus("device", "disconnected")
         dev.ui.store.updateStatus("device:app", "stopped")
         dev.ui.store.updateStatus("device:cage", "stopped")

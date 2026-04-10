@@ -286,7 +286,7 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
 
     if (focusPane === "ssh") {
         keybinds = [
-            { key: "Ctrl-\\", label: "detach SSH" },
+            { key: "Ctrl-\\", label: "detach Shell" },
         ]
     } else if (focusPane === "config") {
         keybinds = [
@@ -299,7 +299,7 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
             { key: "j/k", label: "navigate" },
             { key: "Enter", label: "focus logs" },
             ...(selectedResource!.name === "device" && store.statuses.device === "connected"
-                ? [{ key: "s", label: store.sshSessionIds.length > 0 && !store.sshSessionID ? "reattach SSH" : "SSH" }]
+                ? [{ key: "s", label: store.sshSessionIds.length > 0 && !store.sshSessionID ? "reattach Shell" : "Shell" }]
                 : []),
             { key: "p", label: store.statuses.watcher === "paused" ? "resume watcher" : "pause watcher" },
             { key: "c", label: "config" },

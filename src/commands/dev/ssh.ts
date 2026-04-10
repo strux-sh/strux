@@ -153,6 +153,19 @@ export class SSHManager {
     }
 
 
+    /** Drop all sessions without messaging the device (e.g. device disconnected / rebooted). */
+    clearAll(): void {
+
+        for (const session of this.sessions.values()) {
+            session.onExit?.(-1)
+        }
+        this.sessions.clear()
+        this.sessionScrollback.clear()
+        this.onSessionsChanged?.()
+
+    }
+
+
     private appendScrollback(sessionID: string, data: string): void {
 
         let buf = (this.sessionScrollback.get(sessionID) ?? "") + data
