@@ -151,6 +151,20 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
     // Keyboard handling
     useInput((input, key) => {
 
+        // SSH mode: all keystrokes are owned by TerminalView's raw stdin handler (including the
+        // Ctrl-\ detach byte). Ink's cooked useInput is bypassed entirely while SSH is focused —
+        // we don't even intercept Ctrl-C, so the user can still send SIGINT to a remote process.
+        if (focusPane === "ssh") {
+            return
+        }
+
+        // Ctrl-C quits from any non-SSH pane (config, filter, detail, resources).
+        if (key.ctrl && input === "c") {
+            onExit()
+            exit()
+            return
+        }
+
         // Config mode: Esc goes back
         if (focusPane === "config") {
 
@@ -160,23 +174,6 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
             }
 
             // Let ConfigPanel handle j/k/Enter
-            return
-
-        }
-
-        // SSH mode: Esc detaches (PTY keeps running), everything else goes to terminal
-        if (focusPane === "ssh") {
-
-            if (key.escape) {
-                if (store.sshSessionID) {
-                    onSSHDetach(store.sshSessionID)
-                    store.setSSHSession(null)
-                }
-                setFocusPane("detail")
-                return
-            }
-
-            // All other input handled by TerminalView's useInput
             return
 
         }
@@ -289,7 +286,7 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
 
     if (focusPane === "ssh") {
         keybinds = [
-            { key: "Esc", label: "detach SSH" },
+            { key: "Ctrl-\\", label: "detach SSH" },
         ]
     } else if (focusPane === "config") {
         keybinds = [
@@ -371,6 +368,13 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
                         sshActive={sshActive && selectedResource!.name === "device"}
                         onSSHInput={handleSSHInput}
                         onSSHGetScrollback={onSSHGetScrollback}
+                        onSSHDetach={() => {
+                            if (store.sshSessionID) {
+                                onSSHDetach(store.sshSessionID)
+                                store.setSSHSession(null)
+                            }
+                            setFocusPane("detail")
+                        }}
                         availableRows={termHeight - 6}
                         availableCols={termWidth - 30}
                     />

@@ -10,6 +10,16 @@ import { Logger } from "../../utils/log"
 import type { Subprocess } from "bun"
 
 
+/** Env for Vite/npm child: stdout is piped (not a TTY), so picocolors would strip colors unless forced. */
+function viteChildEnv(): NodeJS.ProcessEnv {
+
+    const env = { ...process.env, FORCE_COLOR: "1" } as Record<string, string | undefined>
+    delete env.NO_COLOR
+    return env as NodeJS.ProcessEnv
+
+}
+
+
 export class ViteManager {
 
     private process: Subprocess | null = null
@@ -91,6 +101,7 @@ export class ViteManager {
             "-w", "/project/frontend",
             "-e", "CHOKIDAR_USEPOLLING=true",
             "-e", "CHOKIDAR_INTERVAL=100",
+            "-e", "FORCE_COLOR=1",
             Settings.builderImage,
             "/bin/bash", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5173",
         ], {
@@ -107,6 +118,7 @@ export class ViteManager {
             "cd /project/frontend && npm install && npm run dev -- --host 0.0.0.0 --port 5173",
         ], {
             stdio: ["pipe", "pipe", "pipe"],
+            env: viteChildEnv(),
         })
 
     }

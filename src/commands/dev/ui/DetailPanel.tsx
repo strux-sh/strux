@@ -25,12 +25,14 @@ interface DetailPanelProps {
     onSSHInput: (data: string) => void
     /** Live PTY scrollback for replay (resize / reattach must read fresh bytes). */
     onSSHGetScrollback: (sessionID: string) => string
+    /** Ctrl-\ leaves SSH. Single byte, never forwarded to the remote. */
+    onSSHDetach?: () => void
     availableRows?: number
     availableCols?: number
 }
 
 
-export function DetailPanel({ store, resource, logs, focused, filter, sshActive, onSSHInput, onSSHGetScrollback, availableRows, availableCols }: DetailPanelProps) {
+export function DetailPanel({ store, resource, logs, focused, filter, sshActive, onSSHInput, onSSHGetScrollback, onSSHDetach, availableRows, availableCols }: DetailPanelProps) {
 
     // Show terminal when SSH session is active on device resource
     if (sshActive && resource.name === "device") {
@@ -43,8 +45,8 @@ export function DetailPanel({ store, resource, logs, focused, filter, sshActive,
                         {resource.label}
                     </Text>
                     <Text color={theme.colors.accent}>SSH</Text>
-                    <Text color={theme.colors.muted}>
-                        Esc detach · s reattach · type exit in shell to end session
+                    <Text color={theme.colors.muted} wrap="truncate">
+                        Ctrl-\ detach · s reattach · exit in shell ends session
                     </Text>
                 </Box>
 
@@ -56,6 +58,7 @@ export function DetailPanel({ store, resource, logs, focused, filter, sshActive,
                     cols={availableCols ?? 76}
                     getScrollback={() => onSSHGetScrollback(store.sshSessionID!)}
                     onInput={onSSHInput}
+                    onDetach={onSSHDetach}
                 />
 
             </Box>

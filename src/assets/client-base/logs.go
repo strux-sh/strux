@@ -28,6 +28,12 @@ const (
 	LogStreamTypeFile
 )
 
+// Lines to replay when starting journalctl follow (recent history before live tail).
+const journalHistoryLines = 800
+
+// Max bytes of each file-backed log to send on connect before tailing new lines only.
+const maxFileHistoryBytes = 512 * 1024
+
 // LogStream represents an active log stream
 type LogStream struct {
 	ID         string
@@ -67,8 +73,8 @@ func (l *LogStreamer) StartJournalctlStream(streamID string, callback LogCallbac
 
 	l.logger.Info("Starting journalctl stream: %s", streamID)
 
-	// Create the journalctl command
-	cmd := exec.Command("journalctl", "-f", "--no-pager", "-o", "short-precise")
+	// -n + -f: print recent history then follow (plain -f only shows new entries after start)
+	cmd := exec.Command("journalctl", "-n", fmt.Sprintf("%d", journalHistoryLines), "-f", "--no-pager", "-o", "short-precise")
 
 	// Create the stream
 	stream := &LogStream{
@@ -99,8 +105,7 @@ func (l *LogStreamer) StartServiceStream(streamID, serviceName string, callback 
 
 	l.logger.Info("Starting service stream: %s for %s", streamID, serviceName)
 
-	// Create the journalctl command for the specific service
-	cmd := exec.Command("journalctl", "-f", "--no-pager", "-u", serviceName, "-o", "short-precise")
+	cmd := exec.Command("journalctl", "-n", fmt.Sprintf("%d", journalHistoryLines), "-f", "--no-pager", "-u", serviceName, "-o", "short-precise")
 
 	// Create the stream
 	stream := &LogStream{
@@ -191,7 +196,7 @@ func (l *LogStreamer) StartEarlyLogStream(streamID string, callback LogCallback)
 
 	l.logger.Info("Starting early log stream: %s", streamID)
 
-	cmd := exec.Command("journalctl", "-b", "-f", "--no-pager", "-o", "short-precise")
+	cmd := exec.Command("journalctl", "-b", "-n", fmt.Sprintf("%d", journalHistoryLines), "-f", "--no-pager", "-o", "short-precise")
 	stream := &LogStream{
 		ID:         streamID,
 		StreamType: LogStreamTypeCommand,
@@ -211,6 +216,51 @@ func (l *LogStreamer) StartEarlyLogStream(streamID string, callback LogCallback)
 
 	l.streams[streamID] = stream
 	return nil
+}
+
+// emitRecentFileHistory sends up to maxFileHistoryBytes of existing log lines, then leaves the read position at EOF.
+func (l *LogStreamer) emitRecentFileHistory(file *os.File, callback LogCallback) {
+
+	stat, err := file.Stat()
+	if err != nil {
+		l.logger.Error("Stat log file: %v", err)
+		return
+	}
+
+	size := stat.Size()
+	start := int64(0)
+	if size > maxFileHistoryBytes {
+		start = size - maxFileHistoryBytes
+	}
+
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		l.logger.Error("Seek log file: %v", err)
+		return
+	}
+
+	if start > 0 {
+		r := bufio.NewReader(file)
+		_, _ = r.ReadBytes('\n')
+	}
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			callback(line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		l.logger.Error("Reading log history: %v", err)
+	}
+
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		l.logger.Error("Seek log file end: %v", err)
+	}
 }
 
 // startCommandStream starts a command and reads its output
@@ -295,8 +345,8 @@ func (l *LogStreamer) startFileStream(stream *LogStream, filePath string) error 
 		stream.file = file
 		stream.mu.Unlock()
 
-		// Seek to end of file (we only want new content)
-		file.Seek(0, io.SeekEnd)
+		// Send recent on-disk history, then tail new writes (was EOF-only before)
+		l.emitRecentFileHistory(file, stream.callback)
 
 		// Read file in a loop, tailing new content
 		l.tailFile(stream, file)

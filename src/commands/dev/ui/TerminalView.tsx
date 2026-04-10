@@ -11,7 +11,7 @@
  */
 import React, { useEffect, useRef } from "react"
 import cliBoxes from "cli-boxes"
-import { Box, useStdout, type DOMElement } from "ink"
+import { Box, useStdout, useStdin, type DOMElement } from "ink"
 import { Terminal } from "@xterm/headless"
 import { theme } from "./theme"
 import type { TUIStore } from "./store"
@@ -133,10 +133,23 @@ interface TerminalViewProps {
     /** 1-based stdout column for the first interior cell (inside the Ink border). */
     colOffset?: number
     onInput: (data: string) => void
+    /** Detach the SSH session and return to the TUI. Triggered by the dedicated detach byte (Ctrl-\). */
+    onDetach?: () => void
 }
 
 
-export function TerminalView({ store, focused, rows = 24, cols = 80, getScrollback, initialReplay = "", rowOffset = 6, colOffset = 30, onInput }: TerminalViewProps) {
+/**
+ * Byte we watch for in the stdin stream to leave SSH. Ctrl-\ (0x1c, "FS" — file separator).
+ * Explicitly NOT a newline — those are Ctrl-J (0x0a, LF) and Ctrl-M (0x0d, CR). 0x1c is not bound
+ * by bash readline, zsh, vim, tmux, screen, less, or man. In cooked tty mode it would raise SIGQUIT
+ * via VQUIT, but Ink puts stdin in raw mode (ISIG disabled) so it arrives as a plain byte, which
+ * we intercept before it ever reaches the remote PTY. As a single byte there is no chord, no timer,
+ * no buffering, no CSI disambiguation, no interaction with readline's `keyseq-timeout`, no vim lag.
+ */
+const DETACH_BYTE = 0x1c
+
+
+export function TerminalView({ store, focused, rows = 24, cols = 80, getScrollback, initialReplay = "", rowOffset = 6, colOffset = 30, onInput, onDetach }: TerminalViewProps) {
 
     const termRef = useRef<Terminal | null>(null)
     const boxRef = useRef<DOMElement | null>(null)
@@ -161,6 +174,7 @@ export function TerminalView({ store, focused, rows = 24, cols = 80, getScrollba
     const getScrollbackRef = useRef(getScrollback)
     getScrollbackRef.current = getScrollback
     const { stdout } = useStdout()
+    const { internal_eventEmitter: stdinInputBus } = useStdin()
 
 
     // Direct stdout write — bypasses Ink
@@ -390,51 +404,56 @@ export function TerminalView({ store, focused, rows = 24, cols = 80, getScrollba
     }, [rows, cols])
 
 
-    // Raw stdin passthrough — bypasses Ink's input parser entirely.
-    // This avoids Ink's stateful parser corrupting escape sequences after Ctrl combos.
+    // Raw stdin passthrough — same byte stream Ink uses. Ink reads process.stdin via `readable` +
+    // read(), not `data`; a separate stdin `data` listener often misses input and breaks arrows /
+    // ncurses. We subscribe to Ink's internal `input` bus (emitted right after each read).
+    //
+    // The rule is dead simple: scan each chunk for DETACH_BYTE (Ctrl-], 0x1d). If present, forward
+    // everything up to it verbatim and trigger detach. The detach byte itself is never sent to the
+    // remote. Everything else — CSI/SS3, bare Esc, UTF-8 multibyte, Meta combos, NUL bytes, raw
+    // binary — is passed through unmodified. No parsing, no buffering, no timers, no state. This
+    // makes the hot path O(n) and impossible to mis-trigger.
     useEffect(() => {
 
         if (!focused) return
 
-        const onData = (data: Buffer) => {
+        const chunkToString = (chunk: unknown): string => {
+            if (typeof chunk === "string") return chunk
+            if (Buffer.isBuffer(chunk)) return chunk.toString("utf8")
+            return String(chunk)
+        }
 
-            const str = data.toString()
+        const onInputChunk = (chunk: unknown) => {
 
-            // Intercept Escape to exit SSH (only bare Escape, not escape sequences)
-            // Bare Escape = single \x1b byte with no following bytes
-            if (str === "\x1b") {
-                // Wait briefly to distinguish bare Escape from escape sequence
-                const timer = setTimeout(() => {
-                    // If no more data arrived, treat as bare Escape — but we still
-                    // forward it since Escape is handled by App's useInput
-                }, 50)
+            const s = chunkToString(chunk)
+            if (s.length === 0) return
 
-                // Store timer so next data can cancel it
-                ;(onData as any)._escTimer = timer
-                onInput(str)
+            // Fast path: no detach byte in this chunk. Forward everything as-is.
+            let idx = -1
+            for (let i = 0; i < s.length; i++) {
+                if (s.charCodeAt(i) === DETACH_BYTE) { idx = i; break }
+            }
+            if (idx === -1) {
+                onInput(s)
                 return
             }
 
-            // Cancel pending Escape timer if more data arrived (part of sequence)
-            if ((onData as any)._escTimer) {
-                clearTimeout((onData as any)._escTimer)
-                ;(onData as any)._escTimer = null
+            // Forward anything that came before the detach byte, then leave the session.
+            // Bytes after the detach byte are discarded — we're tearing down the view anyway.
+            if (idx > 0) {
+                onInput(s.slice(0, idx))
             }
-
-            onInput(str)
+            onDetach?.()
 
         }
 
-        process.stdin.on("data", onData)
+        stdinInputBus.on("input", onInputChunk)
 
         return () => {
-            process.stdin.off("data", onData)
-            if ((onData as any)._escTimer) {
-                clearTimeout((onData as any)._escTimer)
-            }
+            stdinInputBus.off("input", onInputChunk)
         }
 
-    }, [focused, onInput])
+    }, [focused, onInput, onDetach, stdinInputBus])
 
 
     // Ink only reserves (cols+2)×(rows+2); round border is drawn in ansiRoundBorder + renderFrame.
