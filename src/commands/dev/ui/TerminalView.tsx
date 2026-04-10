@@ -149,6 +149,39 @@ interface TerminalViewProps {
 const DETACH_BYTE = 0x1c
 
 
+/**
+ * Rewrite host-terminal cursor/navigation keys from CSI form (ESC [ A) to SS3 form (ESC O A)
+ * when the remote PTY has DECCKM enabled. Full-screen ncurses apps like htop, less, and vim
+ * call `tput smkx`, which under xterm-256color terminfo declares kcuu1=\EOA etc. — so a bare
+ * ESC [ A never matches any key binding and arrow navigation silently breaks. Host terminals
+ * (Terminal.app, iTerm, Ghostty, etc.) always emit CSI arrows regardless of what mode the
+ * remote is in, so we have to translate on the fly based on xterm-headless's tracked mode.
+ */
+function rewriteCursorKeys(s: string, applicationMode: boolean): string {
+
+    if (!applicationMode || s.length < 3) return s
+    if (s.indexOf("\x1b[") === -1) return s
+
+    let out = ""
+    let i = 0
+    while (i < s.length) {
+        if (i + 2 < s.length && s.charCodeAt(i) === 0x1b && s.charCodeAt(i + 1) === 0x5b) {
+            const c = s.charCodeAt(i + 2)
+            // A B C D = arrows; H F = Home/End
+            if (c === 0x41 || c === 0x42 || c === 0x43 || c === 0x44 || c === 0x48 || c === 0x46) {
+                out += "\x1bO" + s[i + 2]
+                i += 3
+                continue
+            }
+        }
+        out += s[i]
+        i++
+    }
+    return out
+
+}
+
+
 export function TerminalView({ store, focused, rows = 24, cols = 80, getScrollback, initialReplay = "", rowOffset = 6, colOffset = 30, onInput, onDetach }: TerminalViewProps) {
 
     const termRef = useRef<Terminal | null>(null)
@@ -433,15 +466,17 @@ export function TerminalView({ store, focused, rows = 24, cols = 80, getScrollba
             for (let i = 0; i < s.length; i++) {
                 if (s.charCodeAt(i) === DETACH_BYTE) { idx = i; break }
             }
+            const appMode = termRef.current?.modes.applicationCursorKeysMode ?? false
+
             if (idx === -1) {
-                onInput(s)
+                onInput(rewriteCursorKeys(s, appMode))
                 return
             }
 
             // Forward anything that came before the detach byte, then leave the session.
             // Bytes after the detach byte are discarded — we're tearing down the view anyway.
             if (idx > 0) {
-                onInput(s.slice(0, idx))
+                onInput(rewriteCursorKeys(s.slice(0, idx), appMode))
             }
             onDetach?.()
 
