@@ -27,6 +27,24 @@ The `strux dev` terminal interface has been rebuilt from the ground up. The old 
 - This means existing devices flashed with v0.2.x images continue to work against a v0.3.0 dev server without reflashing, and adding a new protocol version is just a new entry in the `PROTOCOLS` map.
 - A typed `Socket<TSend, TReceive>` wrapper enforces message type safety at the handler layer, making it impossible to send or dispatch a message that isn't in the protocol union.
 
+### New: Runtime Dev Mode Control
+
+The built-in runtime API now exposes `strux.dev`, allowing a running production image to inspect and control its dev-mode configuration without rebuilding or reflashing first.
+
+**Runtime API:**
+- `strux.dev.GetConfig()` returns whether dev mode is currently enabled and the stored dev configuration.
+- `strux.dev.SetConfig(config)` writes the dev server configuration without changing the enabled state.
+- `strux.dev.SetEnabled(enabled)` toggles whether the stored dev configuration is active.
+- `strux.dev.RestartService()` restarts the Strux systemd service so the new mode takes effect.
+- `strux.dev.Apply(config, enabled)` and `strux.dev.ApplyAndRestart(config, enabled)` provide one-call helpers for writing config, toggling dev mode, and optionally restarting.
+
+This enables production UIs to offer controlled developer access, for example a settings screen that enables dev mode on a deployed device and reconnects it to a local `strux dev` session.
+
+**Security warning:**
+- Dev mode is powerful and should be treated as a privileged maintenance feature. Once enabled, a connected dev server can replace application binaries, transfer Strux components, reboot the device, and perform workflows that can effectively reflash or take over the device.
+- Do not expose `strux.dev` controls to untrusted users or unauthenticated production screens. Gate this behind your own authentication, physical access requirements, signed/admin-only flows, or device-management policy.
+- Be especially careful on public kiosks, customer-owned hardware, or remotely accessible networks. Leaving dev mode available without a lock can turn a production device into a writable development target.
+
 ### New: Pre-built Docker Builder Image
 
 The build system now pulls a pre-built `strux-builder` Docker image from GHCR (`ghcr.io/strux-sh/strux-builder:<version>`) instead of building it locally from a Dockerfile on every machine. This dramatically speeds up first-time setup and CLI upgrades — a `docker pull` replaces what was previously a full image build with cross-compilers, WebKit dev libraries, and dozens of packages.
