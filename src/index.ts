@@ -47,7 +47,7 @@ program.command("init")
     .description("Initialize a new Strux project")
     .argument("<project-name>", "The name of the project to create")
     .option("-t, --template <template>", "Frontend Template (vanilla, react, or vue)", "vanilla")
-    .option("-a, --arch <arch>", "Target Architecture (arm64, x86_64, or armhf)", "arm64")
+    .option("-a, --arch <arch>", "Target Architecture (host, arm64, x86_64, or armhf)", "host")
     .action(async (projectName: string, options: {template?: string, arch?: string}) => {
         try {
             Settings.template = (options.template ?? "vanilla") as TemplateType
@@ -61,8 +61,8 @@ program.command("init")
             }
 
             // Validate arch
-            if (!["arm64", "x86_64", "armhf"].includes(Settings.arch)) {
-                Logger.error(`Invalid architecture: ${Settings.arch}. Must be one of: arm64, x86_64, armhf`)
+            if (!["host", "arm64", "x86_64", "armhf"].includes(Settings.arch)) {
+                Logger.error(`Invalid architecture: ${Settings.arch}. Must be one of: host, arm64, x86_64, armhf`)
                 process.exit(1)
             }
 

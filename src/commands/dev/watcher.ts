@@ -89,18 +89,20 @@ export class FileWatcher {
     }
 
 
-    resume(): void {
+    resume(replay = true): void {
 
         this._paused = false
         const changed = this.changedWhilePaused
         this.changedWhilePaused = new Set()
 
-        if (changed.size > 0) {
+        if (replay && changed.size > 0) {
             // Determine build type from accumulated changes
             const hasYaml = [...changed].some((f) => f.endsWith(".yaml"))
             const buildType = hasYaml ? "full" as const : "app" as const
             this.emit(`Resumed with ${changed.size} pending change(s), triggering ${buildType} rebuild...`)
             this.triggerBuild(buildType)
+        } else if (!replay && changed.size > 0) {
+            this.emit(`Watcher resumed without replaying ${changed.size} pending change(s)`)
         } else {
             this.emit("Watcher resumed")
         }

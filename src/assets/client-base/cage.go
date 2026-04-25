@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -198,15 +199,29 @@ func (c *CageLauncher) WaitForDevServer(url string, timeout time.Duration) bool 
 	return false
 }
 
+func withLaunchToken(rawURL, token string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+
+	query := parsed.Query()
+	query.Set("strux_launch", token)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
 // writeDisplayMap writes the output-to-URL mapping file that Cage reads via --display-map.
 // Format: one "output_name=url" per line, plus "output_name.resolution=WxH" for resolution.
 func (c *CageLauncher) writeDisplayMap(opts LaunchOptions) error {
 	var lines []string
+	launchToken := fmt.Sprintf("%d", time.Now().UnixNano())
 
 	if opts.DisplayConfig != nil {
 		for _, monitor := range opts.DisplayConfig.Monitors {
-			cogURL := opts.CogURL + monitor.Path
+			cogURL := withLaunchToken(opts.CogURL+monitor.Path, launchToken)
 			for _, name := range monitor.Names {
+				c.logger.Info("Display map: %s -> %s", name, cogURL)
 				lines = append(lines, fmt.Sprintf("%s=%s", name, cogURL))
 				if monitor.Resolution != "" {
 					lines = append(lines, fmt.Sprintf("%s.resolution=%s", name, monitor.Resolution))

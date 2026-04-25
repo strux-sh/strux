@@ -6,12 +6,13 @@
  *
  */
 import { join } from "path"
+import { rm } from "node:fs/promises"
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
-import { fileExists } from "../../utils/path"
+import { directoryExists, fileExists } from "../../utils/path"
 import { build as buildCommand } from "../build"
-import { compileApplication, compileCage, compileWPE, compileScreen, buildStruxClient } from "../build/steps"
+import { compileApplication, compileCage, compileFrontend, compileWPE, compileScreen, buildStruxClient } from "../build/steps"
 import { forceRestoreAllArtifacts } from "../build/artifacts"
 import { Runner } from "../../utils/run"
 import { loadBuildCacheManifest, shouldRebuildStep, updateStepCache } from "../build/cache"
@@ -41,6 +42,11 @@ export class DevServer {
         this.ui.store.setSSHSessionIds(this.ssh.getActiveSessions())
     })
     clientKey = ""
+    private componentAckWaiters = new Map<string, {
+        resolve: () => void
+        reject: (error: Error) => void
+        timeout: ReturnType<typeof setTimeout>
+    }>()
 
 
     static getInstance(): DevServer {
@@ -92,17 +98,13 @@ export class DevServer {
 
         }
 
-
-        // Run the initial build
-        if (!Settings.isRemoteOnly) {
-            await this.initialBuild()
-        }
-
-        // Register error handlers
+        // Register error handlers before long-running work (build, TUI)
         this.registerErrorHandlers()
 
-        // Start the TUI and route Logger through it
-        if (process.env.STRUX_DEV_NO_UI !== "1") {
+        const useUi = process.env.STRUX_DEV_NO_UI !== "1"
+
+        // Start the TUI first so local initial build output streams into the device log
+        if (useUi) {
 
             this.ui.start({
                 onExit: () => this.stop(),
@@ -151,6 +153,10 @@ export class DevServer {
             this.ui.store.setBspName(Settings.bspName ?? "qemu")
 
             Logger.setSink((entry) => {
+                if (entry.level === "spinner" || entry.level === "spinner-clear") {
+                    return
+                }
+
                 this.ui.store.appendLog("device", {
                     level: entry.level,
                     message: entry.message,
@@ -158,6 +164,24 @@ export class DevServer {
                     timestamp: Date.now(),
                 })
             })
+
+        }
+
+        if (!Settings.isRemoteOnly) {
+
+            if (useUi) {
+                this.ui.store.setBuildStatus("building")
+            }
+
+            try {
+                await this.initialBuild()
+            } finally {
+
+                if (useUi) {
+                    this.ui.store.setBuildStatus("idle")
+                }
+
+            }
 
         }
 
@@ -311,67 +335,84 @@ export class DevServer {
                 }
 
                 const bspName = Settings.bspName!
+                const watcherWasPaused = this.watcher.paused
 
-                if (Settings.localBuilder) {
-                    Logger.info("Rebuilding Docker builder image (--local-builder)...")
-                    await Runner.prepareDockerImage()
+                if (!watcherWasPaused) {
+                    this.watcher.pause()
+                    this.ui.store.updateStatus("watcher", "paused")
                 }
 
-                Logger.info("Rebuilding Strux components...")
-
-                Runner.skipChown = true
                 try {
-                    await compileCage()
-                    await compileWPE()
-                    await compileScreen()
-                    await buildStruxClient(true)
-                } finally {
-                    Runner.skipChown = false
-                    if (!Settings.noChown) {
-                        await Runner.chownProjectFiles()
+                    if (Settings.localBuilder) {
+                        Logger.info("Rebuilding Docker builder image (--local-builder)...")
+                        await Runner.prepareDockerImage()
                     }
-                }
 
-                Logger.info("Components built, transferring to device...")
+                    Logger.info("Rebuilding Strux components, application, and frontend...")
 
-                const cagePath = join(Settings.projectPath, "dist", "cache", bspName, "cage")
-                const wpePath = join(Settings.projectPath, "dist", "cache", bspName, "libstrux-extension.so")
-                const clientPath = join(Settings.projectPath, "dist", "cache", bspName, "client")
-                const cogPath = join(Settings.projectPath, "dist", "cache", bspName, "cog")
-                const screenPath = join(Settings.projectPath, "dist", "cache", bspName, "screen")
+                    Runner.skipChown = true
+                    try {
+                        await compileFrontend()
+                        await compileApplication()
+                        await compileCage()
+                        await compileWPE()
+                        await compileScreen()
+                        await buildStruxClient(true)
+                    } finally {
+                        Runner.skipChown = false
+                        if (!Settings.noChown) {
+                            await Runner.chownProjectFiles()
+                        }
+                    }
 
-                const sendComponent = async (filePath: string, destPath: string) => {
-                    const file = Bun.file(filePath)
-                    if (!await file.exists()) return
-                    const data = Buffer.from(await file.arrayBuffer()).toString("base64")
-                    client.broadcast({ type: "component", payload: { data, destPath } })
-                }
+                    Logger.info("Components built, transferring to device...")
 
-                await sendComponent(cagePath, "/usr/bin/cage")
-                await sendComponent(wpePath, "/usr/lib/wpe-web-extensions/libstrux-extension.so")
-                await sendComponent(clientPath, "/strux/client")
-                await sendComponent(cogPath, "/usr/bin/cog")
-                await sendComponent(screenPath, "/usr/bin/strux-screen")
+                    const frontendArchivePath = await this.createFrontendTransferArchive()
+                    const cagePath = join(Settings.projectPath, "dist", "cache", bspName, "cage")
+                    const wpePath = join(Settings.projectPath, "dist", "cache", bspName, "libstrux-extension.so")
+                    const clientPath = join(Settings.projectPath, "dist", "cache", bspName, "client")
+                    const cogPath = join(Settings.projectPath, "dist", "cache", bspName, "cog")
+                    const screenPath = join(Settings.projectPath, "dist", "cache", bspName, "screen")
 
-                // Send scripts
-                const scriptsDir = join(Settings.projectPath, "dist", "artifacts", "scripts")
-                await sendComponent(join(scriptsDir, "init.sh"), "/init")
-                await sendComponent(join(scriptsDir, "strux.sh"), "/strux/strux.sh")
-                await sendComponent(join(scriptsDir, "strux-network.sh"), "/usr/bin/strux-network.sh")
-                await sendComponent(join(scriptsDir, "strux-run-cog.sh"), "/strux/strux-run-cog.sh")
+                    const sendComponent = async (filePath: string, destPath: string) => {
+                        const file = Bun.file(filePath)
+                        if (!await file.exists()) return
+                        const data = Buffer.from(await file.arrayBuffer()).toString("base64")
+                        const ack = this.waitForComponentAck(destPath)
+                        client.broadcast({ type: "component", payload: { data, destPath } })
+                        await ack
+                    }
 
-                // Send cage env if it exists
-                const cageEnvPath = join(Settings.projectPath, "dist", "cache", bspName, ".cage-env")
-                await sendComponent(cageEnvPath, "/strux/.cage-env")
+                    await sendComponent(cagePath, "/usr/bin/cage")
+                    await sendComponent(wpePath, "/usr/lib/wpe-web-extensions/libstrux-extension.so")
+                    await sendComponent(join(Settings.projectPath, "dist", "cache", bspName, "app", "main"), "/strux/.main-update")
+                    await sendComponent(clientPath, "/strux/.client-update")
+                    await sendComponent(cogPath, "/usr/bin/cog")
+                    await sendComponent(screenPath, "/usr/bin/strux-screen")
+                    await sendComponent(frontendArchivePath, "/strux/frontend")
+                    Logger.info("Frontend archive transferred and extracted on device")
 
-                // Reboot after transfer
-                setTimeout(() => {
+                    // Send scripts
+                    const scriptsDir = join(Settings.projectPath, "dist", "artifacts", "scripts")
+                    await sendComponent(join(scriptsDir, "init.sh"), "/init")
+                    await sendComponent(join(scriptsDir, "strux.sh"), "/strux/strux.sh")
+                    await sendComponent(join(scriptsDir, "strux-network.sh"), "/usr/bin/strux-network.sh")
+                    await sendComponent(join(scriptsDir, "strux-run-cog.sh"), "/strux/strux-run-cog.sh")
+
+                    // Send cage env if it exists
+                    const cageEnvPath = join(Settings.projectPath, "dist", "cache", bspName, ".cage-env")
+                    await sendComponent(cageEnvPath, "/strux/.cage-env")
+
                     Logger.info("Sending reboot command to device...")
                     client.broadcast({ type: "system-restart" })
-                }, 2000)
-
-                Logger.success("Components transferred to device, rebooting...")
-                this.ui.store.flashConfigSuccess("Components transferred, rebooting...")
+                    Logger.success("Components and frontend transferred to device, rebooting...")
+                    this.ui.store.flashConfigSuccess("Components and frontend transferred, rebooting...")
+                } finally {
+                    if (!watcherWasPaused) {
+                        this.watcher.resume(false)
+                        this.ui.store.updateStatus("watcher", "running")
+                    }
+                }
 
             } else if (action === "rebuild-builder") {
 
@@ -414,6 +455,81 @@ export class DevServer {
         } finally {
             this.ui.store.setConfigBusy(false)
         }
+
+    }
+
+
+    private async createFrontendTransferArchive(): Promise<string> {
+
+        const frontendDir = join(Settings.projectPath, "dist", "cache", "frontend")
+        if (!directoryExists(frontendDir)) {
+            throw new Error(`Compiled frontend not found at ${frontendDir}`)
+        }
+
+        const archivePath = join(Settings.projectPath, "dist", "cache", "frontend-transfer.zip")
+        await rm(archivePath, { force: true })
+
+        const proc = Bun.spawn(["zip", "-rq", archivePath, "."], {
+            cwd: frontendDir,
+            stdout: "pipe",
+            stderr: "pipe",
+        })
+
+        const stderr = await new Response(proc.stderr).text()
+        const exitCode = await proc.exited
+        if (exitCode !== 0) {
+            throw new Error(stderr.trim() || `zip exited with code ${exitCode}`)
+        }
+
+        return archivePath
+
+    }
+
+
+    waitForComponentAck(destPath: string, timeoutMs = 30000): Promise<void> {
+
+        const existing = this.componentAckWaiters.get(destPath)
+        if (existing) {
+            clearTimeout(existing.timeout)
+            existing.reject(new Error(`Component ack waiter replaced for ${destPath}`))
+            this.componentAckWaiters.delete(destPath)
+        }
+
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.componentAckWaiters.delete(destPath)
+                reject(new Error(`Timed out waiting for component ack: ${destPath}`))
+            }, timeoutMs)
+
+            this.componentAckWaiters.set(destPath, {
+                resolve: () => {
+                    clearTimeout(timeout)
+                    this.componentAckWaiters.delete(destPath)
+                    resolve()
+                },
+                reject: (error) => {
+                    clearTimeout(timeout)
+                    this.componentAckWaiters.delete(destPath)
+                    reject(error)
+                },
+                timeout,
+            })
+        })
+
+    }
+
+
+    handleComponentAck(destPath: string, status: "updated" | "error", message: string): void {
+
+        const waiter = this.componentAckWaiters.get(destPath)
+        if (!waiter) return
+
+        if (status === "error") {
+            waiter.reject(new Error(message || `Component transfer failed: ${destPath}`))
+            return
+        }
+
+        waiter.resolve()
 
     }
 

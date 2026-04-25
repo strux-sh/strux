@@ -67,6 +67,15 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
+fi
+
 # Get kernel configuration from BSP config
 KERNEL_SOURCE=$(yq '.bsp.boot.kernel.source' "$BSP_CONFIG" 2>/dev/null || echo "")
 KERNEL_VERSION=$(yq '.bsp.boot.kernel.version' "$BSP_CONFIG" 2>/dev/null || echo "")

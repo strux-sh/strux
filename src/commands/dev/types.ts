@@ -26,6 +26,8 @@ interface ClientMessageBinaryRequested {type: "binary-requested"}
 // Components
 interface ClientMessageComponent { type: "component", payload: { data: string, destPath: string }}
 interface ClientMessageComponentAck { type: "component-ack", payload: { status: "updated" | "error", message: string, destPath: string }}
+interface ClientMessageComponentArchive { type: "component-archive", payload: { data: string, extractPath: string }}
+interface ClientMessageComponentArchiveAck { type: "component-archive-ack", payload: { status: "updated" | "error", message: string, extractPath: string }}
 
 // Device Information
 interface DeviceInfoInspectorPort { path: string, port: number }
@@ -64,6 +66,7 @@ export type ClientMessageSendable = |
     ClientMessageBinaryNew |
     ClientMessageBinaryAck |
     ClientMessageComponent |
+    ClientMessageComponentArchive |
     ClientMessageDeviceInfoRequested |
     ClientMessageScreenRequest |
     ClientMessageUpdate |
@@ -84,6 +87,7 @@ export type ClientMessageReceivable = |
     ClientMessageBinaryRequested |
     ClientMessageBinaryAck |
     ClientMessageComponentAck |
+    ClientMessageComponentArchiveAck |
     ClientMessageDeviceInfo |
     ClientMessageUpdateCheckRequest |
     ClientMessageSSHOutput |

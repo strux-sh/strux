@@ -24,6 +24,15 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    echo "Resolved host architecture to $ARCH"
+fi
+
 # Map architecture to kernel ARCH and cross-compiler
 if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
     KERNEL_ARCH="x86_64"

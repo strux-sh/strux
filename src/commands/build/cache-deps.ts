@@ -135,8 +135,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         yamlKeys: [
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
         ],
-        // Build script is internal, extension sources come from dist/extension/
-        internalAssets: ["@build-wpe-script"],
+        // Build script and Cog patch are internal, extension sources come from dist/extension/
+        internalAssets: ["@build-wpe-script", "@cog-autoplay-patch"],
         // Fallback to internal assets if dist/extension/ doesn't exist yet (first build)
         fallbackInternalAssets: ["@wpe-extension-sources"],
         // BSP-specific cache (architecture-dependent .so + patched cog binary)

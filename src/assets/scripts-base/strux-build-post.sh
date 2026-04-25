@@ -420,6 +420,15 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
+fi
+
 # Map Strux arch to Debian arch
 case "$ARCH" in
     arm64|aarch64)

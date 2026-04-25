@@ -74,7 +74,7 @@ export async function init() {
     await mkdir(join(Settings.projectPath, "bsp", "qemu"), { recursive: true })
 
     // Write the BSP.yaml file in the directory
-    await Bun.write(join(Settings.projectPath, "bsp", "qemu", "bsp.yaml"), templateBaseBSPYAML.replaceAll("${projectName}", Settings.projectName).replaceAll("${version}", Settings.struxVersion).replaceAll("${hostArch}", "host"))
+    await Bun.write(join(Settings.projectPath, "bsp", "qemu", "bsp.yaml"), templateBaseBSPYAML.replaceAll("${projectName}", Settings.projectName).replaceAll("${version}", Settings.struxVersion).replaceAll("${hostArch}", Settings.arch))
 
     // Write the make-image.sh file in the scripts directory
     await Bun.write(join(Settings.projectPath, "bsp", "qemu", "scripts", "make-image.sh"), templateBaseBSPMakeImage)

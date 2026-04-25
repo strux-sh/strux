@@ -35,5 +35,6 @@ rm -rf "$CACHE_DIR/frontend"
 # Create the frontend directory if it doesn't exist
 mkdir -p "$CACHE_DIR/frontend"
 
-# Copy the built frontend to the cache/frontend directory
-cp -r dist/* "$CACHE_DIR/frontend"
+# Copy the built frontend to the cache/frontend directory.
+# Using dist/. preserves the full directory contents, including dotfiles.
+cp -R dist/. "$CACHE_DIR/frontend/"

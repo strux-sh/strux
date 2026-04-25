@@ -169,6 +169,7 @@ export function computeInternalAssetHashes(): Record<string, string> {
         "@build-client-script": hashStrings(scriptBuildClient),
         "@build-kernel-script": hashStrings(scriptBuildKernel),
         "@build-bootloader-script": hashStrings(scriptBuildBootloader),
+        "@cog-autoplay-patch": hashStrings(cogAutoplayPatch),
 
         // Client base (Go sources)
         "@client-base": hashStrings(

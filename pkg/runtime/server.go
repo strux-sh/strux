@@ -6,13 +6,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // spaHandler serves static files from a directory and falls back to index.html
 // for any path that doesn't match a real file. This enables client-side routing
 // with frameworks like Vue Router, React Router, etc.
 type spaHandler struct {
-	staticDir string
+	staticDir  string
 	fileServer http.Handler
 }
 
@@ -57,8 +58,23 @@ func getCwd() string {
 	return cwd
 }
 
+func resolveStaticDir() string {
+	if info, err := os.Stat("/strux/frontend"); err == nil && info.IsDir() {
+		return "/strux/frontend"
+	}
+	return "./frontend"
+}
+
+func resolveHTTPAddr() string {
+	addr := strings.TrimSpace(os.Getenv("STRUX_HTTP_ADDR"))
+	if addr == "" {
+		return "127.0.0.1:8080"
+	}
+	return addr
+}
+
 // Start begins the IPC bridge and HTTP server.
-// It serves static files from ./frontend on port 8080.
+// It serves static files from /strux/frontend when available, otherwise ./frontend.
 // This function blocks on the HTTP server — call it from main().
 func Start(app interface{}) error {
 	rt, err := Init(app)
@@ -82,17 +98,19 @@ func Init(app interface{}) (*Runtime, error) {
 	return rt, nil
 }
 
-// Serve starts the HTTP server on port 8080, serving static files from ./frontend.
+// Serve starts the HTTP server on port 8080, serving static files from
+// /strux/frontend when available, otherwise ./frontend.
 // This function blocks until the server exits.
 func (rt *Runtime) Serve() error {
-	staticDir := "./frontend"
+	staticDir := resolveStaticDir()
+	addr := resolveHTTPAddr()
 	handler := &spaHandler{
 		staticDir:  staticDir,
 		fileServer: http.FileServer(http.Dir(staticDir)),
 	}
 
-	log.Println("Strux: Starting HTTP server on :8080")
-	log.Println("Strux: Serving static files from ./frontend (SPA fallback enabled)")
+	log.Printf("Strux: Starting HTTP server on %s", addr)
+	log.Printf("Strux: Serving static files from %s (SPA fallback enabled)", staticDir)
 
-	return http.ListenAndServe(":8080", handler)
+	return http.ListenAndServe(addr, handler)
 }

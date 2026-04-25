@@ -57,6 +57,15 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
+fi
+
 # Get bootloader configuration from BSP config
 BOOTLOADER_TYPE=$(yq '.bsp.boot.bootloader.type' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 BOOTLOADER_SOURCE=$(yq '.bsp.boot.bootloader.source' "$BSP_CONFIG" 2>/dev/null || echo "")

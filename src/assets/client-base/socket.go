@@ -32,16 +32,36 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+func describeExtractedFrontend(frontendPath string) string {
+	indexPath := filepath.Join(frontendPath, "index.html")
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Sprintf("Updated at %s (index.html unreadable: %v)", frontendPath, err)
+	}
+
+	indexChecksum := fmt.Sprintf("%x", sha256.Sum256(indexData))
+	entries, err := os.ReadDir(frontendPath)
+	if err != nil {
+		return fmt.Sprintf("Updated at %s (index=%s)", frontendPath, indexChecksum[:16])
+	}
+
+	return fmt.Sprintf("Updated at %s (index=%s, top-level=%d)", frontendPath, indexChecksum[:16], len(entries))
+}
 
 // BinaryPayload represents the payload for binary updates
 type BinaryPayload struct {
@@ -50,7 +70,7 @@ type BinaryPayload struct {
 
 // LogLinePayload represents a log line to send to the server
 type LogLinePayload struct {
-	Type      string `json:"type"`      // "journalctl", "service", "app", "cage", "screen", "early", "client"
+	Type      string `json:"type"` // "journalctl", "service", "app", "cage", "screen", "early", "client"
 	Line      string `json:"line"`
 	Timestamp string `json:"timestamp"`
 }
@@ -102,11 +122,24 @@ type ComponentPayload struct {
 	DestPath string `json:"destPath"` // Target filesystem path on device
 }
 
+// ComponentArchivePayload represents a zip archive update from the server
+type ComponentArchivePayload struct {
+	Data        string `json:"data"`        // Base64 encoded zip data
+	ExtractPath string `json:"extractPath"` // Target directory to replace on device
+}
+
 // ComponentAckPayload represents the acknowledgment of a component update
 type ComponentAckPayload struct {
-	Status   string `json:"status"`   // "updated", "error"
+	Status   string `json:"status"` // "updated", "error"
 	Message  string `json:"message"`
 	DestPath string `json:"destPath"`
+}
+
+// ComponentArchiveAckPayload represents the acknowledgment of an archive update
+type ComponentArchiveAckPayload struct {
+	Status      string `json:"status"` // "updated", "error"
+	Message     string `json:"message"`
+	ExtractPath string `json:"extractPath"`
 }
 
 // DeviceInfoInspectorPort describes one inspector port for one monitor path
@@ -265,7 +298,7 @@ func (s *SocketClient) setupEventHandlers(ws *WSClient) {
 			s.logger.Error("Failed to parse binary-new payload: %v", err)
 			return
 		}
-		s.handleBinaryUpdate(binaryPayload.Data)
+		s.handleBinaryUpdate(binaryPayload)
 	})
 
 	// Handle ssh-start event
@@ -318,6 +351,15 @@ func (s *SocketClient) setupEventHandlers(ws *WSClient) {
 			return
 		}
 		s.handleComponentUpdate(componentPayload)
+	})
+
+	ws.On("component-archive", func(payload json.RawMessage) {
+		var archivePayload ComponentArchivePayload
+		if err := json.Unmarshal(payload, &archivePayload); err != nil {
+			s.logger.Error("Failed to parse component-archive payload: %v", err)
+			return
+		}
+		s.handleComponentArchiveUpdate(archivePayload)
 	})
 
 	// Handle system-restart-strux event
@@ -482,11 +524,11 @@ func (s *SocketClient) SendSSHExitReceived(sessionID string, code int) {
 }
 
 // handleBinaryUpdate handles a binary update from the server
-func (s *SocketClient) handleBinaryUpdate(data string) {
+func (s *SocketClient) handleBinaryUpdate(binaryPayload BinaryPayload) {
 	s.logger.Info("Received binary update")
 
 	// Decode base64 data
-	decoded, err := base64.StdEncoding.DecodeString(data)
+	decoded, err := base64.StdEncoding.DecodeString(binaryPayload.Data)
 	if err != nil {
 		s.logger.Error("Failed to decode binary data: %v", err)
 		s.SendBinaryAck("error", "", "")
@@ -579,6 +621,18 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 
 	s.logger.Info("Decoded component: %d bytes -> %s", len(decoded), payload.DestPath)
 
+	if payload.DestPath == "/strux/frontend" {
+		if err := extractZipToPath(decoded, payload.DestPath); err != nil {
+			s.logger.Error("Failed to extract frontend archive: %v", err)
+			s.SendComponentAck("error", "Failed to extract frontend archive: "+err.Error(), payload.DestPath)
+			return
+		}
+
+		s.logger.Info("Frontend updated at %s", payload.DestPath)
+		s.SendComponentAck("updated", describeExtractedFrontend(payload.DestPath), payload.DestPath)
+		return
+	}
+
 	// Compute checksum for verification
 	checksum := fmt.Sprintf("%x", sha256.Sum256(decoded))
 
@@ -627,6 +681,30 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 	s.SendComponentAck("updated", fmt.Sprintf("Updated at %s", payload.DestPath), payload.DestPath)
 }
 
+// handleComponentArchiveUpdate handles a zip archive update from the server.
+func (s *SocketClient) handleComponentArchiveUpdate(payload ComponentArchivePayload) {
+	s.logger.Info("Received component archive -> %s", payload.ExtractPath)
+
+	decoded, err := base64.StdEncoding.DecodeString(payload.Data)
+	if err != nil {
+		s.logger.Error("Failed to decode archive data: %v", err)
+		s.SendComponentArchiveAck("error", "Failed to decode data: "+err.Error(), payload.ExtractPath)
+		return
+	}
+
+	checksum := fmt.Sprintf("%x", sha256.Sum256(decoded))
+	s.logger.Info("Decoded archive: %d bytes -> %s", len(decoded), payload.ExtractPath)
+
+	if err := extractZipToPath(decoded, payload.ExtractPath); err != nil {
+		s.logger.Error("Failed to extract archive: %v", err)
+		s.SendComponentArchiveAck("error", "Failed to extract archive: "+err.Error(), payload.ExtractPath)
+		return
+	}
+
+	s.logger.Info("Archive extracted at %s (checksum: %s)", payload.ExtractPath, checksum[:16])
+	s.SendComponentArchiveAck("updated", fmt.Sprintf("Updated at %s", payload.ExtractPath), payload.ExtractPath)
+}
+
 // SendComponentAck sends a component update acknowledgment to the server
 func (s *SocketClient) SendComponentAck(status, message, destPath string) {
 	if s.ws == nil {
@@ -642,6 +720,138 @@ func (s *SocketClient) SendComponentAck(status, message, destPath string) {
 	if err := s.ws.Emit("component-ack", payload); err != nil {
 		s.logger.Error("Failed to send component ack: %v", err)
 	}
+}
+
+// SendComponentArchiveAck sends an archive update acknowledgment to the server.
+func (s *SocketClient) SendComponentArchiveAck(status, message, extractPath string) {
+	if s.ws == nil {
+		return
+	}
+
+	payload := ComponentArchiveAckPayload{
+		Status:      status,
+		Message:     message,
+		ExtractPath: extractPath,
+	}
+
+	if err := s.ws.Emit("component-archive-ack", payload); err != nil {
+		s.logger.Error("Failed to send component archive ack: %v", err)
+	}
+}
+
+func extractZipToPath(data []byte, extractPath string) error {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return fmt.Errorf("open zip: %w", err)
+	}
+
+	parentDir := filepath.Dir(extractPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("create parent directory: %w", err)
+	}
+
+	tempPath := extractPath + ".tmp-extract"
+	if err := os.RemoveAll(tempPath); err != nil {
+		return fmt.Errorf("remove temp directory: %w", err)
+	}
+	if err := os.MkdirAll(tempPath, 0755); err != nil {
+		return fmt.Errorf("create temp directory: %w", err)
+	}
+
+	defer os.RemoveAll(tempPath)
+
+	for _, file := range reader.File {
+		relativePath, err := sanitizeZipPath(file.Name)
+		if err != nil {
+			return err
+		}
+		if relativePath == "" {
+			continue
+		}
+
+		targetPath := filepath.Join(tempPath, relativePath)
+		if err := ensureChildPath(tempPath, targetPath); err != nil {
+			return err
+		}
+
+		info := file.FileInfo()
+		if info.IsDir() {
+			if err := os.MkdirAll(targetPath, info.Mode()); err != nil {
+				return fmt.Errorf("create directory %s: %w", targetPath, err)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("create directory for %s: %w", targetPath, err)
+		}
+
+		if err := extractZipFile(file, targetPath, info.Mode()); err != nil {
+			return err
+		}
+	}
+
+	if err := os.RemoveAll(extractPath); err != nil {
+		return fmt.Errorf("remove existing target: %w", err)
+	}
+
+	if err := os.Rename(tempPath, extractPath); err != nil {
+		return fmt.Errorf("replace target directory: %w", err)
+	}
+
+	return nil
+}
+
+func sanitizeZipPath(name string) (string, error) {
+	cleaned := filepath.Clean(strings.TrimPrefix(name, "/"))
+	for strings.HasPrefix(cleaned, "./") {
+		cleaned = strings.TrimPrefix(cleaned, "./")
+	}
+
+	if cleaned == "." || cleaned == "" {
+		return "", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("archive entry escapes target path: %s", name)
+	}
+
+	return cleaned, nil
+}
+
+func ensureChildPath(rootPath, targetPath string) error {
+	rootWithSep := rootPath + string(os.PathSeparator)
+	if targetPath != rootPath && !strings.HasPrefix(targetPath, rootWithSep) {
+		return fmt.Errorf("archive entry escapes target path: %s", targetPath)
+	}
+	return nil
+}
+
+func extractZipFile(file *zip.File, targetPath string, mode os.FileMode) error {
+	reader, err := file.Open()
+	if err != nil {
+		return fmt.Errorf("open archive entry %s: %w", file.Name, err)
+	}
+	defer reader.Close()
+
+	if mode == 0 {
+		mode = 0644
+	}
+
+	writer, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return fmt.Errorf("create file %s: %w", targetPath, err)
+	}
+
+	if _, err := io.Copy(writer, reader); err != nil {
+		writer.Close()
+		return fmt.Errorf("write file %s: %w", targetPath, err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close file %s: %w", targetPath, err)
+	}
+
+	return nil
 }
 
 // SendDeviceInfo reports device IP and inspector port assignments to the dev server

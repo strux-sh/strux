@@ -63,6 +63,15 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
+fi
+
 # ============================================================================
 # ARCHITECTURE MAPPING FOR GO CROSS-COMPILATION
 # ============================================================================
@@ -141,4 +150,3 @@ ${GO_PRIVATE_ENV}go build -buildvcs=false -o "$CACHE_DIR/app/main" .
 
 
 progress "Go application built successfully"
-

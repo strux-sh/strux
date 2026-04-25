@@ -86,7 +86,13 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
 
     // Component acknowledgments
     client.on("component-ack", (payload, _ws) => {
-        Logger.info(`Component ${payload.destPath || payload.message}: ${payload.status}`)
+        const detail = payload.message ? ` (${payload.message})` : ""
+        Logger.info(`Component ${payload.destPath || payload.message}: ${payload.status}${detail}`)
+        dev.handleComponentAck(payload.destPath, payload.status, payload.message)
+    })
+
+    client.on("component-archive-ack", (payload, _ws) => {
+        Logger.info(`Archive ${payload.extractPath || payload.message}: ${payload.status}`)
     })
 
 
@@ -109,7 +115,6 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
         const binaryFile = Bun.file(binaryPath)
 
         if (await binaryFile.exists()) {
-
             const binaryData = Buffer.from(await binaryFile.arrayBuffer())
             const base64 = binaryData.toString("base64")
             client.send(ws, { type: "binary-new", payload: { data: base64 } })

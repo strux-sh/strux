@@ -59,6 +59,15 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
+fi
+
 # ============================================================================
 # ARCHITECTURE MAPPING FOR CMAKE CROSS-COMPILATION
 # ============================================================================
@@ -347,4 +356,3 @@ cp "$COG_BUILD_DIR/launcher/cog" "$COG_BINARY" || {
 rm -rf "$COG_SOURCE_DIR"
 
 progress "Patched Cog compiled successfully"
-
