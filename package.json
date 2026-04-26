@@ -15,7 +15,8 @@
     "generate:types": "go run ./cmd/gen-runtime-types -format=ts > src/types/strux-runtime.ts",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "bats": "bats -r tests/bats"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

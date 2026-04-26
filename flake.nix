@@ -196,6 +196,11 @@ VERSIONEOF
             git
             gnumake
             qemu
+
+            (bats.withLibraries (p: [
+                p.bats-assert
+                p.bats-support
+            ]))
           ];
 
           shellHook = ''
