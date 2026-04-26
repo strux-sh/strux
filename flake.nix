@@ -183,18 +183,19 @@ VERSIONEOF
 
         # Development shell with all required tools
         devShells.default = pkgs.mkShell {
-          buildInputs = [
+          buildInputs = with pkgs; [
             # Core build tools
-            pkgs.go
-            pkgs.bun
+            go
+            bun
 
             # Node.js for frontend development (Vite, etc.)
-            pkgs.nodejs
-            pkgs.nodePackages.npm
+            nodejs
+            nodePackages.npm
 
             # Development utilities
-            pkgs.git
-            pkgs.gnumake
+            git
+            gnumake
+            qemu
           ];
 
           shellHook = ''
