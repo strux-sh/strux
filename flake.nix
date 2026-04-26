@@ -100,7 +100,7 @@
           outputHashAlgo = "sha256";
           # This hash needs to be updated when bun.lock changes
           # Run: nix build .#bunDeps 2>&1 | grep "got:" to get the new hash
-          outputHash = "sha256-nAroCA2wTbtCZywJh0m0PGLFKzTQHPsBXnd/IhC7pcs=";
+          outputHash = "sha256-4BZ89VkL8/nGy7P74FtrKJhuE7Kif8Xg+C6KS+/Hces=";
         };
 
         # Bun CLI: strux
