@@ -332,6 +332,13 @@ chmod +x "$ROOTFS_DIR/usr/bin/cage"
 # Copy the Frontend (from shared cache - architecture-agnostic)
 cp -r "$SHARED_CACHE/frontend" "$ROOTFS_DIR/strux/frontend"
 
+# Backward compatibility for apps built with older runtimes.
+# Those runtimes serve ./frontend while strux.sh starts the app from /,
+# so they resolve the frontend bundle as /frontend.
+if [ ! -e "$ROOTFS_DIR/frontend" ] && [ ! -L "$ROOTFS_DIR/frontend" ]; then
+    ln -s /strux/frontend "$ROOTFS_DIR/frontend"
+fi
+
 # Copy Strux Client (Handles a bunch of system services) - from BSP-specific cache
 cp "$BSP_CACHE/client" "$ROOTFS_DIR/strux/client"
 chmod +x "$ROOTFS_DIR/strux/client"

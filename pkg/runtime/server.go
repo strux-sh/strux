@@ -18,6 +18,11 @@ type spaHandler struct {
 }
 
 func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/__strux/health" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	// Clean the path and build the full file path
 	path := filepath.Join(h.staticDir, filepath.Clean(r.URL.Path))
 

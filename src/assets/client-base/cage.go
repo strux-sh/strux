@@ -60,7 +60,7 @@ func (c *CageLauncher) WaitForBackend(timeout time.Duration) bool {
 
 	for time.Now().Before(deadline) {
 		attempt++
-		resp, err := client.Head("http://localhost:8080")
+		resp, err := client.Head("http://localhost:8080/__strux/health")
 		if err != nil {
 			if attempt%10 == 1 { // Log every 10th attempt (every 5 seconds)
 				c.logger.Info("Backend not ready yet (attempt %d): %v", attempt, err)
