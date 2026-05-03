@@ -63,6 +63,8 @@ export async function kernelMenuconfig(options: { save?: boolean } = {}): Promis
         env: {
             PRESELECTED_BSP: bspName,
             BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+            HOST_ARCH: Settings.arch,
+            TARGET_ARCH: Settings.targetArch,
             KERNEL_SOURCE: kernelSource
         }
     })
@@ -77,6 +79,8 @@ export async function kernelMenuconfig(options: { save?: boolean } = {}): Promis
         env: {
             PRESELECTED_BSP: bspName,
             BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+            HOST_ARCH: Settings.arch,
+            TARGET_ARCH: Settings.targetArch,
             SAVE_CONFIG: options.save ? "true" : "false"
         }
     })
@@ -108,6 +112,8 @@ export async function kernelClean(options: { mode?: "mrproper" | "clean" | "full
         env: {
             PRESELECTED_BSP: bspName,
             BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+            HOST_ARCH: Settings.arch,
+            TARGET_ARCH: Settings.targetArch,
             CLEAN_MODE: cleanMode
         }
     })

@@ -225,6 +225,7 @@ func (rt *Runtime) serializeTreeNode(node *structTreeNode) map[string]interface{
 // registerBuiltinExtensions registers all built-in Strux framework extensions
 func (rt *Runtime) registerBuiltinExtensions() {
 	rt.registerExtension(&extension.BootExtension{}, &extension.BootMethods{})
+	rt.registerExtension(&extension.DevExtension{}, extension.NewDevMethods())
 }
 
 // extractMetadata gets package and struct name from the app type

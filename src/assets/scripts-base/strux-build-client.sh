@@ -20,8 +20,7 @@ progress "Building Strux Client (Go)..."
 
 progress "Reading configuration from YAML files..."
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 CLIENT_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/client"
 
 # Get the active BSP name from strux.yaml
@@ -51,6 +50,15 @@ ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
 fi
 
 # ============================================================================
@@ -86,8 +94,7 @@ progress "Building Strux Client for $ARCH_LABEL..."
 # Build the Go client with cross-compilation
 # ============================================================================
 
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
-CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
+CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 
 # Ensure the cache directory exists
 mkdir -p "$CACHE_DIR"
@@ -104,20 +111,21 @@ progress "Downloading Go dependencies..."
 
 # Always run go mod tidy first to ensure go.sum is up to date
 # This is necessary because the source files are copied fresh each build
-go mod tidy
+GOTOOLCHAIN=local go mod tidy
 
 # Then download all dependencies
-go mod download
+GOTOOLCHAIN=local go mod download
 
 # Build the client binary
 progress "Compiling Strux Client for $ARCH_LABEL..."
 
+GOTOOLCHAIN=local \
 CGO_ENABLED=1 \
 GOOS=linux \
 GOARCH="$GO_ARCH" \
 GOARM="${GOARM:-}" \
 CC="$CROSS_COMPILER" \
-go build -buildvcs=false -o "$BUILD_TMP/client-$BSP_NAME" .
+go build -buildvcs=false -ldflags "-X main.Version=${STRUX_VERSION:-unknown}" -o "$BUILD_TMP/client-$BSP_NAME" .
 
 # Copy the built binary to the BSP-specific cache directory
 cp "$BUILD_TMP/client-$BSP_NAME" "$CACHE_DIR/client"

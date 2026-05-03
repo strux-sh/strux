@@ -12,7 +12,19 @@ import type { StruxYaml } from "./types/main-yaml"
 import type { BSPYaml } from "./types/bsp-yaml"
 
 export type TemplateType = "vanilla" | "react" | "vue"
-export type ArchType = "arm64" | "x86_64" | "armhf"
+export type ArchType = "arm64" | "x86_64" | "armhf" | "host"
+
+export function normalizeBuilderTag(value: string): string {
+    const tag = value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_.-]+/g, "-")
+        .replace(/^-+/g, "")
+        .replace(/-+$/g, "")
+        .replace(/-+/g, "-")
+
+    return tag || "unknown"
+}
 
 
 export class SettingsConfig {
@@ -45,6 +57,9 @@ export class SettingsConfig {
     // To show debug information from the QEMU system when it is running
     qemuSystemDebug = false
 
+    // Run QEMU without opening a host display window while keeping a virtual GPU
+    qemuHeadless = false
+
     // To show debug information from the dev server (log streams)
     devDebug = false
 
@@ -58,11 +73,34 @@ export class SettingsConfig {
     // When set, injects a go.mod replace directive and mounts the repo into Docker
     localRuntime: string | null = null
 
+    // Whether strux is running inside the builder container (detected from STRUX_IN_CONTAINER env var)
+    inContainer = false
+
+    // Force local Docker image build instead of pulling from GHCR
+    localBuilder = false
+
+    // GHCR builder tag override, useful for testing branch-scoped CI images locally
+    remoteBuilderTag: string | null = null
+
+    // The GHCR image reference for the builder
+    get builderImage(): string {
+        return `ghcr.io/strux-sh/strux-builder:${this.remoteBuilderTag ?? this.struxVersion}`
+    }
+
 
     constructor() {
 
         // Default Verbosity
         this.verbose = false
+
+        // Detect if running inside the builder container
+        if (process.env.STRUX_IN_CONTAINER === "1") {
+            this.inContainer = true
+            // Auto-enable verbose in container (CI environments want full output)
+            if (!process.stdout.isTTY) {
+                this.verbose = true
+            }
+        }
 
         // Default Template
         this.template = "vanilla"

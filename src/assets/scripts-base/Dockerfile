@@ -77,10 +77,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpe-1.0-dev \
     libwpebackend-fdo-1.0-dev \
     libwpewebkit-2.0-dev \
+    libepoxy-dev \
+    # Cog browser build dependencies
+    libcairo2-dev \
+    libegl-dev \
     # wlroots and Wayland development
     libwlroots-0.18-dev \
     libwayland-dev \
     wayland-protocols \
+    # Note: GStreamer dev packages (-dev) are installed in a dedicated section
+    # after the cross-arch sections due to multiarch conflicts (Debian bug #1108412)
     # Additional dependencies for extension compilation
     libglib2.0-dev \
     libjson-glib-dev \
@@ -156,6 +162,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ARM64 cross-architecture development libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    -o Dpkg::Options::="--force-overwrite" \
     libwlroots-0.18-dev:arm64 \
     libwayland-dev:arm64 \
     libglib2.0-dev:arm64 \
@@ -171,10 +178,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpewebkit-2.0-dev:arm64 \
     libjson-glib-dev:arm64 \
     libsoup-3.0-dev:arm64 \
+    libepoxy-dev:arm64 \
+    libcairo2-dev:arm64 \
+    libegl-dev:arm64 \
     && rm -rf /var/lib/apt/lists/*
 
 # x86_64 cross-architecture development libraries (if building on ARM64)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    -o Dpkg::Options::="--force-overwrite" \
     libwlroots-0.18-dev:amd64 \
     libwayland-dev:amd64 \
     libglib2.0-dev:amd64 \
@@ -190,6 +201,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpewebkit-2.0-dev:amd64 \
     libjson-glib-dev:amd64 \
     libsoup-3.0-dev:amd64 \
+    libepoxy-dev:amd64 \
+    libcairo2-dev:amd64 \
+    libegl-dev:amd64 \
     && rm -rf /var/lib/apt/lists/*
 
 # ARMHF (ARMv7) cross-architecture development libraries
@@ -212,7 +226,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwpewebkit-2.0-dev:armhf \
     libjson-glib-dev:armhf \
     libsoup-3.0-dev:armhf \
+    libepoxy-dev:armhf \
+    libcairo2-dev:armhf \
+    libegl-dev:armhf \
     && rm -rf /var/lib/apt/lists/*
+
+# GStreamer development packages (for strux-screen daemon)
+# libgstreamer1.0-dev is NOT multiarch co-installable (Debian bug #1108412).
+# Each arch's -dev package clobbers the previous. Workaround: install each arch,
+# backup its .pc files, then restore all at the end. The headers are identical
+# across architectures so it doesn't matter which arch's headers survive.
+RUN apt-get update \
+    && for ARCH_TRIPLE in aarch64-linux-gnu x86_64-linux-gnu arm-linux-gnueabihf; do \
+        case "$ARCH_TRIPLE" in \
+            aarch64-linux-gnu) DEB_ARCH=arm64 ;; \
+            x86_64-linux-gnu) DEB_ARCH=amd64 ;; \
+            arm-linux-gnueabihf) DEB_ARCH=armhf ;; \
+        esac; \
+        apt-get install -y --no-install-recommends \
+            -o Dpkg::Options::="--force-overwrite" \
+            libgstreamer1.0-dev:${DEB_ARCH} \
+            libgstreamer-plugins-base1.0-dev:${DEB_ARCH}; \
+        mkdir -p /tmp/gst-pc/${ARCH_TRIPLE}; \
+        cp /usr/lib/${ARCH_TRIPLE}/pkgconfig/gstreamer*.pc /tmp/gst-pc/${ARCH_TRIPLE}/ 2>/dev/null || true; \
+    done \
+    && for ARCH_TRIPLE in aarch64-linux-gnu x86_64-linux-gnu arm-linux-gnueabihf; do \
+        cp /tmp/gst-pc/${ARCH_TRIPLE}/*.pc /usr/lib/${ARCH_TRIPLE}/pkgconfig/ 2>/dev/null || true; \
+        for lib in gstreamer-1.0 gstapp-1.0 gstbase-1.0 gstvideo-1.0; do \
+            SO=$(ls /usr/lib/${ARCH_TRIPLE}/lib${lib}.so.0 2>/dev/null); \
+            if [ -n "$SO" ] && [ ! -e /usr/lib/${ARCH_TRIPLE}/lib${lib}.so ]; then \
+                ln -s $(basename $SO) /usr/lib/${ARCH_TRIPLE}/lib${lib}.so; \
+            fi; \
+        done; \
+    done \
+    && rm -rf /tmp/gst-pc /var/lib/apt/lists/*
 
 # Use login shell for RUN commands so .bashrc is sourced automatically
 SHELL ["/bin/bash", "--login", "-c"]
@@ -244,6 +291,9 @@ ENV PATH="$BUN_INSTALL/bin:${PATH}"
 # Add Node.js to PATH for all shells (including /bin/sh used by runScriptInDocker)
 # This ensures scripts run via /bin/sh -c can access node/npm
 ENV PATH="/opt/nodejs/current/bin:${PATH}"
+
+# Signal to strux that it's running inside the builder container
+ENV STRUX_IN_CONTAINER=1
 
 # Create workspace directory
 WORKDIR /build

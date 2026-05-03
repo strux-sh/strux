@@ -100,7 +100,7 @@
           outputHashAlgo = "sha256";
           # This hash needs to be updated when bun.lock changes
           # Run: nix build .#bunDeps 2>&1 | grep "got:" to get the new hash
-          outputHash = "sha256-nAroCA2wTbtCZywJh0m0PGLFKzTQHPsBXnd/IhC7pcs=";
+          outputHash = "sha256-4BZ89VkL8/nGy7P74FtrKJhuE7Kif8Xg+C6KS+/Hces=";
         };
 
         # Bun CLI: strux
@@ -183,18 +183,24 @@ VERSIONEOF
 
         # Development shell with all required tools
         devShells.default = pkgs.mkShell {
-          buildInputs = [
+          buildInputs = with pkgs; [
             # Core build tools
-            pkgs.go
-            pkgs.bun
+            go
+            bun
 
             # Node.js for frontend development (Vite, etc.)
-            pkgs.nodejs
-            pkgs.nodePackages.npm
+            nodejs
+            nodePackages.npm
 
             # Development utilities
-            pkgs.git
-            pkgs.gnumake
+            git
+            gnumake
+            qemu
+
+            (bats.withLibraries (p: [
+                p.bats-assert
+                p.bats-support
+            ]))
           ];
 
           shellHook = ''

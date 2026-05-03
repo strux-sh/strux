@@ -4,116 +4,142 @@
 // Handles WebSocket connection to the dev server.
 // Uses the WSClient wrapper for event-based message handling.
 //
-// Events:
-// - Client emits: "request-binary" to request the current binary
-// - Server emits: "new-binary" with { data: Buffer } for binary updates
-// - Server emits: "start-logs" with { streamId, type, service? }
-// - Server emits: "stop-logs" with { streamId }
-// - Client emits: "log-line" with { streamId, line, service?, timestamp }
-// - Client emits: "log-stream-error" with { streamId, error }
-// - Server emits: "exec-start" with { sessionId, shell? }
-// - Server emits: "exec-input" with { sessionId, data }
-// - Client emits: "exec-output" with { sessionId, stream, data }
-// - Client emits: "exec-exit" with { sessionId, code }
-// - Client emits: "exec-error" with { sessionId, error }
+// Message types (aligned with ndev/types.ts):
+//
+// Server → Client:
+//   - "binary-new"           { data: string }
+//   - "component"            { data: string, destPath: string }
+//   - "device-info-requested"
+//   - "ssh-start"            { sessionID: string, shell: string }
+//   - "ssh-input"            { sessionID: string, data: string }
+//   - "ssh-exit"             { sessionID: string }
+//   - "system-restart"
+//   - "system-restart-strux"
+//   - "screen-request"       { outputName, serverHostURL }
+//   - "screen-picture"       { outputName }
+//
+// Client → Server:
+//   - "binary-requested"
+//   - "binary-ack"           { status, binary, currentChecksum?, receivedChecksum? }
+//   - "component-ack"        { status, message, destPath }
+//   - "device-info"          { ip, inspectorPorts, outputs? }
+//   - "log-line"             { type, line, timestamp }
+//   - "ssh-output"           { sessionID, data }
+//   - "ssh-exit-received"    { sessionID, code }
+//   - "screen-picture-received" { outputName, data, width, height }
 //
 
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+func describeExtractedFrontend(frontendPath string) string {
+	indexPath := filepath.Join(frontendPath, "index.html")
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Sprintf("Updated at %s (index.html unreadable: %v)", frontendPath, err)
+	}
+
+	indexChecksum := fmt.Sprintf("%x", sha256.Sum256(indexData))
+	entries, err := os.ReadDir(frontendPath)
+	if err != nil {
+		return fmt.Sprintf("Updated at %s (index=%s)", frontendPath, indexChecksum[:16])
+	}
+
+	return fmt.Sprintf("Updated at %s (index=%s, top-level=%d)", frontendPath, indexChecksum[:16], len(entries))
+}
 
 // BinaryPayload represents the payload for binary updates
 type BinaryPayload struct {
 	Data string `json:"data"` // Base64 encoded binary data
 }
 
-// StartLogsPayload represents the payload for starting log streams
-type StartLogsPayload struct {
-	StreamID string `json:"streamId"`
-	Type     string `json:"type"`    // "journalctl", "service", "app", "cage", or "early"
-	Service  string `json:"service"` // service name if type is "service"
-}
-
-// StopLogsPayload represents the payload for stopping log streams
-type StopLogsPayload struct {
-	StreamID string `json:"streamId"`
-}
-
 // LogLinePayload represents a log line to send to the server
 type LogLinePayload struct {
-	StreamID  string `json:"streamId"`
+	Type      string `json:"type"` // "journalctl", "service", "app", "cage", "screen", "early", "client"
 	Line      string `json:"line"`
-	Service   string `json:"service,omitempty"`
 	Timestamp string `json:"timestamp"`
 }
 
-// LogErrorPayload represents a log stream error
-type LogErrorPayload struct {
-	StreamID string `json:"streamId"`
-	Error    string `json:"error"`
-}
-
-// ExecStartPayload starts an interactive shell session
-type ExecStartPayload struct {
-	SessionID string `json:"sessionId"`
+// SSHStartPayload starts an interactive shell session
+type SSHStartPayload struct {
+	SessionID string `json:"sessionID"`
 	Shell     string `json:"shell,omitempty"`
+	Rows      int    `json:"rows,omitempty"`
+	Cols      int    `json:"cols,omitempty"`
 }
 
-// ExecInputPayload sends input to an interactive shell session
-type ExecInputPayload struct {
-	SessionID string `json:"sessionId"`
+// SSHResizePayload resizes a PTY session
+type SSHResizePayload struct {
+	SessionID string `json:"sessionID"`
+	Rows      int    `json:"rows"`
+	Cols      int    `json:"cols"`
+}
+
+// SSHInputPayload sends input to an interactive shell session
+type SSHInputPayload struct {
+	SessionID string `json:"sessionID"`
 	Data      string `json:"data"`
 }
 
-// ExecOutputPayload sends console output back to the server
-type ExecOutputPayload struct {
-	SessionID string `json:"sessionId"`
-	Stream    string `json:"stream"`
+// SSHOutputPayload sends console output back to the server
+type SSHOutputPayload struct {
+	SessionID string `json:"sessionID"`
 	Data      string `json:"data"`
 }
 
-// ExecExitPayload notifies the server of session exit
-type ExecExitPayload struct {
-	SessionID string `json:"sessionId"`
+// SSHExitReceivedPayload notifies the server of session exit
+type SSHExitReceivedPayload struct {
+	SessionID string `json:"sessionID"`
 	Code      int    `json:"code"`
-}
-
-// ExecErrorPayload reports an exec error
-type ExecErrorPayload struct {
-	SessionID string `json:"sessionId"`
-	Error     string `json:"error"`
 }
 
 // BinaryAckPayload represents the acknowledgment of a binary update
 type BinaryAckPayload struct {
-	Status           string `json:"status"`           // "skipped", "updated", "error"
-	Message          string `json:"message"`          // Human-readable message
-	CurrentChecksum  string `json:"currentChecksum"`  // Checksum of current binary on disk
-	ReceivedChecksum string `json:"receivedChecksum"` // Checksum of received binary
+	Status           string `json:"status"`                     // "skipped", "updated", "error"
+	Binary           string `json:"binary"`                     // Binary name/path
+	CurrentChecksum  string `json:"currentChecksum,omitempty"`  // Checksum of current binary on disk
+	ReceivedChecksum string `json:"receivedChecksum,omitempty"` // Checksum of received binary
 }
 
-// ComponentPayload represents a component binary update from the server
+// ComponentPayload represents a component file update from the server
 type ComponentPayload struct {
-	ComponentType string `json:"componentType"` // "cage", "wpe-extension", "client"
-	Data          string `json:"data"`          // Base64 encoded binary data
-	DestPath      string `json:"destPath"`      // Target filesystem path on device
+	Data     string `json:"data"`     // Base64 encoded binary data
+	DestPath string `json:"destPath"` // Target filesystem path on device
+}
+
+// ComponentArchivePayload represents a zip archive update from the server
+type ComponentArchivePayload struct {
+	Data        string `json:"data"`        // Base64 encoded zip data
+	ExtractPath string `json:"extractPath"` // Target directory to replace on device
 }
 
 // ComponentAckPayload represents the acknowledgment of a component update
 type ComponentAckPayload struct {
-	ComponentType string `json:"componentType"`
-	Status        string `json:"status"`  // "updated", "error"
-	Message       string `json:"message"`
+	Status   string `json:"status"` // "updated", "error"
+	Message  string `json:"message"`
+	DestPath string `json:"destPath"`
+}
+
+// ComponentArchiveAckPayload represents the acknowledgment of an archive update
+type ComponentArchiveAckPayload struct {
+	Status      string `json:"status"` // "updated", "error"
+	Message     string `json:"message"`
+	ExtractPath string `json:"extractPath"`
 }
 
 // DeviceInfoInspectorPort describes one inspector port for one monitor path
@@ -122,23 +148,34 @@ type DeviceInfoInspectorPort struct {
 	Port int    `json:"port"`
 }
 
+// OutputInfo describes a connected display output
+type OutputInfo struct {
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+}
+
 // DeviceInfoPayload reports device IP and inspector ports to the dev server
 type DeviceInfoPayload struct {
 	IP             string                    `json:"ip"`
 	InspectorPorts []DeviceInfoInspectorPort `json:"inspectorPorts"`
+	Outputs        []OutputInfo              `json:"outputs,omitempty"`
+	Version        string                    `json:"version"`
 }
 
 // SocketClient handles WebSocket communication with the dev server
 type SocketClient struct {
-	ws           *WSClient
-	clientKey    string
-	logger       *Logger
-	mu           sync.Mutex
-	connected    bool
-	hasConnected bool // true after first successful connection (to detect reconnections)
-	host         Host
-	logStreams   *LogStreamer
-	exec         *ExecManager
+	ws              *WSClient
+	clientKey       string
+	logger          *Logger
+	mu              sync.Mutex
+	connected       bool
+	hasConnected    bool // true after first successful connection (to detect reconnections)
+	host            Host
+	logStreams      *LogStreamer
+	exec            *ExecManager
+	screen          *ScreenManager
+	onReconnect     func() // called on reconnection so main.go can re-send device info
+	onDeviceInfoReq func() // called when server requests device info
 }
 
 // NewSocketClient creates a new WebSocket client
@@ -150,14 +187,26 @@ func NewSocketClient(clientKey string) *SocketClient {
 	}
 
 	client.exec = NewExecManager(
-		func(sessionID, stream, data string) {
-			client.SendExecOutput(sessionID, stream, data)
+		func(sessionID, data string) {
+			client.SendSSHOutput(sessionID, data)
 		},
 		func(sessionID string, code int) {
-			client.SendExecExit(sessionID, code)
+			client.SendSSHExitReceived(sessionID, code)
 		},
-		func(sessionID string, err error) {
-			client.SendExecError(sessionID, err.Error())
+	)
+
+	client.screen = NewScreenManager(
+		func(payload ScreenReadyPayload) {
+			client.SendScreenReady(payload)
+		},
+		func(payload ScreenStoppedPayload) {
+			client.SendScreenStopped(payload)
+		},
+		func(payload ScreenErrorPayload) {
+			client.SendScreenError(payload)
+		},
+		func(payload ScreenScreenshotResultPayload) {
+			client.SendScreenScreenshot(payload)
 		},
 	)
 
@@ -174,9 +223,10 @@ func (s *SocketClient) Connect(host Host) error {
 	// Create WebSocket client
 	ws := NewWSClient()
 
-	// Set the client key header for authentication
+	// Set protocol version and client key as query params
+	ws.SetQueryParam("v", "0.3.0")
 	if s.clientKey != "" {
-		ws.SetHeader("X-Client-Key", s.clientKey)
+		ws.SetQueryParam("key", s.clientKey)
 	}
 
 	// Set up connection lifecycle callbacks
@@ -188,10 +238,17 @@ func (s *SocketClient) Connect(host Host) error {
 		s.mu.Unlock()
 		s.logger.Info("WebSocket connected")
 
-		// On reconnection, re-request binary and re-emit device info
+		// Auto-start log streams on every connect
+		s.startAutoLogStreams()
+
+		// On reconnection, re-request binary
 		if reconnecting {
 			s.logger.Info("Re-initializing after reconnection...")
 			s.RequestBinary()
+		}
+		// Always notify so main.go can (re-)send device info
+		if s.onReconnect != nil {
+			s.onReconnect()
 		}
 	})
 
@@ -201,6 +258,7 @@ func (s *SocketClient) Connect(host Host) error {
 		s.mu.Unlock()
 		s.logger.Warn("WebSocket disconnected")
 		s.logStreams.StopAll()
+		s.screen.StopAll()
 	})
 
 	ws.OnError(func(err error) {
@@ -210,9 +268,8 @@ func (s *SocketClient) Connect(host Host) error {
 	// Set up event handlers
 	s.setupEventHandlers(ws)
 
-	// Connect to the server
-	// The server should expose a /ws endpoint for WebSocket connections
-	if err := ws.ConnectWithHost(host.Host, host.Port, "/ws"); err != nil {
+	// Connect to the server on the /client path
+	if err := ws.ConnectWithHost(host.Host, host.Port, "/client"); err != nil {
 		return err
 	}
 
@@ -233,68 +290,80 @@ func (s *SocketClient) Connect(host Host) error {
 
 // setupEventHandlers registers all WebSocket event handlers
 func (s *SocketClient) setupEventHandlers(ws *WSClient) {
+
 	// Handle binary updates from server
-	ws.On("new-binary", func(payload json.RawMessage) {
+	ws.On("binary-new", func(payload json.RawMessage) {
 		var binaryPayload BinaryPayload
 		if err := json.Unmarshal(payload, &binaryPayload); err != nil {
-			s.logger.Error("Failed to parse binary payload: %v", err)
+			s.logger.Error("Failed to parse binary-new payload: %v", err)
 			return
 		}
-		s.handleBinaryUpdate(binaryPayload.Data)
+		s.handleBinaryUpdate(binaryPayload)
 	})
 
-	// Handle start-logs event
-	ws.On("start-logs", func(payload json.RawMessage) {
-		var logsPayload StartLogsPayload
-		if err := json.Unmarshal(payload, &logsPayload); err != nil {
-			s.logger.Error("Failed to parse start-logs payload: %v", err)
+	// Handle ssh-start event
+	ws.On("ssh-start", func(payload json.RawMessage) {
+		var sshPayload SSHStartPayload
+		if err := json.Unmarshal(payload, &sshPayload); err != nil {
+			s.logger.Error("Failed to parse ssh-start payload: %v", err)
 			return
 		}
-		s.handleStartLogs(logsPayload)
+		s.handleSSHStart(sshPayload)
 	})
 
-	// Handle stop-logs event
-	ws.On("stop-logs", func(payload json.RawMessage) {
-		var stopPayload StopLogsPayload
-		if err := json.Unmarshal(payload, &stopPayload); err != nil {
-			s.logger.Error("Failed to parse stop-logs payload: %v", err)
+	// Handle ssh-resize event
+	ws.On("ssh-resize", func(payload json.RawMessage) {
+		var resizePayload SSHResizePayload
+		if err := json.Unmarshal(payload, &resizePayload); err != nil {
+			s.logger.Error("Failed to parse ssh-resize payload: %v", err)
 			return
 		}
-		s.handleStopLogs(stopPayload)
+		s.exec.Resize(resizePayload.SessionID, resizePayload.Rows, resizePayload.Cols)
 	})
 
-	// Handle exec-start event
-	ws.On("exec-start", func(payload json.RawMessage) {
-		var execPayload ExecStartPayload
-		if err := json.Unmarshal(payload, &execPayload); err != nil {
-			s.logger.Error("Failed to parse exec-start payload: %v", err)
-			return
-		}
-		s.handleExecStart(execPayload)
-	})
-
-	// Handle exec-input event
-	ws.On("exec-input", func(payload json.RawMessage) {
-		var inputPayload ExecInputPayload
+	// Handle ssh-input event
+	ws.On("ssh-input", func(payload json.RawMessage) {
+		var inputPayload SSHInputPayload
 		if err := json.Unmarshal(payload, &inputPayload); err != nil {
-			s.logger.Error("Failed to parse exec-input payload: %v", err)
+			s.logger.Error("Failed to parse ssh-input payload: %v", err)
 			return
 		}
-		s.handleExecInput(inputPayload)
+		s.handleSSHInput(inputPayload)
 	})
 
-	// Handle new-component event (component binary updates)
-	ws.On("new-component", func(payload json.RawMessage) {
+	// Handle ssh-exit event (server wants to end a session)
+	ws.On("ssh-exit", func(payload json.RawMessage) {
+		var exitPayload struct {
+			SessionID string `json:"sessionID"`
+		}
+		if err := json.Unmarshal(payload, &exitPayload); err != nil {
+			s.logger.Error("Failed to parse ssh-exit payload: %v", err)
+			return
+		}
+		s.exec.Stop(exitPayload.SessionID)
+	})
+
+	// Handle component event
+	ws.On("component", func(payload json.RawMessage) {
 		var componentPayload ComponentPayload
 		if err := json.Unmarshal(payload, &componentPayload); err != nil {
-			s.logger.Error("Failed to parse new-component payload: %v", err)
+			s.logger.Error("Failed to parse component payload: %v", err)
 			return
 		}
 		s.handleComponentUpdate(componentPayload)
 	})
 
-	// Handle restart-service event
-	ws.On("restart-service", func(payload json.RawMessage) {
+	ws.On("component-archive", func(payload json.RawMessage) {
+		var archivePayload ComponentArchivePayload
+		if err := json.Unmarshal(payload, &archivePayload); err != nil {
+			s.logger.Error("Failed to parse component-archive payload: %v", err)
+			return
+		}
+		s.handleComponentArchiveUpdate(archivePayload)
+	})
+
+	// Handle system-restart-strux event
+	ws.On("system-restart-strux", func(payload json.RawMessage) {
 		s.logger.Info("Strux service restart requested by server")
 		go func() {
 			cmd := exec.Command("systemctl", "restart", "strux")
@@ -306,12 +375,40 @@ func (s *SocketClient) setupEventHandlers(ws *WSClient) {
 		}()
 	})
 
-	// Handle reboot event
-	ws.On("reboot", func(payload json.RawMessage) {
-		s.logger.Info("Reboot requested by server")
+	// Handle system-restart event (full reboot)
+	ws.On("system-restart", func(payload json.RawMessage) {
+		s.logger.Info("System reboot requested by server")
 		if err := BinaryHandlerInstance.Reboot(); err != nil {
 			s.logger.Error("Reboot failed: %v", err)
 		}
+	})
+
+	// Handle device-info-requested from server
+	ws.On("device-info-requested", func(payload json.RawMessage) {
+		s.logger.Info("Server requested device info")
+		if s.onDeviceInfoReq != nil {
+			s.onDeviceInfoReq()
+		}
+	})
+
+	// Handle screen-request event
+	ws.On("screen-request", func(payload json.RawMessage) {
+		var screenPayload ScreenStartPayload
+		if err := json.Unmarshal(payload, &screenPayload); err != nil {
+			s.logger.Error("Failed to parse screen-request payload: %v", err)
+			return
+		}
+		s.handleScreenStart(screenPayload)
+	})
+
+	// Handle screen-picture event (screenshot request)
+	ws.On("screen-picture", func(payload json.RawMessage) {
+		var screenPayload ScreenScreenshotPayload
+		if err := json.Unmarshal(payload, &screenPayload); err != nil {
+			s.logger.Error("Failed to parse screen-picture payload: %v", err)
+			return
+		}
+		s.handleScreenScreenshot(screenPayload)
 	})
 }
 
@@ -324,6 +421,7 @@ func (s *SocketClient) Disconnect() {
 		s.logger.Info("Disconnecting...")
 		s.logStreams.StopAll()
 		s.exec.StopAll()
+		s.screen.StopAll()
 		s.ws.Disconnect()
 		s.ws = nil
 		s.connected = false
@@ -353,22 +451,20 @@ func (s *SocketClient) RequestBinary() {
 
 	s.logger.Info("Requesting binary from server...")
 
-	// Emit request-binary event
-	if err := s.ws.Emit("request-binary", nil); err != nil {
+	if err := s.ws.Emit("binary-requested", nil); err != nil {
 		s.logger.Error("Failed to request binary: %v", err)
 	}
 }
 
 // SendLogLine sends a log line to the server
-func (s *SocketClient) SendLogLine(streamID, line, service string) {
+func (s *SocketClient) SendLogLine(logType, line string) {
 	if s.ws == nil {
 		return
 	}
 
 	payload := LogLinePayload{
-		StreamID:  streamID,
+		Type:      logType,
 		Line:      line,
-		Service:   service,
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
@@ -377,31 +473,15 @@ func (s *SocketClient) SendLogLine(streamID, line, service string) {
 	}
 }
 
-// SendLogError sends a log stream error to the server
-func (s *SocketClient) SendLogError(streamID string, errMsg string) {
-	if s.ws == nil {
-		return
-	}
-
-	payload := LogErrorPayload{
-		StreamID: streamID,
-		Error:    errMsg,
-	}
-
-	if err := s.ws.Emit("log-stream-error", payload); err != nil {
-		s.logger.Error("Failed to send log error: %v", err)
-	}
-}
-
 // SendBinaryAck sends a binary update acknowledgment to the server
-func (s *SocketClient) SendBinaryAck(status, message, currentChecksum, receivedChecksum string) {
+func (s *SocketClient) SendBinaryAck(status, currentChecksum, receivedChecksum string) {
 	if s.ws == nil {
 		return
 	}
 
 	payload := BinaryAckPayload{
 		Status:           status,
-		Message:          message,
+		Binary:           binaryPath,
 		CurrentChecksum:  currentChecksum,
 		ReceivedChecksum: receivedChecksum,
 	}
@@ -411,64 +491,47 @@ func (s *SocketClient) SendBinaryAck(status, message, currentChecksum, receivedC
 	}
 }
 
-// SendExecOutput streams console output to the server
-func (s *SocketClient) SendExecOutput(sessionID, stream, data string) {
+// SendSSHOutput streams console output to the server
+func (s *SocketClient) SendSSHOutput(sessionID, data string) {
 	if s.ws == nil {
 		return
 	}
 
-	payload := ExecOutputPayload{
+	payload := SSHOutputPayload{
 		SessionID: sessionID,
-		Stream:    stream,
 		Data:      data,
 	}
 
-	if err := s.ws.Emit("exec-output", payload); err != nil {
-		s.logger.Error("Failed to send exec output: %v", err)
+	if err := s.ws.Emit("ssh-output", payload); err != nil {
+		s.logger.Error("Failed to send ssh output: %v", err)
 	}
 }
 
-// SendExecExit sends session exit status to the server
-func (s *SocketClient) SendExecExit(sessionID string, code int) {
+// SendSSHExitReceived sends session exit status to the server
+func (s *SocketClient) SendSSHExitReceived(sessionID string, code int) {
 	if s.ws == nil {
 		return
 	}
 
-	payload := ExecExitPayload{
+	payload := SSHExitReceivedPayload{
 		SessionID: sessionID,
 		Code:      code,
 	}
 
-	if err := s.ws.Emit("exec-exit", payload); err != nil {
-		s.logger.Error("Failed to send exec exit: %v", err)
-	}
-}
-
-// SendExecError sends exec error to the server
-func (s *SocketClient) SendExecError(sessionID string, errMsg string) {
-	if s.ws == nil {
-		return
-	}
-
-	payload := ExecErrorPayload{
-		SessionID: sessionID,
-		Error:     errMsg,
-	}
-
-	if err := s.ws.Emit("exec-error", payload); err != nil {
-		s.logger.Error("Failed to send exec error: %v", err)
+	if err := s.ws.Emit("ssh-exit-received", payload); err != nil {
+		s.logger.Error("Failed to send ssh exit: %v", err)
 	}
 }
 
 // handleBinaryUpdate handles a binary update from the server
-func (s *SocketClient) handleBinaryUpdate(data string) {
+func (s *SocketClient) handleBinaryUpdate(binaryPayload BinaryPayload) {
 	s.logger.Info("Received binary update")
 
 	// Decode base64 data
-	decoded, err := base64.StdEncoding.DecodeString(data)
+	decoded, err := base64.StdEncoding.DecodeString(binaryPayload.Data)
 	if err != nil {
 		s.logger.Error("Failed to decode binary data: %v", err)
-		s.SendBinaryAck("error", "Failed to decode binary data: "+err.Error(), "", "")
+		s.SendBinaryAck("error", "", "")
 		return
 	}
 
@@ -478,85 +541,97 @@ func (s *SocketClient) handleBinaryUpdate(data string) {
 	result := BinaryHandlerInstance.HandleUpdate(decoded)
 
 	// Send acknowledgment to server
-	s.SendBinaryAck(result.Status, result.Message, result.CurrentChecksum, result.ReceivedChecksum)
+	s.SendBinaryAck(result.Status, result.CurrentChecksum, result.ReceivedChecksum)
 
 	if result.Status == "error" {
 		s.logger.Error("Binary update failed: %s", result.Message)
 	}
 }
 
-// handleStartLogs starts a log stream
-func (s *SocketClient) handleStartLogs(payload StartLogsPayload) {
-	s.logger.Info("Starting log stream: %s (type: %s, service: %s)", payload.StreamID, payload.Type, payload.Service)
+// startAutoLogStreams starts all log streams automatically on connect
+func (s *SocketClient) startAutoLogStreams() {
+	s.logger.Info("Auto-starting log streams...")
 
-	// Create callback to send log lines
-	callback := func(line string) {
-		s.SendLogLine(payload.StreamID, line, payload.Service)
+	logTypes := []struct {
+		logType string
+		starter func(string, LogCallback) error
+	}{
+		{"journalctl", s.logStreams.StartJournalctlStream},
+		{"app", s.logStreams.StartAppLogStream},
+		{"cage", s.logStreams.StartCageLogStream},
+		{"early", s.logStreams.StartEarlyLogStream},
 	}
 
-	var err error
-	switch payload.Type {
-	case "service":
-		if payload.Service != "" {
-			err = s.logStreams.StartServiceStream(payload.StreamID, payload.Service, callback)
-		} else {
-			err = s.logStreams.StartJournalctlStream(payload.StreamID, callback)
+	for _, lt := range logTypes {
+		streamID := fmt.Sprintf("auto-%s-%d", lt.logType, time.Now().UnixMilli())
+		logType := lt.logType
+		err := lt.starter(streamID, func(line string) {
+			s.SendLogLine(logType, line)
+		})
+		if err != nil {
+			s.logger.Warn("Failed to start %s log stream: %v", lt.logType, err)
 		}
-	case "app":
-		// Stream the user's Go app output from /tmp/strux-backend.log
-		err = s.logStreams.StartAppLogStream(payload.StreamID, callback)
-	case "cage":
-		// Stream Cage/Cog output from /tmp/strux-cage.log
-		err = s.logStreams.StartCageLogStream(payload.StreamID, callback)
-	case "journalctl":
-		err = s.logStreams.StartJournalctlStream(payload.StreamID, callback)
-	case "early":
-		err = s.logStreams.StartEarlyLogStream(payload.StreamID, callback)
-	default:
-		err = s.logStreams.StartJournalctlStream(payload.StreamID, callback)
-	}
-
-	if err != nil {
-		s.logger.Error("Failed to start log stream: %v", err)
-		s.SendLogError(payload.StreamID, err.Error())
 	}
 }
 
-// handleStopLogs stops a log stream
-func (s *SocketClient) handleStopLogs(payload StopLogsPayload) {
-	s.logger.Info("Stopping log stream: %s", payload.StreamID)
-	s.logStreams.Stop(payload.StreamID)
-}
+// handleSSHStart starts or attaches to an SSH/PTY session
+func (s *SocketClient) handleSSHStart(payload SSHStartPayload) {
+	s.logger.Info("SSH start requested: %s", payload.SessionID)
 
-func (s *SocketClient) handleExecStart(payload ExecStartPayload) {
-	s.logger.Info("Starting exec session: %s", payload.SessionID)
+	// Try to attach to an existing session first
+	if s.exec.AttachToExisting(payload.SessionID) {
+		s.logger.Info("Attached to existing PTY session: %s", payload.SessionID)
+		// Resize to match requested dimensions
+		if payload.Rows > 0 && payload.Cols > 0 {
+			s.exec.Resize(payload.SessionID, payload.Rows, payload.Cols)
+		}
+		return
+	}
 
+	// No existing session, start a new one
 	if err := s.exec.Start(payload.SessionID, payload.Shell); err != nil {
-		s.logger.Error("Failed to start exec session: %v", err)
-		s.SendExecError(payload.SessionID, err.Error())
+		s.logger.Error("Failed to start SSH session: %v", err)
+		return
+	}
+
+	// Set initial PTY size
+	if payload.Rows > 0 && payload.Cols > 0 {
+		s.exec.Resize(payload.SessionID, payload.Rows, payload.Cols)
 	}
 }
 
-func (s *SocketClient) handleExecInput(payload ExecInputPayload) {
+// handleSSHInput sends input to an SSH/PTY session
+func (s *SocketClient) handleSSHInput(payload SSHInputPayload) {
 	if err := s.exec.SendInput(payload.SessionID, payload.Data); err != nil {
-		s.logger.Error("Failed to send exec input: %v", err)
-		s.SendExecError(payload.SessionID, err.Error())
+		s.logger.Error("Failed to send SSH input: %v", err)
 	}
 }
 
-// handleComponentUpdate handles a component binary update from the server
+// handleComponentUpdate handles a component file update from the server
 func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
-	s.logger.Info("Received component update: %s -> %s", payload.ComponentType, payload.DestPath)
+	s.logger.Info("Received component update -> %s", payload.DestPath)
 
 	// Decode base64 data
 	decoded, err := base64.StdEncoding.DecodeString(payload.Data)
 	if err != nil {
 		s.logger.Error("Failed to decode component data: %v", err)
-		s.SendComponentAck(payload.ComponentType, "error", "Failed to decode data: "+err.Error())
+		s.SendComponentAck("error", "Failed to decode data: "+err.Error(), payload.DestPath)
 		return
 	}
 
-	s.logger.Info("Decoded component %s: %d bytes", payload.ComponentType, len(decoded))
+	s.logger.Info("Decoded component: %d bytes -> %s", len(decoded), payload.DestPath)
+
+	if payload.DestPath == "/strux/frontend" {
+		if err := extractZipToPath(decoded, payload.DestPath); err != nil {
+			s.logger.Error("Failed to extract frontend archive: %v", err)
+			s.SendComponentAck("error", "Failed to extract frontend archive: "+err.Error(), payload.DestPath)
+			return
+		}
+
+		s.logger.Info("Frontend updated at %s", payload.DestPath)
+		s.SendComponentAck("updated", describeExtractedFrontend(payload.DestPath), payload.DestPath)
+		return
+	}
 
 	// Compute checksum for verification
 	checksum := fmt.Sprintf("%x", sha256.Sum256(decoded))
@@ -565,7 +640,7 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 	parentDir := filepath.Dir(payload.DestPath)
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		s.logger.Error("Failed to create directory %s: %v", parentDir, err)
-		s.SendComponentAck(payload.ComponentType, "error", "Failed to create directory: "+err.Error())
+		s.SendComponentAck("error", "Failed to create directory: "+err.Error(), payload.DestPath)
 		return
 	}
 
@@ -573,7 +648,7 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 	tmpPath := payload.DestPath + ".tmp"
 	if err := os.WriteFile(tmpPath, decoded, 0755); err != nil {
 		s.logger.Error("Failed to write temp file: %v", err)
-		s.SendComponentAck(payload.ComponentType, "error", "Failed to write temp file: "+err.Error())
+		s.SendComponentAck("error", "Failed to write temp file: "+err.Error(), payload.DestPath)
 		return
 	}
 
@@ -582,15 +657,15 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 	if err != nil {
 		os.Remove(tmpPath)
 		s.logger.Error("Failed to read back temp file: %v", err)
-		s.SendComponentAck(payload.ComponentType, "error", "Failed to verify temp file: "+err.Error())
+		s.SendComponentAck("error", "Failed to verify temp file: "+err.Error(), payload.DestPath)
 		return
 	}
 
 	tmpChecksum := fmt.Sprintf("%x", sha256.Sum256(tmpData))
 	if tmpChecksum != checksum {
 		os.Remove(tmpPath)
-		s.logger.Error("Checksum mismatch for %s", payload.ComponentType)
-		s.SendComponentAck(payload.ComponentType, "error", "Checksum mismatch after write")
+		s.logger.Error("Checksum mismatch for %s", payload.DestPath)
+		s.SendComponentAck("error", "Checksum mismatch after write", payload.DestPath)
 		return
 	}
 
@@ -598,24 +673,48 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 	if err := os.Rename(tmpPath, payload.DestPath); err != nil {
 		os.Remove(tmpPath)
 		s.logger.Error("Failed to replace component file: %v", err)
-		s.SendComponentAck(payload.ComponentType, "error", "Failed to replace file: "+err.Error())
+		s.SendComponentAck("error", "Failed to replace file: "+err.Error(), payload.DestPath)
 		return
 	}
 
-	s.logger.Info("Component %s updated successfully at %s (checksum: %s)", payload.ComponentType, payload.DestPath, checksum[:16])
-	s.SendComponentAck(payload.ComponentType, "updated", fmt.Sprintf("Component replaced at %s", payload.DestPath))
+	s.logger.Info("Component updated at %s (checksum: %s)", payload.DestPath, checksum[:16])
+	s.SendComponentAck("updated", fmt.Sprintf("Updated at %s", payload.DestPath), payload.DestPath)
+}
+
+// handleComponentArchiveUpdate handles a zip archive update from the server.
+func (s *SocketClient) handleComponentArchiveUpdate(payload ComponentArchivePayload) {
+	s.logger.Info("Received component archive -> %s", payload.ExtractPath)
+
+	decoded, err := base64.StdEncoding.DecodeString(payload.Data)
+	if err != nil {
+		s.logger.Error("Failed to decode archive data: %v", err)
+		s.SendComponentArchiveAck("error", "Failed to decode data: "+err.Error(), payload.ExtractPath)
+		return
+	}
+
+	checksum := fmt.Sprintf("%x", sha256.Sum256(decoded))
+	s.logger.Info("Decoded archive: %d bytes -> %s", len(decoded), payload.ExtractPath)
+
+	if err := extractZipToPath(decoded, payload.ExtractPath); err != nil {
+		s.logger.Error("Failed to extract archive: %v", err)
+		s.SendComponentArchiveAck("error", "Failed to extract archive: "+err.Error(), payload.ExtractPath)
+		return
+	}
+
+	s.logger.Info("Archive extracted at %s (checksum: %s)", payload.ExtractPath, checksum[:16])
+	s.SendComponentArchiveAck("updated", fmt.Sprintf("Updated at %s", payload.ExtractPath), payload.ExtractPath)
 }
 
 // SendComponentAck sends a component update acknowledgment to the server
-func (s *SocketClient) SendComponentAck(componentType, status, message string) {
+func (s *SocketClient) SendComponentAck(status, message, destPath string) {
 	if s.ws == nil {
 		return
 	}
 
 	payload := ComponentAckPayload{
-		ComponentType: componentType,
-		Status:        status,
-		Message:       message,
+		Status:   status,
+		Message:  message,
+		DestPath: destPath,
 	}
 
 	if err := s.ws.Emit("component-ack", payload); err != nil {
@@ -623,8 +722,140 @@ func (s *SocketClient) SendComponentAck(componentType, status, message string) {
 	}
 }
 
+// SendComponentArchiveAck sends an archive update acknowledgment to the server.
+func (s *SocketClient) SendComponentArchiveAck(status, message, extractPath string) {
+	if s.ws == nil {
+		return
+	}
+
+	payload := ComponentArchiveAckPayload{
+		Status:      status,
+		Message:     message,
+		ExtractPath: extractPath,
+	}
+
+	if err := s.ws.Emit("component-archive-ack", payload); err != nil {
+		s.logger.Error("Failed to send component archive ack: %v", err)
+	}
+}
+
+func extractZipToPath(data []byte, extractPath string) error {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return fmt.Errorf("open zip: %w", err)
+	}
+
+	parentDir := filepath.Dir(extractPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("create parent directory: %w", err)
+	}
+
+	tempPath := extractPath + ".tmp-extract"
+	if err := os.RemoveAll(tempPath); err != nil {
+		return fmt.Errorf("remove temp directory: %w", err)
+	}
+	if err := os.MkdirAll(tempPath, 0755); err != nil {
+		return fmt.Errorf("create temp directory: %w", err)
+	}
+
+	defer os.RemoveAll(tempPath)
+
+	for _, file := range reader.File {
+		relativePath, err := sanitizeZipPath(file.Name)
+		if err != nil {
+			return err
+		}
+		if relativePath == "" {
+			continue
+		}
+
+		targetPath := filepath.Join(tempPath, relativePath)
+		if err := ensureChildPath(tempPath, targetPath); err != nil {
+			return err
+		}
+
+		info := file.FileInfo()
+		if info.IsDir() {
+			if err := os.MkdirAll(targetPath, info.Mode()); err != nil {
+				return fmt.Errorf("create directory %s: %w", targetPath, err)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("create directory for %s: %w", targetPath, err)
+		}
+
+		if err := extractZipFile(file, targetPath, info.Mode()); err != nil {
+			return err
+		}
+	}
+
+	if err := os.RemoveAll(extractPath); err != nil {
+		return fmt.Errorf("remove existing target: %w", err)
+	}
+
+	if err := os.Rename(tempPath, extractPath); err != nil {
+		return fmt.Errorf("replace target directory: %w", err)
+	}
+
+	return nil
+}
+
+func sanitizeZipPath(name string) (string, error) {
+	cleaned := filepath.Clean(strings.TrimPrefix(name, "/"))
+	for strings.HasPrefix(cleaned, "./") {
+		cleaned = strings.TrimPrefix(cleaned, "./")
+	}
+
+	if cleaned == "." || cleaned == "" {
+		return "", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("archive entry escapes target path: %s", name)
+	}
+
+	return cleaned, nil
+}
+
+func ensureChildPath(rootPath, targetPath string) error {
+	rootWithSep := rootPath + string(os.PathSeparator)
+	if targetPath != rootPath && !strings.HasPrefix(targetPath, rootWithSep) {
+		return fmt.Errorf("archive entry escapes target path: %s", targetPath)
+	}
+	return nil
+}
+
+func extractZipFile(file *zip.File, targetPath string, mode os.FileMode) error {
+	reader, err := file.Open()
+	if err != nil {
+		return fmt.Errorf("open archive entry %s: %w", file.Name, err)
+	}
+	defer reader.Close()
+
+	if mode == 0 {
+		mode = 0644
+	}
+
+	writer, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return fmt.Errorf("create file %s: %w", targetPath, err)
+	}
+
+	if _, err := io.Copy(writer, reader); err != nil {
+		writer.Close()
+		return fmt.Errorf("write file %s: %w", targetPath, err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close file %s: %w", targetPath, err)
+	}
+
+	return nil
+}
+
 // SendDeviceInfo reports device IP and inspector port assignments to the dev server
-func (s *SocketClient) SendDeviceInfo(ip string, inspectorPorts []DeviceInfoInspectorPort) {
+func (s *SocketClient) SendDeviceInfo(ip string, inspectorPorts []DeviceInfoInspectorPort, outputs []OutputInfo) {
 	if s.ws == nil {
 		return
 	}
@@ -632,11 +863,72 @@ func (s *SocketClient) SendDeviceInfo(ip string, inspectorPorts []DeviceInfoInsp
 	payload := DeviceInfoPayload{
 		IP:             ip,
 		InspectorPorts: inspectorPorts,
+		Outputs:        outputs,
+		Version:        Version,
 	}
 
-	s.logger.Info("Sending device info: IP=%s, inspectorPorts=%d", ip, len(inspectorPorts))
+	s.logger.Info("Sending device info: IP=%s, inspectorPorts=%d, outputs=%d", ip, len(inspectorPorts), len(outputs))
 
 	if err := s.ws.Emit("device-info", payload); err != nil {
 		s.logger.Error("Failed to send device info: %v", err)
+	}
+}
+
+// handleScreenStart starts screen streaming for an output
+func (s *SocketClient) handleScreenStart(payload ScreenStartPayload) {
+	s.logger.Info("Starting screen stream for output: %s", payload.OutputName)
+	s.screen.SetHost(s.host.Host, s.host.Port, s.clientKey)
+	if err := s.screen.Start(payload.OutputName); err != nil {
+		s.logger.Error("Failed to start screen stream: %v", err)
+		s.SendScreenError(ScreenErrorPayload{
+			OutputName: payload.OutputName,
+			Error:      err.Error(),
+		})
+	}
+}
+
+// handleScreenScreenshot requests a screenshot from an output
+func (s *SocketClient) handleScreenScreenshot(payload ScreenScreenshotPayload) {
+	s.logger.Info("Screenshot requested for output: %s", payload.OutputName)
+	s.screen.RequestScreenshot(payload.OutputName)
+}
+
+// SendScreenReady notifies the server that a screen stream is ready
+func (s *SocketClient) SendScreenReady(payload ScreenReadyPayload) {
+	if s.ws == nil {
+		return
+	}
+	if err := s.ws.Emit("screen-ready", payload); err != nil {
+		s.logger.Error("Failed to send screen-ready: %v", err)
+	}
+}
+
+// SendScreenStopped notifies the server that a screen stream has stopped
+func (s *SocketClient) SendScreenStopped(payload ScreenStoppedPayload) {
+	if s.ws == nil {
+		return
+	}
+	if err := s.ws.Emit("screen-stopped", payload); err != nil {
+		s.logger.Error("Failed to send screen-stopped: %v", err)
+	}
+}
+
+// SendScreenError sends a screen error to the server
+func (s *SocketClient) SendScreenError(payload ScreenErrorPayload) {
+	if s.ws == nil {
+		return
+	}
+	if err := s.ws.Emit("screen-error", payload); err != nil {
+		s.logger.Error("Failed to send screen-error: %v", err)
+	}
+}
+
+// SendScreenScreenshot sends a screenshot result to the server
+func (s *SocketClient) SendScreenScreenshot(payload ScreenScreenshotResultPayload) {
+	if s.ws == nil {
+		return
+	}
+	if err := s.ws.Emit("screen-picture-received", payload); err != nil {
+		s.logger.Error("Failed to send screenshot result: %v", err)
 	}
 }

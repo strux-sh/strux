@@ -7,7 +7,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 KERNEL_SOURCE_DIR="$CACHE_DIR/kernel-source"
 

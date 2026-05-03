@@ -2,7 +2,7 @@
 
 set -eo pipefail
 
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 KERNEL_SOURCE_DIR="$CACHE_DIR/kernel-source"
 BSP_NAME="${PRESELECTED_BSP}"
@@ -22,6 +22,15 @@ SAVE_CONFIG="${SAVE_CONFIG:-false}"
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    echo "Resolved host architecture to $ARCH"
 fi
 
 # Map architecture to kernel ARCH and cross-compiler

@@ -120,8 +120,8 @@ func (b *BinaryHandler) HandleUpdate(data []byte) BinaryUpdateResult {
 		return result
 	}
 
-	b.logger.Info("Binary updated successfully, rebooting system...")
 	result.Status = "updated"
+	b.logger.Info("Binary updated successfully, rebooting system...")
 	result.Message = "Binary updated, rebooting..."
 
 	// Reboot the system (async, so we can still return)

@@ -19,9 +19,7 @@ progress() {
 # ============================================================================
 KERNEL_PHASE="${KERNEL_PHASE:-}"
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 KERNEL_SOURCE_DIR="$CACHE_DIR/kernel-source"
 KERNEL_BUILD_DIR="$CACHE_DIR/kernel"
@@ -65,6 +63,15 @@ ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
 fi
 
 # Get kernel configuration from BSP config

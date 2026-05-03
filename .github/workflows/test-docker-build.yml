@@ -1,0 +1,316 @@
+name: Test Docker Builder Image
+
+on:
+  push:
+    branches:
+      - main
+      - feature/v0.3.0
+    paths:
+      - '.github/workflows/test-docker-build.yml'
+      - '.github/scripts/**'
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+  BUN_VERSION: '1.3.6'
+
+jobs:
+  get-version:
+    name: Get Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      branch_tag: ${{ steps.version.outputs.branch_tag }}
+      is_main: ${{ steps.version.outputs.is_main }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version from package.json
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          REF_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_TAG=$(echo "$REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+          if [ -z "$BRANCH_TAG" ]; then
+            BRANCH_TAG="unknown"
+          fi
+          IS_MAIN="false"
+          if [ "$REF_NAME" = "main" ]; then
+            IS_MAIN="true"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "branch_tag=${BRANCH_TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_main=${IS_MAIN}" >> "$GITHUB_OUTPUT"
+
+  generate-types:
+    name: Generate Runtime Types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Generate types
+        run: go run ./cmd/gen-runtime-types -format=ts > src/types/strux-runtime.ts
+      - name: Upload generated types
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-types
+          path: src/types/strux-runtime.ts
+
+  build-go:
+    name: Build Go (linux-${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: generate-types
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build strux-introspect
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w" -o strux-introspect-linux-${{ matrix.arch }} ./cmd/strux/main.go
+      - name: Upload Go binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: strux-introspect-linux-${{ matrix.arch }}
+          path: strux-introspect-linux-${{ matrix.arch }}
+
+  build-bun:
+    name: Build Bun CLI (linux-${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: [get-version, generate-types]
+    strategy:
+      matrix:
+        include:
+          - target: linux-x64
+          - target: linux-arm64
+    env:
+      STRUX_VERSION: ${{ needs.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Download generated types
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-types
+          path: src/types/
+      - name: Install dependencies
+        run: bun install
+      - name: Build executable
+        run: |
+          bun build src/index.ts --compile --target=bun-${{ matrix.target }} --outfile strux-${{ matrix.target }} --define:process.env.STRUX_VERSION="\"${STRUX_VERSION}\""
+      - name: Upload Bun binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: strux-${{ matrix.target }}
+          path: strux-${{ matrix.target }}
+
+  test-docker-e2e:
+    name: Build and E2E Docker Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [get-version, build-bun, build-go]
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            bun-target: linux-x64
+          - arch: arm64
+            runner: [self-hosted, Linux, ARM64]
+            bun-target: linux-arm64
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+      IMAGE: ghcr.io/strux-sh/strux-builder
+      LOCAL_IMAGE: strux-builder:e2e-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Bun binary
+        uses: actions/download-artifact@v4
+        with:
+          name: strux-${{ matrix.bun-target }}
+
+      - name: Download Go binary
+        uses: actions/download-artifact@v4
+        with:
+          name: strux-introspect-linux-${{ matrix.arch }}
+
+      - name: Prepare build context
+        run: |
+          cp strux-${{ matrix.bun-target }} strux-binary-${{ matrix.arch }}
+          cp strux-introspect-linux-${{ matrix.arch }} strux-introspect-${{ matrix.arch }}
+
+          cp src/assets/scripts-base/Dockerfile Dockerfile.builder
+          cat >> Dockerfile.builder << 'DEOF'
+
+          # --- Added by CI: bake strux CLI and introspect binary into the image ---
+          ARG TARGETARCH
+          COPY strux-binary-${TARGETARCH} /usr/local/bin/strux
+          COPY strux-introspect-${TARGETARCH} /usr/local/bin/strux-introspect
+          RUN chmod +x /usr/local/bin/strux /usr/local/bin/strux-introspect
+          DEOF
+
+          echo "=== Dockerfile.builder tail ==="
+          tail -10 Dockerfile.builder
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local image for E2E
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.builder
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: |
+            ${{ env.LOCAL_IMAGE }}
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+      - name: Run E2E placeholder
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD:/project" \
+            -w /project \
+            "${LOCAL_IMAGE}" \
+            bash .github/scripts/e2e-noop.sh
+
+  publish-docker:
+    name: Publish Docker Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [get-version, build-bun, build-go, test-docker-e2e]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            bun-target: linux-x64
+          - arch: arm64
+            runner: [self-hosted, Linux, ARM64]
+            bun-target: linux-arm64
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+      IMAGE: ghcr.io/strux-sh/strux-builder
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Bun binary
+        uses: actions/download-artifact@v4
+        with:
+          name: strux-${{ matrix.bun-target }}
+
+      - name: Download Go binary
+        uses: actions/download-artifact@v4
+        with:
+          name: strux-introspect-linux-${{ matrix.arch }}
+
+      - name: Prepare build context
+        run: |
+          cp strux-${{ matrix.bun-target }} strux-binary-${{ matrix.arch }}
+          cp strux-introspect-linux-${{ matrix.arch }} strux-introspect-${{ matrix.arch }}
+
+          cp src/assets/scripts-base/Dockerfile Dockerfile.builder
+          cat >> Dockerfile.builder << 'DEOF'
+
+          # --- Added by CI: bake strux CLI and introspect binary into the image ---
+          ARG TARGETARCH
+          COPY strux-binary-${TARGETARCH} /usr/local/bin/strux
+          COPY strux-introspect-${TARGETARCH} /usr/local/bin/strux-introspect
+          RUN chmod +x /usr/local/bin/strux /usr/local/bin/strux-introspect
+          DEOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute Docker tags
+        id: docker-tags
+        run: |
+          if [ "${{ needs.get-version.outputs.is_main }}" = "true" ]; then
+            TAG="${IMAGE}:${VERSION}-${{ matrix.arch }}"
+          else
+            TAG="${IMAGE}:${{ needs.get-version.outputs.branch_tag }}-${{ matrix.arch }}"
+          fi
+
+          {
+            echo "tags<<EOF"
+            echo "$TAG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.builder
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+  merge-docker-manifest:
+    name: Merge Docker Manifest
+    runs-on: ubuntu-latest
+    needs: [get-version, publish-docker]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+      IMAGE: ghcr.io/strux-sh/strux-builder
+      BRANCH_TAG: ${{ needs.get-version.outputs.branch_tag }}
+      IS_MAIN: ${{ needs.get-version.outputs.is_main }}
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create and push multi-arch manifest
+        run: |
+          if [ "${IS_MAIN}" = "true" ]; then
+            docker buildx imagetools create -t "${IMAGE}:${VERSION}" \
+              "${IMAGE}:${VERSION}-amd64" \
+              "${IMAGE}:${VERSION}-arm64"
+
+            docker buildx imagetools create -t "${IMAGE}:latest" \
+              "${IMAGE}:${VERSION}-amd64" \
+              "${IMAGE}:${VERSION}-arm64"
+          else
+            docker buildx imagetools create -t "${IMAGE}:${BRANCH_TAG}" \
+              "${IMAGE}:${BRANCH_TAG}-amd64" \
+              "${IMAGE}:${BRANCH_TAG}-arm64"
+          fi

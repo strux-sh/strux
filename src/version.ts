@@ -4,7 +4,10 @@
  *
  */
 
+// @ts-ignore
+import packageJson from "../package.json" with { type: "json" }
+
 const envVersion = process.env.STRUX_VERSION?.trim()
 
-// Default to the development version when no build-time override is provided
-export const STRUX_VERSION = envVersion && envVersion.length > 0 ? envVersion : "0.0.1"
+// CI sets STRUX_VERSION via --define at compile time; local builds fall back to package.json
+export const STRUX_VERSION = envVersion && envVersion.length > 0 ? envVersion : packageJson.version

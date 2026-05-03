@@ -138,12 +138,17 @@ export WLR_DRM_NO_MODIFIERS=1
 export G_DEBUG=
 export G_SLICE=always-malloc
 
-# Create symlink for frontend directory
-# The backend (runtime) looks for ./frontend from / which means /frontend
-# But the frontend files are at /strux/frontend, so we symlink
-if [ -d /strux/frontend ] && [ ! -e /frontend ]; then
-    log "Creating /frontend symlink for backend..."
-    ln -sf /strux/frontend /frontend
+# Apply staged backend/client updates before launching new processes.
+if [ -f /strux/.main-update ]; then
+    log "Applying staged backend update..."
+    chmod 0755 /strux/.main-update
+    mv /strux/.main-update /strux/main
+fi
+
+if [ -f /strux/.client-update ]; then
+    log "Applying staged client update..."
+    chmod 0755 /strux/.client-update
+    mv /strux/.client-update /strux/client
 fi
 
 # Use /strux/main for the backend binary
@@ -157,10 +162,18 @@ if [ ! -x "$APP_BINARY" ]; then
     exit 1
 fi
 
+# Restrict the built-in UI server to loopback unless dev mode is active.
+if [ -f /strux/.dev-env.json ]; then
+    export STRUX_HTTP_ADDR=":8080"
+    log "Dev mode active: backend HTTP server exposed on :8080"
+else
+    export STRUX_HTTP_ADDR="127.0.0.1:8080"
+    log "Dev mode disabled: backend HTTP server restricted to 127.0.0.1:8080"
+fi
+
 # Start the backend app in the background
-# Backend still runs on localhost:8080 for IPC/API calls
-# Backend serves from ./frontend relative to its working directory
-# Change to / so ./frontend resolves to /frontend
+# Cog and backend health checks still use localhost:8080.
+# The runtime now serves /strux/frontend directly when it exists.
 log "Starting backend app..."
 cd / && $APP_BINARY > /tmp/strux-backend.log 2>&1 &
 BACKEND_PID=$!
