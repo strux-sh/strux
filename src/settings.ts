@@ -57,6 +57,9 @@ export class SettingsConfig {
     // To show debug information from the QEMU system when it is running
     qemuSystemDebug = false
 
+    // Run QEMU without opening a host display window while keeping a virtual GPU
+    qemuHeadless = false
+
     // To show debug information from the dev server (log streams)
     devDebug = false
 

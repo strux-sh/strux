@@ -26,6 +26,8 @@ interface RunOptions {
     returnProcess?: boolean
     // Suppress QEMU console output (useful when logs are streamed via dev server)
     quiet?: boolean
+    // Run without opening a host display window while preserving the guest GPU/display
+    headless?: boolean
     // Override stdio to capture QEMU output
     stdio?: ["inherit" | "ignore" | "pipe", "inherit" | "ignore" | "pipe", "inherit" | "ignore" | "pipe"]
 }
@@ -78,13 +80,27 @@ export async function run(options: RunOptions = {}) {
 
     // Multi-monitor suffix for GPU device
     const maxOutputsSuffix = monitorCount > 1 ? `,max_outputs=${monitorCount}` : ""
+    const headless = options.headless ?? Settings.qemuHeadless
 
-    if (Settings.targetArch === "x86_64" && process.platform === "darwin") {
+    if (headless) {
+        displayOpt = "none"
+        gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
+
+        if (Settings.targetArch === "x86_64" && process.platform === "darwin") {
+            accelArgs.push("-accel", "hvf", "-cpu", "host")
+        } else if (Settings.targetArch === "x86_64") {
+            accelArgs.push("-accel", "kvm", "-cpu", "host")
+        } else if (Settings.targetArch === "arm64") {
+            if (process.platform === "darwin") accelArgs.push("-accel", "hvf", "-cpu", "host")
+            else accelArgs.push("-cpu", "cortex-a57")
+        } else if (Settings.targetArch === "armhf") {
+            accelArgs.push("-cpu", "cortex-a15")
+        }
+    } else if (Settings.targetArch === "x86_64" && process.platform === "darwin") {
         displayOpt = "cocoa"
         gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         accelArgs.push("-accel", "hvf", "-cpu", "host")
-    }
-    if (Settings.targetArch === "x86_64" && process.platform !== "darwin") {
+    } else if (Settings.targetArch === "x86_64" && process.platform !== "darwin") {
 
         // Auto-detect GPU and enable GL for Intel/AMD
         if (await shouldUseGL()) {
@@ -100,13 +116,11 @@ export async function run(options: RunOptions = {}) {
 
         accelArgs.push("-accel", "kvm", "-cpu", "host")
 
-    }
-    if (Settings.targetArch === "arm64" && process.platform === "darwin") {
+    } else if (Settings.targetArch === "arm64" && process.platform === "darwin") {
         displayOpt = "cocoa"
         gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         accelArgs.push("-accel", "hvf", "-cpu", "host")
-    }
-    if (Settings.targetArch === "arm64" && process.platform !== "darwin") {
+    } else if (Settings.targetArch === "arm64" && process.platform !== "darwin") {
 
         // Auto-detect GPU for ARM64 emulation as well
         if (await shouldUseGL()) {
@@ -117,16 +131,12 @@ export async function run(options: RunOptions = {}) {
             gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         }
         accelArgs.push("-cpu", "cortex-a57")
-    }
-
-    // ARMHF (ARMv7) configuration
-    if (Settings.targetArch === "armhf" && process.platform === "darwin") {
+    } else if (Settings.targetArch === "armhf" && process.platform === "darwin") {
         displayOpt = "cocoa"
         gpuDevice = `virtio-gpu-pci,xres=${Settings.bsp!.display!.width},yres=${Settings.bsp!.display!.height}${maxOutputsSuffix}`
         // No HVF acceleration on macOS for 32-bit ARM, use TCG emulation
         accelArgs.push("-cpu", "cortex-a15")
-    }
-    if (Settings.targetArch === "armhf" && process.platform !== "darwin") {
+    } else if (Settings.targetArch === "armhf" && process.platform !== "darwin") {
 
         // Auto-detect GPU for ARMHF emulation
         if (await shouldUseGL()) {
@@ -159,6 +169,7 @@ export async function run(options: RunOptions = {}) {
     const args: string[] = [
         "-machine", machineType,
         "-m", "2048",
+        ...(headless ? ["-vga", "none"] : []),
         "-device", gpuDevice,
         "-display", displayOpt,
         "-device", "qemu-xhci",
@@ -453,4 +464,3 @@ async function verifyArtifactsExist(devMode = false): Promise<void> {
     }
 
 }
-

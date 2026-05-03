@@ -126,13 +126,15 @@ program.command("build")
 
 program.command("run")
     .option("--debug", "Show console output and systemd messages")
+    .option("--headless", "Run QEMU without opening a host display window")
     .description("Run the Strux OS Image in QEMU")
-    .action(async (options: {debug?: boolean}) => {
+    .action(async (options: {debug?: boolean, headless?: boolean}) => {
 
         try {
 
             Logger.title("Running Strux OS Image in QEMU")
             Settings.qemuSystemDebug = options.debug ?? false
+            Settings.qemuHeadless = options.headless ?? false
             await run()
 
         } catch (err) {
