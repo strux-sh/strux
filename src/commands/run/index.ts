@@ -8,7 +8,7 @@
 
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
-import { readdir } from "fs/promises"
+import { mkdir, readdir, writeFile } from "fs/promises"
 import { join } from "path"
 import { fileExists } from "../../utils/path"
 import { MainYAMLValidator } from "../../types/main-yaml"
@@ -252,6 +252,8 @@ export async function run(options: RunOptions = {}) {
         env: process.env
     })
 
+    await writeQemuPidFile(proc.pid)
+
     if (sessionConfigs.length > 0 && process.platform === "darwin") {
 
         await Bun.sleep(5000)
@@ -345,6 +347,15 @@ export async function run(options: RunOptions = {}) {
         process.removeAllListeners("SIGTERM")
         USBRedirect.stop()
     }
+}
+
+
+async function writeQemuPidFile(pid: number): Promise<void> {
+
+    const tempDir = join(Settings.projectPath, "dist", "temp")
+    await mkdir(tempDir, { recursive: true })
+    await writeFile(join(tempDir, "qemu-pid"), `${pid}\n`)
+
 }
 
 function decodeChunks(chunks: Uint8Array[]): string {
