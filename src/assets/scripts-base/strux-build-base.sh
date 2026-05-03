@@ -16,11 +16,9 @@ progress() {
 
 progress "Preparing Base Root Filesystem"
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
-PROJECT_DIST_DIR="/project/dist"
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
-PROJECT_CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+PROJECT_DIST_DIR="${PROJECT_DIST_DIR:-$PROJECT_DIR/dist}"
+PROJECT_CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIST_DIR/cache}"
 
 mkdir -p "$PROJECT_CACHE_DIR"
 

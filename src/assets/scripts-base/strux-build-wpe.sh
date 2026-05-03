@@ -10,8 +10,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 # WPE extension source is bundled with the CLI and copied to dist/artifacts/wpe-extension
 EXTENSION_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/wpe-extension"
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default

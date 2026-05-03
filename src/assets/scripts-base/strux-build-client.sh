@@ -20,8 +20,7 @@ progress "Building Strux Client (Go)..."
 
 progress "Reading configuration from YAML files..."
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 CLIENT_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/client"
 
 # Get the active BSP name from strux.yaml
@@ -95,8 +94,7 @@ progress "Building Strux Client for $ARCH_LABEL..."
 # Build the Go client with cross-compilation
 # ============================================================================
 
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
-CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
+CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 
 # Ensure the cache directory exists
 mkdir -p "$CACHE_DIR"

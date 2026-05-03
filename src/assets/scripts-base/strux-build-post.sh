@@ -11,15 +11,14 @@ progress() {
 
 progress "Post-processing Root Filesystem..."
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
-PROJECT_DIST_DIR="/project/dist"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+PROJECT_DIST_DIR="${PROJECT_DIST_DIR:-$PROJECT_DIR/dist}"
 ROOTFS_DIR="/tmp/rootfs"
 
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default
-BSP_CACHE="${BSP_CACHE_DIR:-/project/dist/cache}"
+BSP_CACHE="${BSP_CACHE_DIR:-$PROJECT_DIST_DIR/cache}"
 # Shared cache for architecture-agnostic artifacts like frontend
-SHARED_CACHE="${SHARED_CACHE_DIR:-/project/dist/cache}"
+SHARED_CACHE="${SHARED_CACHE_DIR:-$PROJECT_DIST_DIR/cache}"
 
 # Function to run commands in chroot
 run_in_chroot() {
@@ -97,8 +96,8 @@ fi
 # - .deb files: Copied to chroot and installed via dpkg
 #
 # Path resolution rules:
-# - Global packages: relative to project root (/project)
-# - BSP packages starting with ./: relative to BSP folder (/project/bsp/{bsp_name})
+# - Global packages: relative to project root
+# - BSP packages starting with ./: relative to BSP folder
 # - BSP packages without ./: relative to project root
 # ============================================================================
 

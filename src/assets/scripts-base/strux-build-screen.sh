@@ -9,8 +9,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 # Screen daemon source is bundled with the CLI and copied to dist/artifacts/screen
 SCREEN_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/screen"
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default

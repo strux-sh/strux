@@ -6,7 +6,7 @@
 
 import { Command } from "commander"
 import { join, resolve } from "path"
-import { Settings, type ArchType, type TemplateType } from "./settings"
+import { normalizeBuilderTag, Settings, type ArchType, type TemplateType } from "./settings"
 import { STRUX_VERSION } from "./version"
 import { Logger } from "./utils/log"
 import { fileExists } from "./utils/path"
@@ -28,6 +28,7 @@ program
     .version(STRUX_VERSION)
     .option("--verbose", "Enable verbose output")
     .option("--local-builder", "Build Docker image locally instead of pulling from GHCR")
+    .option("--remote-builder <branch-or-tag>", "Pull a branch-scoped builder image from GHCR, e.g. feature/v0.3.0 -> feature-v0.3.0")
     .hook("preAction", (command: Command) => {
 
         const options = command.optsWithGlobals()
@@ -38,6 +39,10 @@ program
 
         if (options.localBuilder) {
             Settings.localBuilder = true
+        }
+
+        if (options.remoteBuilder) {
+            Settings.remoteBuilderTag = normalizeBuilderTag(options.remoteBuilder)
         }
 
     })
@@ -95,6 +100,7 @@ program.command("types")
 
 
 program.command("build")
+    .description("Build a complete OS image for a BSP")
     .argument("<bsp>", "The board support package to build for")
     .option("--clean", "Clean the build cache before building")
     .option("--dev", "Build a development image")

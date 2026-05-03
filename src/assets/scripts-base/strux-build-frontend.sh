@@ -10,8 +10,10 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+
 # Navigate to the frontend directory of the project
-cd /project/frontend 
+cd "$PROJECT_DIR/frontend"
 
 progress "Installing Frontend Dependencies..."
 
@@ -27,7 +29,7 @@ progress "Copying Built Frontend to Dist Directory..."
 
 # Frontend is architecture-agnostic, so it goes in shared cache
 # Use SHARED_CACHE_DIR if provided, otherwise fallback to default
-CACHE_DIR="${SHARED_CACHE_DIR:-/project/dist/cache}"
+CACHE_DIR="${SHARED_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 
 # Remove the frontend directory if it exists
 rm -rf "$CACHE_DIR/frontend"

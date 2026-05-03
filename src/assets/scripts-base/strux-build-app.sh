@@ -9,8 +9,8 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
-CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 
 # Delete the old app directory contents if it exists (this will later be mounted [in dev mode] or copied (in build mode))
 rm -rf "$CACHE_DIR/app"/*
@@ -18,7 +18,7 @@ rm -rf "$CACHE_DIR/app"/*
 # Create the app directory if it doesn't exist
 mkdir -p "$CACHE_DIR/app"
 
-cd /project
+cd "$PROJECT_DIR"
 
 # ============================================================================
 # CONFIGURATION READING FROM YAML FILES
@@ -28,8 +28,7 @@ cd /project
 
 progress "Reading configuration from YAML files..."
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+# Project directory is provided by the Strux runner.
 
 # Get the active BSP name - check environment variable first, then fall back to strux.yaml
 if [ -n "$PRESELECTED_BSP" ]; then

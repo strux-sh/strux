@@ -41,7 +41,6 @@ import scriptBuildBootloader from "../../assets/scripts-base/strux-build-bootloa
 function bspBuildEnv(bspName: string, extra: Record<string, string> = {}): Record<string, string> {
     return {
         PRESELECTED_BSP: bspName,
-        BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
         HOST_ARCH: Settings.arch,
         TARGET_ARCH: Settings.targetArch,
         ...extra
@@ -69,11 +68,7 @@ export async function compileFrontend(): Promise<void> {
     await Runner.runScriptInDocker(scriptBuildFrontend, {
         message: "Compiling Frontend...",
         messageOnError: "Failed to compile Frontend. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            // Frontend uses shared cache (architecture-agnostic)
-            SHARED_CACHE_DIR: "/project/dist/cache"
-        }
+        exitOnError: true
     })
 }
 
@@ -374,9 +369,7 @@ export async function postProcessRootFS(): Promise<void> {
         message: "Post processing rootfs...",
         messageOnError: "Failed to post process rootfs. Please check the build logs for more information.",
         exitOnError: true,
-        env: bspBuildEnv(bspName, {
-            SHARED_CACHE_DIR: "/project/dist/cache"
-        })
+        env: bspBuildEnv(bspName)
     })
 
     Logger.success("RootFS post processing completed successfully")

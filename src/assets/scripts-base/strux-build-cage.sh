@@ -9,8 +9,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 # Cage source is bundled with the CLI and copied to dist/artifacts/cage
 CAGE_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/cage"
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default
@@ -329,7 +328,7 @@ if [ "$NEED_CROSS_COMPILE" = true ]; then
         cat /tmp/pkg-config-debug.log 2>/dev/null || echo "No debug log"
         echo ""
         echo "Meson log (last 50 lines):"
-        tail -50 /project/dist/artifacts/cage/build/meson-logs/meson-log.txt 2>/dev/null || echo "No meson log"
+        tail -50 "$PROJECT_DIR/dist/artifacts/cage/build/meson-logs/meson-log.txt" 2>/dev/null || echo "No meson log"
         exit 1
     }
 else

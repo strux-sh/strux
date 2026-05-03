@@ -19,9 +19,7 @@ progress() {
 # ============================================================================
 KERNEL_PHASE="${KERNEL_PHASE:-}"
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 KERNEL_SOURCE_DIR="$CACHE_DIR/kernel-source"
 KERNEL_BUILD_DIR="$CACHE_DIR/kernel"

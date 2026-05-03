@@ -14,6 +14,18 @@ import type { BSPYaml } from "./types/bsp-yaml"
 export type TemplateType = "vanilla" | "react" | "vue"
 export type ArchType = "arm64" | "x86_64" | "armhf" | "host"
 
+export function normalizeBuilderTag(value: string): string {
+    const tag = value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_.-]+/g, "-")
+        .replace(/^-+/g, "")
+        .replace(/-+$/g, "")
+        .replace(/-+/g, "-")
+
+    return tag || "unknown"
+}
+
 
 export class SettingsConfig {
 
@@ -64,9 +76,12 @@ export class SettingsConfig {
     // Force local Docker image build instead of pulling from GHCR
     localBuilder = false
 
-    // The GHCR image reference for the builder, based on the current strux version
+    // GHCR builder tag override, useful for testing branch-scoped CI images locally
+    remoteBuilderTag: string | null = null
+
+    // The GHCR image reference for the builder
     get builderImage(): string {
-        return `ghcr.io/strux-sh/strux-builder:${this.struxVersion}`
+        return `ghcr.io/strux-sh/strux-builder:${this.remoteBuilderTag ?? this.struxVersion}`
     }
 
 

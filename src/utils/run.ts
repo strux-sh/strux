@@ -393,6 +393,28 @@ export class RunnerClass {
         return `(UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -path "*/.git" -prune -o -exec chown -h "$UIDGID" {} +)`
     }
 
+    private getScriptPathEnv(): Record<string, string> {
+        const projectDir = Settings.inContainer ? Settings.projectPath : "/project"
+        const projectDistDir = `${projectDir}/dist`
+        const env: Record<string, string> = {
+            PROJECT_DIR: projectDir,
+            PROJECT_FOLDER: projectDir,
+            PROJECT_DIST_DIR: projectDistDir,
+            PROJECT_DIST_FOLDER: projectDistDir,
+            PROJECT_DIST_ARTIFACTS_FOLDER: `${projectDistDir}/artifacts`,
+            SHARED_CACHE_DIR: `${projectDistDir}/cache`
+        }
+
+        if (Settings.bspName) {
+            env.BSP_CACHE_DIR = `${projectDistDir}/cache/${Settings.bspName}`
+            env.PROJECT_DIST_CACHE_FOLDER = env.BSP_CACHE_DIR
+            env.PROJECT_DIST_OUTPUT_FOLDER = `${projectDistDir}/output/${Settings.bspName}`
+            env.BSP_FOLDER = `${projectDir}/bsp/${Settings.bspName}`
+        }
+
+        return env
+    }
+
     /**
      * Runs a standalone chown on the project directory inside Docker.
      * Use this at the end of a build pipeline instead of chowning after every step.
@@ -462,7 +484,7 @@ export class RunnerClass {
             const proc = Bun.spawn(args, {
                 stdout: "inherit",
                 stderr: "inherit",
-                env: { ...process.env, ...options.env },
+                env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
                 cwd: Settings.projectPath,
             })
 
@@ -484,7 +506,7 @@ export class RunnerClass {
         const proc = Bun.spawn(args, {
             stdout: "pipe",
             stderr: "pipe",
-            env: { ...process.env, ...options.env },
+            env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
             cwd: Settings.projectPath,
         })
 
@@ -606,11 +628,11 @@ export class RunnerClass {
             "--privileged"  // Required for debootstrap, mount, and chroot operations
         ]
 
+        const scriptEnv = { ...options.env, ...this.getScriptPathEnv() }
+
         // Add environment variable flags
-        if (options.env) {
-            for (const [key, value] of Object.entries(options.env)) {
-                args.push("-e", `${key}=${value}`)
-            }
+        for (const [key, value] of Object.entries(scriptEnv)) {
+            args.push("-e", `${key}=${value}`)
         }
 
         // Add volume mount
@@ -770,7 +792,7 @@ export class RunnerClass {
                 stdout: "inherit",
                 stderr: "inherit",
                 stdin: "inherit",
-                env: { ...process.env, ...options.env },
+                env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
                 cwd: Settings.projectPath,
             })
 
@@ -809,11 +831,11 @@ export class RunnerClass {
             "--privileged"
         ]
 
+        const scriptEnv = { ...options.env, ...this.getScriptPathEnv() }
+
         // Add environment variable flags
-        if (options.env) {
-            for (const [key, value] of Object.entries(options.env)) {
-                args.push("-e", `${key}=${value}`)
-            }
+        for (const [key, value] of Object.entries(scriptEnv)) {
+            args.push("-e", `${key}=${value}`)
         }
 
         // Add volume mount
