@@ -3,9 +3,11 @@ name: Test Docker Builder Image
 on:
   push:
     branches:
+      - main
       - feature/v0.3.0
     paths:
       - '.github/workflows/test-docker-build.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 env:
@@ -18,13 +20,27 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      branch_tag: ${{ steps.version.outputs.branch_tag }}
+      is_main: ${{ steps.version.outputs.is_main }}
     steps:
       - uses: actions/checkout@v4
       - name: Get version from package.json
         id: version
         run: |
           VERSION=$(jq -r '.version' package.json)
+          REF_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_TAG=$(echo "$REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+          if [ -z "$BRANCH_TAG" ]; then
+            BRANCH_TAG="unknown"
+          fi
+          IS_MAIN="false"
+          if [ "$REF_NAME" = "main" ]; then
+            IS_MAIN="true"
+          fi
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "branch_tag=${BRANCH_TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_main=${IS_MAIN}" >> "$GITHUB_OUTPUT"
 
   generate-types:
     name: Generate Runtime Types
@@ -234,6 +250,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute Docker tags
+        id: docker-tags
+        run: |
+          if [ "${{ needs.get-version.outputs.is_main }}" = "true" ]; then
+            TAG="${IMAGE}:${VERSION}-${{ matrix.arch }}"
+          else
+            TAG="${IMAGE}:${{ needs.get-version.outputs.branch_tag }}-${{ matrix.arch }}"
+          fi
+
+          {
+            echo "tags<<EOF"
+            echo "$TAG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -241,8 +272,7 @@ jobs:
           file: Dockerfile.builder
           platforms: linux/${{ matrix.arch }}
           push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          tags: ${{ steps.docker-tags.outputs.tags }}
           cache-from: type=gha,scope=docker-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
 
@@ -256,6 +286,8 @@ jobs:
     env:
       VERSION: ${{ needs.get-version.outputs.version }}
       IMAGE: ghcr.io/strux-sh/strux-builder
+      BRANCH_TAG: ${{ needs.get-version.outputs.branch_tag }}
+      IS_MAIN: ${{ needs.get-version.outputs.is_main }}
     steps:
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -269,10 +301,16 @@ jobs:
 
       - name: Create and push multi-arch manifest
         run: |
-          docker buildx imagetools create -t ${{ env.IMAGE }}:${{ env.VERSION }} \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-amd64 \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-arm64
+          if [ "${IS_MAIN}" = "true" ]; then
+            docker buildx imagetools create -t "${IMAGE}:${VERSION}" \
+              "${IMAGE}:${VERSION}-amd64" \
+              "${IMAGE}:${VERSION}-arm64"
 
-          docker buildx imagetools create -t ${{ env.IMAGE }}:latest \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-amd64 \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-arm64
+            docker buildx imagetools create -t "${IMAGE}:latest" \
+              "${IMAGE}:${VERSION}-amd64" \
+              "${IMAGE}:${VERSION}-arm64"
+          else
+            docker buildx imagetools create -t "${IMAGE}:${BRANCH_TAG}" \
+              "${IMAGE}:${BRANCH_TAG}-amd64" \
+              "${IMAGE}:${BRANCH_TAG}-arm64"
+          fi

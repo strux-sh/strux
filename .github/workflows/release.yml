@@ -23,6 +23,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      branch_tag: ${{ steps.version.outputs.branch_tag }}
+      publish_version_tags: ${{ steps.version.outputs.publish_version_tags }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +37,21 @@ jobs:
           else
             VERSION=$(jq -r '.version' package.json)
           fi
+          REF_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          REF_TYPE="${GITHUB_REF_TYPE:-branch}"
+          BRANCH_TAG=$(echo "$REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+          if [ -z "$BRANCH_TAG" ]; then
+            BRANCH_TAG="unknown"
+          fi
+          PUBLISH_VERSION_TAGS="false"
+          if [ "$REF_TYPE" = "tag" ] || [ "$REF_NAME" = "main" ]; then
+            PUBLISH_VERSION_TAGS="true"
+          fi
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "branch_tag=$BRANCH_TAG" >> $GITHUB_OUTPUT
+          echo "publish_version_tags=$PUBLISH_VERSION_TAGS" >> $GITHUB_OUTPUT
           echo "📦 Release version: $VERSION"
 
   # Generate runtime types first
@@ -294,6 +309,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute Docker tags
+        id: docker-tags
+        run: |
+          if [ "${{ needs.get-version.outputs.publish_version_tags }}" = "true" ]; then
+            TAG="${IMAGE}:${VERSION}-${{ matrix.arch }}"
+          else
+            TAG="${IMAGE}:${{ needs.get-version.outputs.branch_tag }}-${{ matrix.arch }}"
+          fi
+
+          {
+            echo "tags<<EOF"
+            echo "$TAG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -301,8 +331,7 @@ jobs:
           file: Dockerfile.builder
           platforms: linux/${{ matrix.arch }}
           push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          tags: ${{ steps.docker-tags.outputs.tags }}
           cache-from: type=gha,scope=docker-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
 
@@ -316,6 +345,8 @@ jobs:
     env:
       VERSION: ${{ needs.get-version.outputs.version }}
       IMAGE: ghcr.io/strux-sh/strux-builder
+      BRANCH_TAG: ${{ needs.get-version.outputs.branch_tag }}
+      PUBLISH_VERSION_TAGS: ${{ needs.get-version.outputs.publish_version_tags }}
     steps:
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -329,13 +360,19 @@ jobs:
 
       - name: Create and push multi-arch manifest
         run: |
-          docker buildx imagetools create -t ${{ env.IMAGE }}:${{ env.VERSION }} \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-amd64 \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-arm64
+          if [ "${PUBLISH_VERSION_TAGS}" = "true" ]; then
+            docker buildx imagetools create -t "${IMAGE}:${VERSION}" \
+              "${IMAGE}:${VERSION}-amd64" \
+              "${IMAGE}:${VERSION}-arm64"
 
-          docker buildx imagetools create -t ${{ env.IMAGE }}:latest \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-amd64 \
-            ${{ env.IMAGE }}:${{ env.VERSION }}-arm64
+            docker buildx imagetools create -t "${IMAGE}:latest" \
+              "${IMAGE}:${VERSION}-amd64" \
+              "${IMAGE}:${VERSION}-arm64"
+          else
+            docker buildx imagetools create -t "${IMAGE}:${BRANCH_TAG}" \
+              "${IMAGE}:${BRANCH_TAG}-amd64" \
+              "${IMAGE}:${BRANCH_TAG}-arm64"
+          fi
 
   # Create .deb package for Linux
   build-deb:

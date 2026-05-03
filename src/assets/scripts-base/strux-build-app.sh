@@ -141,6 +141,7 @@ fi
 GO_PRIVATE_ENV="${GO_PRIVATE_ENV:-}"
 
 # Build the Go application with cross-compilation
+GOTOOLCHAIN=local \
 CGO_ENABLED=1 \
 GOOS=linux \
 GOARCH="$GO_ARCH" \

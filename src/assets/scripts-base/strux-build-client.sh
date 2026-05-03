@@ -113,14 +113,15 @@ progress "Downloading Go dependencies..."
 
 # Always run go mod tidy first to ensure go.sum is up to date
 # This is necessary because the source files are copied fresh each build
-go mod tidy
+GOTOOLCHAIN=local go mod tidy
 
 # Then download all dependencies
-go mod download
+GOTOOLCHAIN=local go mod download
 
 # Build the client binary
 progress "Compiling Strux Client for $ARCH_LABEL..."
 
+GOTOOLCHAIN=local \
 CGO_ENABLED=1 \
 GOOS=linux \
 GOARCH="$GO_ARCH" \
