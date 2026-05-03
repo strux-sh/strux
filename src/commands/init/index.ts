@@ -42,10 +42,10 @@ const BUILDER_GO_VERSION = "1.24.2"
 export async function init() {
 
     // Validate Project Name
-    if (Settings.projectName === "") return Logger.error("Please specify a project name")
+    if (Settings.projectName === "") return Logger.errorWithExit("Please specify a project name")
 
     // Check if the project directory already exists
-    if (pathExists(Settings.projectName)) return Logger.error(`Project directory already exists: ${Settings.projectName}`)
+    if (pathExists(Settings.projectName)) return Logger.errorWithExit(`Project directory already exists: ${Settings.projectName}`)
 
 
     // Check if NPM is installed
