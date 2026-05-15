@@ -9,6 +9,7 @@ bsp:
     env:
       - WLR_DRM_NO_MODIFIERS=1
       - WLR_NO_HARDWARE_CURSORS=1
+      # - STRUX_OUTPUT_TRANSFORM=90
 
   arch: ${hostArch}
   hostname: ${projectName}

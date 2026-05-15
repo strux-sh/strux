@@ -212,7 +212,7 @@ func withLaunchToken(rawURL, token string) string {
 }
 
 // writeDisplayMap writes the output-to-URL mapping file that Cage reads via --display-map.
-// Format: one "output_name=url" per line, plus "output_name.resolution=WxH" for resolution.
+// Format: one "output_name=url" per line, plus optional output_name.* settings.
 func (c *CageLauncher) writeDisplayMap(opts LaunchOptions) error {
 	var lines []string
 	launchToken := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -225,6 +225,9 @@ func (c *CageLauncher) writeDisplayMap(opts LaunchOptions) error {
 				lines = append(lines, fmt.Sprintf("%s=%s", name, cogURL))
 				if monitor.Resolution != "" {
 					lines = append(lines, fmt.Sprintf("%s.resolution=%s", name, monitor.Resolution))
+				}
+				if monitor.Transform != "" {
+					lines = append(lines, fmt.Sprintf("%s.transform=%s", name, monitor.Transform))
 				}
 			}
 		}
@@ -242,6 +245,30 @@ func (c *CageLauncher) writeDisplayMapAndGetPath(opts LaunchOptions) string {
 		return ""
 	}
 	return "/tmp/strux-display-map"
+}
+
+func envHasKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func displayConfigDefaultTransform(config *DisplayConfig) string {
+	if config == nil {
+		return ""
+	}
+
+	for _, monitor := range config.Monitors {
+		if monitor.Transform != "" {
+			return monitor.Transform
+		}
+	}
+
+	return ""
 }
 
 // Launch starts Cage compositor with Cog browser
@@ -279,7 +306,7 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	c.process = exec.Command("cage", args...)
 
 	// Set environment variables required for Cage and WebKit
-	c.process.Env = append(os.Environ(),
+	cageEnv := append(os.Environ(),
 		"WPE_WEB_EXTENSION_PATH=/usr/lib/wpe-web-extensions",
 		"SEATD_SOCK=/run/seatd.sock",
 		"WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
@@ -293,10 +320,18 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	)
 
 	// Load custom Cage environment variables from bsp.yaml (written by strux-build-post.sh)
-	if extra := loadCageEnv("/strux/.cage-env"); len(extra) > 0 {
-		c.logger.Info("Loaded %d custom Cage environment variables", len(extra))
-		c.process.Env = append(c.process.Env, extra...)
+	extraEnv := loadCageEnv("/strux/.cage-env")
+	if transform := displayConfigDefaultTransform(opts.DisplayConfig); transform != "" &&
+		!envHasKey(cageEnv, "STRUX_OUTPUT_TRANSFORM") &&
+		!envHasKey(extraEnv, "STRUX_OUTPUT_TRANSFORM") {
+		cageEnv = append(cageEnv, "STRUX_OUTPUT_TRANSFORM="+transform)
 	}
+
+	if len(extraEnv) > 0 {
+		c.logger.Info("Loaded %d custom Cage environment variables", len(extraEnv))
+		cageEnv = append(cageEnv, extraEnv...)
+	}
+	c.process.Env = cageEnv
 
 	// Write WebKit Inspector config for per-Cog port assignment (dev mode)
 	// Each Cog instance reads the base port and atomically increments a counter

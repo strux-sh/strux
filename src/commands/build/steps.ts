@@ -197,6 +197,7 @@ export async function writeDisplayConfig(bspName: string): Promise<void> {
             monitors: display.monitors.map(m => ({
                 path: m.path,
                 ...(m.resolution ? { resolution: m.resolution } : {}),
+                ...(m.transform ? { transform: m.transform } : {}),
                 ...(m.names && m.names.length > 0 ? { names: m.names } : {}),
             }))
         }
@@ -254,6 +255,17 @@ export async function updateDevEnvConfig(bspName: string): Promise<void> {
 }
 
 /**
+ * Removes the dev client configuration so production builds cannot inherit a
+ * previous dev image's mode marker when the client compile step is cached.
+ */
+export async function removeDevEnvConfig(bspName: string): Promise<void> {
+    const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
+    const devEnvPath = join(bspCacheDir, ".dev-env.json")
+
+    if (fileExists(devEnvPath)) await Bun.file(devEnvPath).delete()
+}
+
+/**
  * Builds the Strux client binary for the target architecture.
  * Also handles dev mode configuration.
  */
@@ -262,12 +274,6 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
 
     // This is a folder - contains the Go source files
     const clientSrcPath = join(Settings.projectPath, "dist", "artifacts", "client")
-
-    // BSP-specific cache directory
-    const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
-
-    // This is a file (dev environment config) - now in BSP-specific cache
-    const devEnvPath = join(bspCacheDir, ".dev-env.json")
 
     // If it doesn't exist, create the client folder
     if (!directoryExists(clientSrcPath)) await mkdir(clientSrcPath, { recursive: true })
@@ -279,8 +285,7 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
     if (addDevMode) {
         await updateDevEnvConfig(bspName)
     } else {
-        // Remove the dev environment config file if it exists
-        if (fileExists(devEnvPath)) await Bun.file(devEnvPath).delete()
+        await removeDevEnvConfig(bspName)
     }
 
     // Compile the client

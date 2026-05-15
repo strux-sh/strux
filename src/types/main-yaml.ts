@@ -82,10 +82,19 @@ const DevSchema = z.object({
     inspector: DevInspectorSchema.optional(),
 })
 
+const OutputTransformSchema = z.union([
+    z.enum(["normal", "0", "90", "180", "270", "flipped", "flipped-90", "flipped-180", "flipped-270"]),
+    z.literal(0),
+    z.literal(90),
+    z.literal(180),
+    z.literal(270),
+]).transform(String)
+
 // Display monitor configuration schema
 const DisplayMonitorSchema = z.object({
     path: z.string(),
     resolution: z.string().regex(/^\d+x\d+$/, "Resolution must be in WIDTHxHEIGHT format (e.g., 1920x1080)").optional(),
+    transform: OutputTransformSchema.optional(),
     names: z.array(z.string()).optional(),
     input_devices: z.array(z.string()).optional(),
 })

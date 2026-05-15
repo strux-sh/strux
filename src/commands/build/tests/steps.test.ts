@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Settings } from "../../../settings"
 import { Logger } from "../../../utils/log"
-import { updateDevEnvConfig, writeDisplayConfig } from "../steps"
+import { removeDevEnvConfig, updateDevEnvConfig, writeDisplayConfig } from "../steps"
 
 const originalSettings = {
     projectPath: Settings.projectPath,
@@ -46,6 +46,7 @@ test("writeDisplayConfig writes explicit monitor and input mappings to the BSP c
                 {
                     path: "/left",
                     resolution: "1280x720",
+                    transform: "90",
                     names: ["HDMI-A-1"],
                     input_devices: ["touch-left", "pen-left"],
                 },
@@ -73,6 +74,7 @@ test("writeDisplayConfig writes explicit monitor and input mappings to the BSP c
             {
                 path: "/left",
                 resolution: "1280x720",
+                transform: "90",
                 names: ["HDMI-A-1"],
             },
             {
@@ -168,4 +170,14 @@ test("updateDevEnvConfig writes safe defaults when dev settings are omitted", as
             port: 9223,
         },
     })
+})
+
+test("removeDevEnvConfig deletes stale dev config from the BSP cache", async () => {
+    const cacheDir = await configureProjectCache()
+    const devEnvPath = join(cacheDir, ".dev-env.json")
+    await writeFile(devEnvPath, "{}")
+
+    await removeDevEnvConfig("qemu")
+
+    expect(await Bun.file(devEnvPath).exists()).toBe(false)
 })

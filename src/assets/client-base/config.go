@@ -48,6 +48,8 @@ type DisplayMonitor struct {
 	Path string `json:"path"`
 	// Resolution is the display resolution (e.g., "1920x1080")
 	Resolution string `json:"resolution,omitempty"`
+	// Transform is the output rotation/reflection (e.g., "90", "180", "flipped-90")
+	Transform string `json:"transform,omitempty"`
 	// Names are the possible output names for this monitor (e.g., ["HDMI-A-1", "Virtual-1"])
 	Names []string `json:"names,omitempty"`
 }

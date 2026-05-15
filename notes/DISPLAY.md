@@ -9,6 +9,7 @@ strux.yaml                     /tmp/strux-display-map           Physical Outputs
 +-----------------------+      +------------------------+       +----------------+
 | display:              |      | DSI-1=http://....:8080/|       | DSI-1: /       |
 |   monitors:           | ---> | DSI-1.resolution=...   | --->  | HDMI-A-1: /tv  |
+|     - transform: 90   |      | DSI-1.transform=90     |       +----------------+
 |     - path: /         |      | HDMI-A-1=http://..../tv|       +----------------+
 |       names: [DSI-1]  |      +------------------------+
 |     - path: /tv       |              |
@@ -41,6 +42,7 @@ display:
   monitors:
     - path: /
       resolution: 1920x1080
+      transform: 90
       names:
         - DSI-1          # Physical output name on target hardware
         - Virtual-1      # QEMU virtual output name (for dev/testing)
@@ -59,6 +61,7 @@ display:
 |-------|----------|-------------|
 | `path` | Yes | URL path appended to the base URL (e.g., `/` or `/dashboard`) |
 | `resolution` | No | Display resolution in `WIDTHxHEIGHT` format. Set via `wlr-randr` on launch. |
+| `transform` | No | Output transform applied by Cage (`normal`, `90`, `180`, `270`, `flipped`, `flipped-90`, `flipped-180`, `flipped-270`). |
 | `names` | No | List of output names this monitor config applies to. Supports multiple names for the same config (e.g., hardware name + QEMU virtual name). |
 | `input_devices` | No | List of input device name substrings to map to this output. Used for touchscreen-to-display binding. |
 
@@ -287,6 +290,7 @@ handle_new_output()
               |
               +---> display_map_lookup(output_name) -> URL
               +---> display_map_lookup(output_name.resolution) -> WxH
+              +---> output_name.transform is applied when the output is enabled
               +---> fork()
               |       |
               |       Child:
@@ -332,13 +336,19 @@ Written by the Go client at `/tmp/strux-display-map`. Read by Cage via `--displa
 ```
 output_name=url
 output_name.resolution=WIDTHxHEIGHT
+output_name.transform=TRANSFORM
 ```
+
+`TRANSFORM` can be `normal`, `90`, `180`, `270`, `flipped`, `flipped-90`, `flipped-180`, or `flipped-270`.
+If no per-output transform is present, Cage also accepts a board-wide `STRUX_OUTPUT_TRANSFORM` environment variable from `bsp.yaml` `cage.env`.
+The early framebuffer splash uses `STRUX_OUTPUT_TRANSFORM` for `90`, `180`, and `270` before the Wayland scene is active.
 
 ### Example
 
 ```
 DSI-1=http://localhost:8080/
 DSI-1.resolution=1920x1080
+DSI-1.transform=90
 HDMI-A-1=http://localhost:8080/tv
 HDMI-A-1.resolution=1280x720
 ```

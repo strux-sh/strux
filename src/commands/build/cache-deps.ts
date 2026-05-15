@@ -119,7 +119,9 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         // Cage sources are copied to dist/cage/ - track that directory
         directories: ["dist/cage/"],
         yamlKeys: [
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.env" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.hide_cursor" }
         ],
         // Build script is internal, cage sources come from dist/cage/
         internalAssets: ["@build-cage-script"],
@@ -235,7 +237,10 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
     },
 
     "rootfs-post": {
-        files: ["dist/artifacts/logo.png"],
+        files: [
+            "dist/artifacts/logo.png",
+            "dist/cache/{bsp}/.dev-env.json"
+        ],
         directories: [
             // User project overlays
             "overlay/",
@@ -255,6 +260,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.custom_kernel" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.env" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.hide_cursor" },
             // Package keys — custom packages are now installed in post step
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.packages" },
             { file: "strux.yaml", keyPath: "rootfs.packages" },

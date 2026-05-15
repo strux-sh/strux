@@ -161,6 +161,9 @@ function createDeps(options: HarnessOptions = {}): { deps: BuildDeps; events: st
         updateDevEnvConfig: async (bspName: string) => {
             events.push(`step:dev-env:${bspName}`)
         },
+        removeDevEnvConfig: async (bspName: string) => {
+            events.push(`step:remove-dev-env:${bspName}`)
+        },
     }
 
     const deps: BuildDeps = {
@@ -297,6 +300,23 @@ test("copies cached client binary and writes dev config inside the client hook w
         "cache:check:client",
         "step:copy-client:qemu",
         "step:dev-env:qemu",
+        "script:after_client",
+    ])
+})
+
+test("removes stale dev config when production client step is cached", async () => {
+    configureBuildSettings()
+    Settings.isDevMode = false
+
+    const { deps, events } = createDeps()
+
+    await buildWithDeps(deps)
+
+    expectEventsInOrder(events, [
+        "script:before_client",
+        "cache:check:client",
+        "step:copy-client:qemu",
+        "step:remove-dev-env:qemu",
         "script:after_client",
     ])
 })

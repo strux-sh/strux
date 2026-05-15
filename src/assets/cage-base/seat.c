@@ -23,6 +23,7 @@
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_keyboard_group.h>
+#include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_scene.h>
@@ -182,7 +183,7 @@ lookup_input_map(const char *map_path, const char *device_name)
 	return NULL;
 }
 
-static void
+static struct wlr_output *
 map_input_device_to_output(struct cg_seat *seat, struct wlr_input_device *device, const char *output_name)
 {
 	/* If the device doesn't have an output hint, check the input map file */
@@ -202,10 +203,10 @@ map_input_device_to_output(struct cg_seat *seat, struct wlr_input_device *device
 			wlr_log(WLR_INFO, "Mapping input device %s to first output %s (no mapping found)\n",
 				device->name, first->wlr_output->name);
 			wlr_cursor_map_input_to_output(seat->cursor, device, first->wlr_output);
-			return;
+			return first->wlr_output;
 		}
 		wlr_log(WLR_INFO, "Input device %s cannot be mapped to an output device\n", device->name);
-		return;
+		return NULL;
 	}
 
 	struct cg_output *output;
@@ -215,12 +216,93 @@ map_input_device_to_output(struct cg_seat *seat, struct wlr_input_device *device
 				output->wlr_output->name);
 			wlr_cursor_map_input_to_output(seat->cursor, device, output->wlr_output);
 			free(mapped_name);
-			return;
+			return output->wlr_output;
 		}
 	}
 
 	wlr_log(WLR_INFO, "Couldn't map input device %s to output %s\n", device->name, resolved_name);
 	free(mapped_name);
+	return NULL;
+}
+
+static struct cg_touch *
+touch_for_device(struct cg_seat *seat, struct wlr_touch *wlr_touch)
+{
+	struct cg_touch *touch;
+	wl_list_for_each (touch, &seat->touch, link) {
+		if (touch->touch == wlr_touch) {
+			return touch;
+		}
+	}
+
+	return NULL;
+}
+
+static void
+touch_coords_to_output_transform(enum wl_output_transform transform, double x, double y, double *tx, double *ty)
+{
+	switch (transform) {
+	case WL_OUTPUT_TRANSFORM_NORMAL:
+		*tx = x;
+		*ty = y;
+		break;
+	case WL_OUTPUT_TRANSFORM_90:
+		*tx = y;
+		*ty = 1.0 - x;
+		break;
+	case WL_OUTPUT_TRANSFORM_180:
+		*tx = 1.0 - x;
+		*ty = 1.0 - y;
+		break;
+	case WL_OUTPUT_TRANSFORM_270:
+		*tx = 1.0 - y;
+		*ty = x;
+		break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED:
+		*tx = 1.0 - x;
+		*ty = y;
+		break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+		*tx = y;
+		*ty = x;
+		break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+		*tx = x;
+		*ty = 1.0 - y;
+		break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+		*tx = 1.0 - y;
+		*ty = 1.0 - x;
+		break;
+	default:
+		*tx = x;
+		*ty = y;
+		break;
+	}
+}
+
+static void
+touch_absolute_to_layout_coords(struct cg_seat *seat, struct wlr_touch *wlr_touch, double x, double y, double *lx,
+				double *ly)
+{
+	struct cg_touch *touch = touch_for_device(seat, wlr_touch);
+	if (!touch || !touch->mapped_output) {
+		wlr_cursor_absolute_to_layout_coords(seat->cursor, &wlr_touch->base, x, y, lx, ly);
+		return;
+	}
+
+	struct wlr_box output_box;
+	wlr_output_layout_get_box(seat->server->output_layout, touch->mapped_output, &output_box);
+	if (wlr_box_empty(&output_box)) {
+		wlr_cursor_absolute_to_layout_coords(seat->cursor, &wlr_touch->base, x, y, lx, ly);
+		return;
+	}
+
+	double tx, ty;
+	touch_coords_to_output_transform(touch->mapped_output->transform, x, y, &tx, &ty);
+
+	*lx = output_box.x + tx * output_box.width;
+	*ly = output_box.y + ty * output_box.height;
 }
 
 static void
@@ -254,7 +336,7 @@ handle_new_touch(struct cg_seat *seat, struct wlr_touch *wlr_touch)
 	touch->destroy.notify = handle_touch_destroy;
 	wl_signal_add(&wlr_touch->base.events.destroy, &touch->destroy);
 
-	map_input_device_to_output(seat, &wlr_touch->base, wlr_touch->output_name);
+	touch->mapped_output = map_input_device_to_output(seat, &wlr_touch->base, wlr_touch->output_name);
 }
 
 static void
@@ -566,7 +648,7 @@ handle_touch_down(struct wl_listener *listener, void *data)
 	struct wlr_touch_down_event *event = data;
 
 	double lx, ly;
-	wlr_cursor_absolute_to_layout_coords(seat->cursor, &event->touch->base, event->x, event->y, &lx, &ly);
+	touch_absolute_to_layout_coords(seat, event->touch, event->x, event->y, &lx, &ly);
 
 	double sx, sy;
 	struct wlr_surface *surface;
@@ -617,7 +699,7 @@ handle_touch_motion(struct wl_listener *listener, void *data)
 	}
 
 	double lx, ly;
-	wlr_cursor_absolute_to_layout_coords(seat->cursor, &event->touch->base, event->x, event->y, &lx, &ly);
+	touch_absolute_to_layout_coords(seat, event->touch, event->x, event->y, &lx, &ly);
 
 	double sx, sy;
 	struct wlr_surface *surface;
@@ -1046,7 +1128,7 @@ seat_remap_input_devices(struct cg_seat *seat)
 	 * (e.g., when inputs were registered before outputs existed). */
 	struct cg_touch *touch;
 	wl_list_for_each(touch, &seat->touch, link) {
-		map_input_device_to_output(seat, &touch->touch->base, touch->touch->output_name);
+		touch->mapped_output = map_input_device_to_output(seat, &touch->touch->base, touch->touch->output_name);
 	}
 
 	struct cg_pointer *pointer;

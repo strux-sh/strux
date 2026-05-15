@@ -5,6 +5,7 @@
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_input_device.h>
+#include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 
@@ -71,6 +72,7 @@ struct cg_touch {
 	struct wl_list link; // seat::touch
 	struct cg_seat *seat;
 	struct wlr_touch *touch;
+	struct wlr_output *mapped_output;
 
 	struct wl_listener destroy;
 };

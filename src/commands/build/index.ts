@@ -41,6 +41,7 @@ import {
     buildKernel,
     buildBootloader,
     postProcessRootFS,
+    removeDevEnvConfig,
     updateDevEnvConfig,
     writeDisplayConfig
 } from "./steps"
@@ -113,6 +114,7 @@ export interface BuildSteps {
     writeDisplayConfig(bspName: string): Promise<void>
     postProcessRootFS(): Promise<void>
     updateDevEnvConfig(bspName: string): Promise<void>
+    removeDevEnvConfig(bspName: string): Promise<void>
 }
 
 export interface BuildScripts {
@@ -168,6 +170,7 @@ export const realBuildDeps: BuildDeps = {
         writeDisplayConfig,
         postProcessRootFS,
         updateDevEnvConfig,
+        removeDevEnvConfig,
     },
     scripts: {
         runScriptsForStep,
@@ -359,6 +362,8 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
             // This ensures inspector and other dev config changes are reflected immediately
             if (isDevMode) {
                 await deps.steps.updateDevEnvConfig(bspName)
+            } else {
+                await deps.steps.removeDevEnvConfig(bspName)
             }
         }
         await runBspScripts("after_client")
