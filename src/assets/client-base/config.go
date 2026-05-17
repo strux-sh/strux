@@ -27,6 +27,16 @@ type InspectorConfig struct {
 	Port int `json:"port"`
 }
 
+// USBConfig holds the small set of user-facing USB debug Ethernet settings.
+type USBConfig struct {
+	Enabled *bool  `json:"enabled"`
+	Subnet  string `json:"subnet"`
+}
+
+func (u USBConfig) IsEnabled() bool {
+	return u.Enabled == nil || *u.Enabled
+}
+
 // Config holds the dev client configuration
 type Config struct {
 	// ClientKey is the authentication key for the dev server
@@ -40,6 +50,9 @@ type Config struct {
 
 	// Inspector holds the WebKit Inspector configuration
 	Inspector InspectorConfig `json:"inspector"`
+
+	// USB holds USB debug Ethernet settings
+	USB USBConfig `json:"usb"`
 }
 
 // DisplayMonitor represents a single monitor's display configuration
@@ -87,5 +100,13 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	normalizeConfig(&config)
+
 	return &config, nil
+}
+
+func normalizeConfig(config *Config) {
+	if config.USB.Subnet == "" {
+		config.USB.Subnet = defaultUSBSubnet
+	}
 }

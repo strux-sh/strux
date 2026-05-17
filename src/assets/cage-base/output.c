@@ -569,8 +569,11 @@ handle_new_output(struct wl_listener *listener, void *data)
 	/* Notify the primary client that a new output is available */
 	server_notify_output_event(output->server, "CONNECTED", wlr_output->name);
 
-	/* In per-view mode with a display map, spawn a Cog for this output */
-	if (server->output_mode == CAGE_MULTI_OUTPUT_MODE_PER_VIEW && server->display_map_path) {
+	/* In per-view mode with a display map, spawn a Cog for this output unless
+	 * Cage is being used as an image-only status display. */
+	if (!server->only_display_image &&
+	    server->output_mode == CAGE_MULTI_OUTPUT_MODE_PER_VIEW &&
+	    server->display_map_path) {
 		output->cog_pid = spawn_cog_for_output(server, output);
 	}
 }

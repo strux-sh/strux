@@ -31,6 +31,7 @@ export class TUIStore {
         "qemu": [],
         "watcher": [],
         "screen": [],
+        "flash": [],
     }
 
     statuses: Record<ResourceName, ResourceStatus> = {
@@ -45,6 +46,7 @@ export class TUIStore {
         "qemu": "stopped",
         "watcher": "idle",
         "screen": "stopped",
+        "flash": "idle",
     }
 
     deviceIP: string | undefined = undefined
@@ -53,6 +55,7 @@ export class TUIStore {
     deviceOutputs: { name: string, label?: string }[] = []
     buildStatus = "idle"
     bspName = "qemu"
+    canFlash = false
     projectRoot = ""
     changedFiles = new Map<string, number>()
 
@@ -90,9 +93,9 @@ export class TUIStore {
                 this.notifyTimer = null
             }
             this.listeners.forEach((l) => l())
-        } else if (!this.notifyTimer) {
+        } else {
             // Schedule a notification for the remaining time
-            this.notifyTimer = setTimeout(() => {
+            this.notifyTimer ??= setTimeout(() => {
                 this.notifyTimer = null
                 this.lastNotify = Date.now()
                 this.listeners.forEach((l) => l())
@@ -126,6 +129,14 @@ export class TUIStore {
 
         // Don't call notify() — log appends are rendered directly to stdout
         // by LogView's repaint interval, not through Ink's React renderer.
+        this.version++
+
+    }
+
+
+    clearLogs(resource: ResourceName): void {
+
+        this.logs[resource] = []
         this.version++
 
     }
@@ -169,6 +180,14 @@ export class TUIStore {
     setBspName(name: string): void {
 
         this.bspName = name
+        this.notify()
+
+    }
+
+
+    setCanFlash(canFlash: boolean): void {
+
+        this.canFlash = canFlash
         this.notify()
 
     }

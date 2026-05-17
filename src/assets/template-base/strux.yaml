@@ -107,3 +107,8 @@ dev:
 
     # --- The port for the inspector HTTP server ---
     port: 9223
+
+  # --- USB Debug Ethernet ---
+  usb:
+    enabled: true
+    subnet: 192.168.7.0/24

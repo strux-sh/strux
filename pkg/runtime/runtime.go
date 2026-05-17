@@ -9,10 +9,17 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/strux-dev/strux/pkg/runtime/api"
 	"github.com/strux-dev/strux/pkg/runtime/extension"
 )
 
 const socketPath = "/tmp/strux-ipc.sock"
+
+const CapabilityDisplay = api.CapabilityDisplay
+
+type DisplayProvider = api.DisplayProvider
+type CapabilityInfo = api.CapabilityInfo
+type CapabilityMethodSpec = api.MethodSpec
 
 // ChannelHandshake is the first message sent by the WPE extension on each socket
 // to identify which channel the connection belongs to.
@@ -46,6 +53,30 @@ type Runtime struct {
 	extensions *extension.Registry
 	events     *eventState
 }
+
+type staticExtension struct {
+	namespace    string
+	subNamespace string
+}
+
+func (e staticExtension) Namespace() string {
+	return e.namespace
+}
+
+func (e staticExtension) SubNamespace() string {
+	return e.subNamespace
+}
+
+type registeredRuntimeExtension struct {
+	namespace    string
+	subNamespace string
+	instance     interface{}
+}
+
+var (
+	registeredRuntimeExtensionsMu sync.RWMutex
+	registeredRuntimeExtensions   []registeredRuntimeExtension
+)
 
 // Message represents a JSON-RPC style message
 type Message struct {
@@ -224,8 +255,26 @@ func (rt *Runtime) serializeTreeNode(node *structTreeNode) map[string]interface{
 
 // registerBuiltinExtensions registers all built-in Strux framework extensions
 func (rt *Runtime) registerBuiltinExtensions() {
-	rt.registerExtension(&extension.BootExtension{}, &extension.BootMethods{})
-	rt.registerExtension(&extension.DevExtension{}, extension.NewDevMethods())
+	rt.registerStruxAPI(api.BootNamespace, rt.Boot())
+	rt.registerStruxAPI("dev", extension.NewDevMethods())
+	rt.registerStruxAPI(api.DisplayNamespace, rt.Display())
+	rt.registerStruxAPI(api.CapabilitiesNamespace, rt.Capabilities())
+
+	registeredRuntimeExtensionsMu.RLock()
+	defer registeredRuntimeExtensionsMu.RUnlock()
+	for _, registered := range registeredRuntimeExtensions {
+		ext := staticExtension{
+			namespace:    registered.namespace,
+			subNamespace: registered.subNamespace,
+		}
+		if err := rt.registerExtension(ext, registered.instance); err != nil {
+			fmt.Fprintf(os.Stderr, "Strux Runtime: failed to register extension %s.%s: %v\n",
+				registered.namespace,
+				registered.subNamespace,
+				err,
+			)
+		}
+	}
 }
 
 // extractMetadata gets package and struct name from the app type
@@ -631,7 +680,65 @@ func (rt *Runtime) Stop() {
 	os.Remove(socketPath)
 }
 
+// Boot returns Strux-owned boot and system management APIs.
+func (rt *Runtime) Boot() *api.BootService {
+	return &api.BootService{}
+}
+
+// Display returns Strux-owned display APIs backed by the active BSP.
+func (rt *Runtime) Display() *api.DisplayService {
+	return &api.DisplayService{}
+}
+
+// Capabilities returns the Strux standard capability introspection service.
+func (rt *Runtime) Capabilities() *api.CapabilitiesService {
+	return &api.CapabilitiesService{}
+}
+
+// RegisterExtension registers an extension on this runtime instance.
+func (rt *Runtime) RegisterExtension(namespace, subNamespace string, instance interface{}) error {
+	if namespace == "" || subNamespace == "" {
+		return fmt.Errorf("namespace and sub-namespace cannot be empty")
+	}
+	if instance == nil {
+		return fmt.Errorf("extension %s.%s instance cannot be nil", namespace, subNamespace)
+	}
+	return rt.registerExtension(staticExtension{namespace: namespace, subNamespace: subNamespace}, instance)
+}
+
 // registerExtension is an internal method for registering framework extensions
 func (rt *Runtime) registerExtension(ext extension.Extension, instance interface{}) error {
 	return rt.extensions.Register(ext, instance)
+}
+
+func (rt *Runtime) registerStruxAPI(namespace string, instance interface{}) error {
+	return rt.registerExtension(staticExtension{namespace: "strux", subNamespace: namespace}, instance)
+}
+
+// RegisterExtension registers a process-wide extension provider. BSP packages can
+// call this from init() so every subsequently created Runtime exposes the methods
+// under window.<namespace>.<subNamespace>.
+func RegisterExtension(namespace, subNamespace string, instance interface{}) error {
+	if namespace == "" || subNamespace == "" {
+		return fmt.Errorf("namespace and sub-namespace cannot be empty")
+	}
+	if instance == nil {
+		return fmt.Errorf("extension %s.%s instance cannot be nil", namespace, subNamespace)
+	}
+
+	registeredRuntimeExtensionsMu.Lock()
+	defer registeredRuntimeExtensionsMu.Unlock()
+
+	for _, registered := range registeredRuntimeExtensions {
+		if registered.namespace == namespace && registered.subNamespace == subNamespace {
+			return fmt.Errorf("extension %s.%s already registered", namespace, subNamespace)
+		}
+	}
+
+	registeredRuntimeExtensions = append(registeredRuntimeExtensions, registeredRuntimeExtension{
+		namespace:    namespace,
+		subNamespace: subNamespace,
+		instance:     instance,
+	})
+	return nil
 }

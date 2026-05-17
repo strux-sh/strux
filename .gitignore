@@ -2,7 +2,9 @@
 node_modules
 /strux-introspect
 /strux
+/strux_bsp_runtime_extensions.go
 /test
+/test2
 martyos/
 
 result

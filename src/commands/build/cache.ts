@@ -340,7 +340,10 @@ async function addYamlFileHash(
     const keyPathSuffix = resolvedPath.startsWith(Settings.projectPath)
         ? resolvedPath.slice(Settings.projectPath.length + 1)
         : resolvedPath
-    const hash = await computeFileHashOrMissing(resolvedPath)
+    const directoryHash = directoryExists(resolvedPath)
+        ? await computeDirectoryHash(resolvedPath)
+        : null
+    const hash = directoryHash ?? await computeFileHashOrMissing(resolvedPath)
     hashes[`yaml-file:${yamlFile}:${keyPath}:${keyPathSuffix}`] = hash
 }
 

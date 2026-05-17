@@ -15,6 +15,7 @@ import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
 import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles, copyPatches } from "./artifacts"
 import { generateTypes } from "../types"
+import { getLocalBSPRuntimeExtensionDirs, writeBSPRuntimeExtensionImports } from "../../utils/bsp-runtime"
 
 // Build Scripts
 // @ts-ignore
@@ -52,12 +53,15 @@ function bspBuildEnv(bspName: string, extra: Record<string, string> = {}): Recor
  * Also regenerates TypeScript types before compilation.
  */
 export async function compileFrontend(): Promise<void> {
+    await writeBSPRuntimeExtensionImports()
+
     // Generate types directly instead of shelling out to `strux types`,
     // so we use the local strux-introspect binary if available
     const mainGoPath = join(Settings.projectPath, "main.go")
     const result = await generateTypes({
         mainGoPath,
         outputDir: join(Settings.projectPath, "frontend", "src"),
+        runtimeExtensionDirs: getLocalBSPRuntimeExtensionDirs(),
     })
     if (!result.success) {
         Logger.error(result.error ?? "Failed to generate TypeScript types. Please generate them manually.")
@@ -78,6 +82,8 @@ export async function compileFrontend(): Promise<void> {
  * which injects a go.mod replace directive inside the container (never touches host files).
  */
 export async function compileApplication(): Promise<void> {
+    await writeBSPRuntimeExtensionImports()
+
     const bspName = Settings.bspName!
     const env = bspBuildEnv(bspName)
 
@@ -240,6 +246,7 @@ export async function writeDisplayConfig(bspName: string): Promise<void> {
 export async function updateDevEnvConfig(bspName: string): Promise<void> {
     const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
     const devEnvPath = join(bspCacheDir, ".dev-env.json")
+    const usb = Settings.main?.dev?.usb
 
     const devEnvJSON = {
         clientKey: Settings.main?.dev?.server?.client_key ?? "",
@@ -249,6 +256,10 @@ export async function updateDevEnvConfig(bspName: string): Promise<void> {
             // Default to disabled - user must explicitly enable in strux.yaml
             enabled: Settings.main?.dev?.inspector?.enabled ?? false,
             port: Settings.main?.dev?.inspector?.port ?? 9223,
+        },
+        usb: {
+            enabled: usb?.enabled ?? true,
+            subnet: usb?.subnet ?? "192.168.7.0/24",
         },
     }
     await Bun.write(devEnvPath, JSON.stringify(devEnvJSON, null, 2))

@@ -274,6 +274,18 @@ strux run
 strux run --debug  # Show debug output
 ```
 
+### `strux flash [bsp]`
+
+Run the selected BSP's host-side flashing scripts. If `[bsp]` is omitted, Strux uses the BSP from `strux.yaml`.
+
+`flash_script_tool` scripts run first, followed by `flash_script` scripts. Both run outside of Docker with `dist/flash/{bsp}/` as their working directory.
+
+**Example:**
+```bash
+strux flash
+strux flash rpi4
+```
+
 ### `strux dev`
 
 Start Strux OS in development mode with hot-reload capabilities. This command:
@@ -522,7 +534,10 @@ Scripts can run at various lifecycle stages:
 | `before_rootfs` / `after_rootfs` | Around rootfs creation |
 | `before_bundle` | After post-processing, before final image |
 | `make_image` | Creates the final disk image |
+| `flash_script_tool` | Host-side setup script for flashing tools, run before flashing |
 | `flash_script` | Flash script (used by `strux flash`) |
+
+`flash_script_tool` and `flash_script` run on the host, outside of the Docker builder. Their working directory is `dist/flash/{bsp}/`, which is intended for BSP-scoped flashing tools, downloads, and generated host-side files.
 
 #### Script Environment Variables
 
@@ -535,6 +550,8 @@ Scripts have access to these environment variables:
 | `PROJECT_DIST_FOLDER` | `dist/` directory |
 | `PROJECT_DIST_CACHE_FOLDER` | BSP cache: `dist/cache/{bsp}/` |
 | `PROJECT_DIST_OUTPUT_FOLDER` | BSP output: `dist/output/{bsp}/` |
+| `PROJECT_DIST_FLASH_FOLDER` | BSP flash workspace: `dist/flash/{bsp}/` |
+| `FLASH_DIR` | Alias for `PROJECT_DIST_FLASH_FOLDER` |
 | `PROJECT_DIST_ARTIFACTS_FOLDER` | Shared artifacts: `dist/artifacts/` |
 | `SHARED_CACHE_DIR` | Shared cache: `dist/cache/` |
 | `BSP_CACHE_DIR` | Alias for cache folder |

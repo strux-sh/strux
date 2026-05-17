@@ -96,7 +96,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
 
     application: {
         // Track the entire project folder for Go files
-        directories: ["./"],
+        directories: ["./", "bsp/{bsp}/runtime/"],
         // Exclude non-Go directories
         excludePatterns: [
             "frontend",
@@ -108,7 +108,11 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             "strux.yaml"
         ],
         yamlKeys: [
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.name" }
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.name" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.runtime.extensions" }
+        ],
+        yamlFileDependencies: [
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.runtime.extensions", mode: "file-list-in-objects", itemPath: "path" }
         ],
         internalAssets: ["@build-app-script"],
         // BSP-specific cache (architecture-dependent binary)
@@ -163,6 +167,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         yamlKeys: [
             { file: "strux.yaml", keyPath: "dev.server" },
             { file: "strux.yaml", keyPath: "dev.inspector" },
+            { file: "strux.yaml", keyPath: "dev.usb" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
         ],
         // Build script is internal, but client sources come from dist/artifacts/client/

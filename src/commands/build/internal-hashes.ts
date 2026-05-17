@@ -9,6 +9,8 @@
  *
  */
 
+import { readFileSync } from "fs"
+
 // Build Scripts
 // @ts-ignore
 import scriptBuildFrontend from "../../assets/scripts-base/strux-build-frontend.sh" with { type: "text" }
@@ -31,6 +33,8 @@ import scriptBuildBootloader from "../../assets/scripts-base/strux-build-bootloa
 
 // Go Client-base files
 // @ts-ignore
+import clientDevConnectPNG from "../../assets/client-base/assets/dev-connect.png" with { type: "file" }
+// @ts-ignore
 import clientGoMain from "../../assets/client-base/main.go" with { type: "text" }
 // @ts-ignore
 import clientGoBinary from "../../assets/client-base/binary.go" with { type: "text" }
@@ -50,6 +54,8 @@ import clientGoSocket from "../../assets/client-base/socket.go" with { type: "te
 import clientGoHelpers from "../../assets/client-base/helpers.go" with { type: "text" }
 // @ts-ignore
 import clientGoExec from "../../assets/client-base/exec.go" with { type: "text" }
+// @ts-ignore
+import clientGoUSBNet from "../../assets/client-base/usbnet.go" with { type: "text" }
 // @ts-ignore
 import clientGoMod from "../../assets/client-base/go.mod" with { type: "text" }
 // @ts-ignore
@@ -146,6 +152,10 @@ function hashStrings(...strings: string[]): string {
     return Bun.hash(strings.join("\n")).toString(16)
 }
 
+function readBinaryAsset(path: string): string {
+    return readFileSync(path).toString("base64")
+}
+
 /**
  * Internal asset hashes - computed once and cached
  */
@@ -183,8 +193,10 @@ export function computeInternalAssetHashes(): Record<string, string> {
             clientGoSocket,
             clientGoHelpers,
             clientGoExec,
+            clientGoUSBNet,
             clientGoMod,
-            clientGoSum
+            clientGoSum,
+            readBinaryAsset(clientDevConnectPNG)
         ),
 
         // Cage Wayland compositor sources

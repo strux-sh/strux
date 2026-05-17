@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,12 +43,19 @@ type DevInspectorConfig struct {
 	Port    int  `json:"port"`
 }
 
+// DevUSBConfig holds USB debug Ethernet settings.
+type DevUSBConfig struct {
+	Enabled bool   `json:"enabled"`
+	Subnet  string `json:"subnet"`
+}
+
 // DevConfig is the JSON payload stored in /strux/.dev-env.json.
 type DevConfig struct {
 	ClientKey     string             `json:"clientKey"`
 	UseMDNS       bool               `json:"useMDNS"`
 	FallbackHosts []DevHost          `json:"fallbackHosts"`
 	Inspector     DevInspectorConfig `json:"inspector"`
+	USB           DevUSBConfig       `json:"usb"`
 }
 
 // DevState exposes the current dev-mode state plus the stored config.
@@ -240,6 +248,10 @@ func defaultDevConfig() DevConfig {
 			Enabled: false,
 			Port:    defaultInspectorPort,
 		},
+		USB: DevUSBConfig{
+			Enabled: true,
+			Subnet:  "192.168.7.0/24",
+		},
 	}
 }
 
@@ -250,12 +262,26 @@ func normalizeDevConfig(config DevConfig) DevConfig {
 	if config.Inspector.Port == 0 {
 		config.Inspector.Port = defaultInspectorPort
 	}
+	if strings.TrimSpace(config.USB.Subnet) == "" {
+		config.USB.Subnet = "192.168.7.0/24"
+	}
 	return config
 }
 
 func validateDevConfig(config DevConfig) error {
 	if config.Inspector.Port <= 0 {
 		return errors.New("inspector.port must be greater than 0")
+	}
+	if strings.TrimSpace(config.USB.Subnet) == "" {
+		return errors.New("usb.subnet is required")
+	}
+	ip, ipNet, err := net.ParseCIDR(config.USB.Subnet)
+	if err != nil || ip.To4() == nil {
+		return errors.New("usb.subnet must be an IPv4 CIDR")
+	}
+	prefixLength, bits := ipNet.Mask.Size()
+	if bits != 32 || prefixLength > 30 {
+		return errors.New("usb.subnet must provide at least two usable IPv4 addresses")
 	}
 
 	for i, host := range config.FallbackHosts {

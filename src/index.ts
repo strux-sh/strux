@@ -14,6 +14,7 @@ import { init } from "./commands/init"
 import { build } from "./commands/build"
 import { run } from "./commands/run"
 import { dev } from "./commands/dev"
+import { flash } from "./commands/flash"
 import { usb, usbAdd, usbList } from "./commands/usb"
 import { kernelMenuconfig, kernelClean } from "./commands/kernel"
 import { UpdateChecker } from "./updatecheck"
@@ -84,10 +85,25 @@ program.command("types")
     .description("Generate TypeScript type definitions from Go structs")
     .action(async () => {
         const { generateTypes } = await import("./commands/types")
+        const { MainYAMLValidator } = await import("./types/main-yaml")
+        const { BSPYamlValidator } = await import("./types/bsp-yaml")
+        const { getLocalBSPRuntimeExtensionDirs, writeBSPRuntimeExtensionImports } = await import("./utils/bsp-runtime")
         const cwd = process.cwd()
+
+        Settings.projectPath = cwd
+        if (fileExists(join(cwd, "strux.yaml"))) {
+            MainYAMLValidator.validateAndLoad(join(cwd, "strux.yaml"))
+        }
+        if (Settings.bspName && fileExists(join(cwd, "bsp", Settings.bspName, "bsp.yaml"))) {
+            BSPYamlValidator.validateAndLoad(join(cwd, "bsp", Settings.bspName, "bsp.yaml"), Settings.bspName)
+        }
+
+        await writeBSPRuntimeExtensionImports()
+
         const result = await generateTypes({
             mainGoPath: `${cwd}/main.go`,
             outputDir: `${cwd}/frontend/src`,
+            runtimeExtensionDirs: getLocalBSPRuntimeExtensionDirs(),
         })
         if (result.success) {
             console.log(`Generated ${result.methodCount} methods, ${result.fieldCount} fields`)
@@ -174,6 +190,24 @@ program.command("dev")
         } catch (err) {
 
             Logger.errorWithExit(`Dev failed: ${err instanceof Error ? err.message : String(err)}`)
+
+        }
+
+    })
+
+program.command("flash")
+    .description("Run the selected BSP flash script on the host")
+    .argument("[bsp]", "The board support package to flash")
+    .action(async (bspName?: string) => {
+
+        try {
+
+            Logger.title(`Flashing Strux OS${bspName ? ` for BSP: ${bspName}` : ""}`)
+            await flash({ bspName })
+
+        } catch (err) {
+
+            Logger.errorWithExit(`Flash failed: ${err instanceof Error ? err.message : String(err)}`)
 
         }
 

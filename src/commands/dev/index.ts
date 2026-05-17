@@ -10,8 +10,10 @@ import { rm } from "node:fs/promises"
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
+import { BSPYamlValidator } from "../../types/bsp-yaml"
 import { directoryExists, fileExists } from "../../utils/path"
 import { build as buildCommand } from "../build"
+import { runFlashScripts, type FlashOutputSource } from "../flash"
 import { compileApplication, compileCage, compileFrontend, compileWPE, compileScreen, buildStruxClient } from "../build/steps"
 import { forceRestoreAllArtifacts } from "../build/artifacts"
 import { Runner } from "../../utils/run"
@@ -89,6 +91,9 @@ export class DevServer {
         }
 
 
+        this.loadFlashCapability()
+
+
         // Get the client key from the config
         this.clientKey = Settings.main?.dev?.server?.client_key ?? ""
 
@@ -151,6 +156,7 @@ export class DevServer {
                 },
             })
             this.ui.store.setBspName(Settings.bspName ?? "qemu")
+            this.ui.store.setCanFlash(this.activeBspHasFlashScript())
 
             Logger.setSink((entry) => {
                 if (entry.level === "spinner" || entry.level === "spinner-clear") {
@@ -179,6 +185,7 @@ export class DevServer {
 
                 if (useUi) {
                     this.ui.store.setBuildStatus("idle")
+                    this.ui.store.setCanFlash(this.activeBspHasFlashScript())
                 }
 
             }
@@ -305,6 +312,28 @@ export class DevServer {
             await buildCommand()
 
         }
+
+    }
+
+
+    private activeBspHasFlashScript(): boolean {
+
+        return Settings.bsp?.scripts?.some((script) => script.step === "flash_script") ?? false
+
+    }
+
+
+    private loadFlashCapability(): void {
+
+        if (!Settings.bspName) return
+
+        const bspYamlPath = join(Settings.projectPath, "bsp", Settings.bspName, "bsp.yaml")
+        if (!fileExists(bspYamlPath)) return
+
+        const result = BSPYamlValidator.safeValidate(bspYamlPath)
+        if (!result.success || !result.data) return
+
+        Settings.bsp = result.data.bsp
 
     }
 
@@ -447,11 +476,47 @@ export class DevServer {
                 Logger.success("Reboot command sent to device")
                 this.ui.store.flashConfigSuccess("Reboot command sent to device")
 
+            } else if (action === "flash") {
+
+                if (!this.activeBspHasFlashScript()) {
+                    throw new Error(`Not Available for this BSP: ${Settings.bspName ?? "unknown"} does not define a flash_script in bsp.yaml.`)
+                }
+
+                this.ui.store.clearLogs("flash")
+                this.ui.store.updateStatus("flash", "running")
+                this.ui.store.appendLog("flash", {
+                    level: "info",
+                    message: `Running flash scripts for BSP ${Settings.bspName ?? Settings.main?.bsp ?? "unknown"}`,
+                    timestamp: Date.now(),
+                })
+
+                const outputLevel = (source: FlashOutputSource) => source === "stderr" ? "raw" : source === "system" ? "info" : "raw"
+                await runFlashScripts({
+                    onOutput: (data, source) => {
+                        this.ui.store.appendLog("flash", {
+                            level: outputLevel(source),
+                            message: data,
+                            timestamp: Date.now(),
+                        })
+                    },
+                })
+
+                this.ui.store.updateStatus("flash", "idle")
+                this.ui.store.flashConfigSuccess("Flash completed")
+
             }
 
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error)
             Logger.error(`Config action failed: ${msg}`)
+            if (action === "flash") {
+                this.ui.store.updateStatus("flash", "error")
+                this.ui.store.appendLog("flash", {
+                    level: "error",
+                    message: msg,
+                    timestamp: Date.now(),
+                })
+            }
         } finally {
             this.ui.store.setConfigBusy(false)
         }

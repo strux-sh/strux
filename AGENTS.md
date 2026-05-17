@@ -33,3 +33,6 @@
 - Commit messages: short imperative summary (e.g., `fix windows installer path`, `add qemu bsp fixtures`); keep body lines wrapped and include rationale when non-obvious.
 - PRs: describe scope, link related issues, call out breaking changes or platform impacts (ARM64 vs x86_64), and include before/after behavior or screenshots/log snippets when relevant.
 - Add reproduction or verification steps for CLI changes (`bun run dev ...`) and note whether docs/examples (`samples/`, `README.md`) were updated.
+
+# Rules
+- Always ask questions for certain developer decisions and the shape of things. Confirm what changes you are going to make before changing them.

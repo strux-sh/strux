@@ -130,6 +130,10 @@ test("updateDevEnvConfig writes the current dev server and inspector settings", 
                 enabled: true,
                 port: 9229,
             },
+            usb: {
+                enabled: false,
+                subnet: "10.42.0.0/24",
+            },
         },
     } as any
 
@@ -150,6 +154,10 @@ test("updateDevEnvConfig writes the current dev server and inspector settings", 
             enabled: true,
             port: 9229,
         },
+        usb: {
+            enabled: false,
+            subnet: "10.42.0.0/24",
+        },
     })
 })
 
@@ -168,6 +176,10 @@ test("updateDevEnvConfig writes safe defaults when dev settings are omitted", as
         inspector: {
             enabled: false,
             port: 9223,
+        },
+        usb: {
+            enabled: true,
+            subnet: "192.168.7.0/24",
         },
     })
 })

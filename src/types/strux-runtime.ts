@@ -4,11 +4,27 @@
 
 export const STRUX_RUNTIME_TYPES = `// Strux Runtime API
 declare namespace StruxRuntime {
+  interface CapabilityInfo {
+    name: string;
+    namespace: string;
+    description: string;
+    supported: boolean;
+    provider: string;
+    methods: MethodSpec[];
+  }
+
+  interface CustomModeSelection {
+    width: number;
+    height: number;
+    refreshMilliHz: number;
+  }
+
   interface DevConfig {
     clientKey: string;
     useMDNS: boolean;
     fallbackHosts: DevHost[];
     inspector: DevInspectorConfig;
+    usb: DevUSBConfig;
   }
 
   interface DevHost {
@@ -25,6 +41,62 @@ declare namespace StruxRuntime {
     enabled: boolean;
     config: DevConfig;
   }
+
+  interface DevUSBConfig {
+    enabled: boolean;
+    subnet: string;
+  }
+
+  interface DisplayApplyOptions {
+    dryRun: boolean;
+  }
+
+  interface DisplayMode {
+    widthPx: number;
+    heightPx: number;
+    refreshHz: number;
+    preferred: boolean;
+    current: boolean;
+  }
+
+  interface DisplayOutput {
+    name: string;
+    description: string;
+    physicalWidthMm: number;
+    physicalHeightMm: number;
+    enabled: boolean;
+    modes: DisplayMode[];
+    current: DisplayMode;
+    positionX: number;
+    positionY: number;
+    transform: OutputTransform;
+    scale: number;
+  }
+
+  interface DisplayOutputChange {
+    name: string;
+    on: boolean;
+    listedMode: ListedModeSelection;
+    customMode: CustomModeSelection;
+    usePreferred: boolean;
+    positionX: number;
+    positionY: number;
+    scale: number;
+    transform: OutputTransform;
+  }
+
+  interface ListedModeSelection {
+    width: number;
+    height: number;
+    refreshMilliHz: number;
+  }
+
+  interface MethodSpec {
+    name: string;
+    description: string;
+  }
+
+  type OutputTransform = string;
 }
 
 interface Strux {
@@ -33,6 +105,10 @@ interface Strux {
     Reboot(): Promise<void>;
     Shutdown(): Promise<void>;
   };
+  capabilities: {
+    List(): Promise<StruxRuntime.CapabilityInfo[]>;
+    Supports(name: string): Promise<boolean>;
+  };
   dev: {
     GetConfig(): Promise<StruxRuntime.DevState | null>;
     SetConfig(config: StruxRuntime.DevConfig): Promise<void>;
@@ -40,6 +116,20 @@ interface Strux {
     Apply(config: StruxRuntime.DevConfig, enabled: boolean): Promise<void>;
     RestartService(): Promise<void>;
     ApplyAndRestart(config: StruxRuntime.DevConfig, enabled: boolean): Promise<void>;
+  };
+  display: {
+    List(): Promise<StruxRuntime.DisplayOutput[] | null>;
+    Get(name: string): Promise<StruxRuntime.DisplayOutput | null>;
+    Apply(changes: StruxRuntime.DisplayOutputChange[], opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    SetListedMode(output: string, mode: StruxRuntime.ListedModeSelection, opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    SetCustomMode(output: string, mode: StruxRuntime.CustomModeSelection, opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    SetPreferredMode(output: string, opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    SetOutputEnabled(output: string, on: boolean, opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    SetLayout(output: string, x: number, y: number, opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    SetScale(output: string, scale: number, opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    SetTransform(output: string, transform: StruxRuntime.OutputTransform, opts: StruxRuntime.DisplayApplyOptions): Promise<void>;
+    GetBacklight(outputName: string): Promise<number | null>;
+    SetBacklight(outputName: string, value: number): Promise<void>;
   };
   ipc: {
     /**
@@ -57,4 +147,4 @@ interface Strux {
     send(event: string, data?: any): void;
   };
 }
-`
+`;

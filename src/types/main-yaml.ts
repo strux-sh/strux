@@ -76,10 +76,44 @@ const DevInspectorSchema = z.object({
     port: z.number().int().positive().default(9223),
 })
 
+function isIPv4CIDRWithTwoUsableIPs(value: string): boolean {
+    const parts = value.split("/")
+    if (parts.length !== 2) {
+        return false
+    }
+
+    const [address, prefix] = parts
+    const prefixNumber = Number(prefix)
+    if (!address || !Number.isInteger(prefixNumber) || prefixNumber < 0 || prefixNumber > 30) {
+        return false
+    }
+
+    const octets = address.split(".")
+    if (octets.length !== 4) {
+        return false
+    }
+
+    return octets.every((octet) => {
+        if (!/^\d{1,3}$/.test(octet)) {
+            return false
+        }
+        const value = Number(octet)
+        return Number.isInteger(value) && value >= 0 && value <= 255
+    })
+}
+
+const DevUSBSchema = z.object({
+    enabled: z.boolean().default(true),
+    subnet: z.string()
+        .refine(isIPv4CIDRWithTwoUsableIPs, "USB subnet must be an IPv4 CIDR with at least two usable addresses (e.g., 192.168.7.0/24)")
+        .default("192.168.7.0/24"),
+})
+
 // Dev configuration schema
 const DevSchema = z.object({
     server: DevServerSchema.optional(),
     inspector: DevInspectorSchema.optional(),
+    usb: DevUSBSchema.optional(),
 })
 
 const OutputTransformSchema = z.union([

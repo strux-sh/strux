@@ -96,6 +96,8 @@ export interface GenerateTypesOptions {
   outputFilename?: string;
   // Path to introspection binary (optional, will use bundled binary if not provided)
   introspectBinaryPath?: string;
+  // Local Go package directories that register BSP runtime extensions
+  runtimeExtensionDirs?: string[];
 }
 
 export interface GenerateTypesResult {
@@ -143,13 +145,41 @@ export async function runIntrospection(
  * Get the runtime types string from the already-generated strux-runtime.ts file
  * This file is generated during the build process, not on the fly
  */
-function getRuntimeTypesString(): string {
+async function getRuntimeTypesString(runtimeExtensionDirs: string[] = []): Promise<string> {
+    let runtimeTypes = ""
     try {
-        return STRUX_RUNTIME_TYPES
+        runtimeTypes = STRUX_RUNTIME_TYPES
     } catch {
         // If we can't import it, return empty (user projects don't need runtime types)
-        return ""
+        runtimeTypes = ""
     }
+
+    const localRuntimeTypes = await generateLocalRuntimeTypesString(runtimeExtensionDirs)
+    if (localRuntimeTypes) {
+        return runtimeTypes
+            ? `${runtimeTypes}\n${localRuntimeTypes}`
+            : localRuntimeTypes
+    }
+
+    return runtimeTypes
+}
+
+async function generateLocalRuntimeTypesString(runtimeExtensionDirs: string[]): Promise<string> {
+    const dirs = runtimeExtensionDirs.filter(Boolean)
+    if (dirs.length === 0) return ""
+
+    const generatorDir = join(import.meta.dir, "..", "..", "..", "cmd", "gen-runtime-types")
+    if (!(await Bun.file(join(generatorDir, "main.go")).exists())) {
+        throw new Error("Cannot generate BSP runtime extension types because cmd/gen-runtime-types is not available")
+    }
+
+    const result = await $`go run ${generatorDir} -format=dts -dir ${dirs.join(",")}`.quiet()
+    if (result.exitCode !== 0) {
+        const stderr = result.stderr.toString().trim()
+        throw new Error(`Failed to generate BSP runtime extension types${stderr ? `: ${stderr}` : ""}`)
+    }
+
+    return result.stdout.toString().trim()
 }
 
 /**
@@ -323,6 +353,7 @@ export async function generateTypes(
         outputDir = join(dirname(mainGoPath), "frontend"),
         outputFilename = "strux.d.ts",
         introspectBinaryPath,
+        runtimeExtensionDirs = [],
     } = options
 
     try {
@@ -339,7 +370,7 @@ export async function generateTypes(
         const introspection = await runIntrospection(mainGoPath, introspectBinaryPath)
 
         // Get runtime types string from the already-generated file (not generated on the fly)
-        const runtimeTypesString = getRuntimeTypesString()
+        const runtimeTypesString = await getRuntimeTypesString(runtimeExtensionDirs)
 
         // Generate TypeScript definitions from introspection and runtime types string
         const tsContent = generateTypeScriptDefinitions(introspection, runtimeTypesString)

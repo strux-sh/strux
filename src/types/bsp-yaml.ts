@@ -72,7 +72,8 @@ const ScriptStepSchema = z.enum([
     "before_bundle",    // After rootfs post-processing, before make_image
     "make_image",       // Creates the final disk image for the target device
 
-    // Flash script (handled separately by `strux flash` command, not during build)
+    // Flash scripts (handled separately by `strux flash` command, not during build)
+    "flash_script_tool",
     "flash_script",
 ])
 
@@ -172,6 +173,23 @@ const RootFSSchema = z.object({
     packages: z.array(z.string()).optional(),
 })
 
+const RuntimeExtensionSchema = z.object({
+    // Local path to the Go package that registers extension methods. Relative paths
+    // are resolved from the BSP directory.
+    path: z.string().optional(),
+    // Optional explicit Go import path. If omitted for an in-project path, Strux
+    // derives it from the app module path in go.mod.
+    import: z.string().optional(),
+}).refine(
+    (data) => Boolean(data.path ?? data.import),
+    "runtime extension requires either path or import"
+)
+
+const RuntimeSchema = z.object({
+    compatible_strux_api: z.union([z.string(), z.array(z.string())]).optional(),
+    extensions: z.array(RuntimeExtensionSchema).optional(),
+})
+
 // Cage compositor configuration schema
 const CageSchema = z.object({
     env: z.array(z.string()).optional(),
@@ -189,6 +207,7 @@ const BSPConfigSchema = z.object({
     scripts: z.array(ScriptSchema).optional(),
     boot: BootSchema.optional(),
     rootfs: RootFSSchema.optional(),
+    runtime: RuntimeSchema.optional(),
 })
 
 // Main bsp.yaml schema
@@ -285,6 +304,8 @@ export class BSPYamlValidator {
             // Store BSP config in Settings
             Settings.bsp = validated.bsp!
 
+            this.validateStruxAPICompatibility(validated.bsp.runtime?.compatible_strux_api, yamlPath)
+
             return validated
         } catch (error) {
             if (error instanceof z.ZodError) {
@@ -305,6 +326,46 @@ export class BSPYamlValidator {
             // This will never execute, but satisfies TypeScript's return type check
             throw new Error("Parse failed")
         }
+    }
+
+    private static validateStruxAPICompatibility(
+        compatibleAPI: string | string[] | undefined,
+        yamlPath: string
+    ): void {
+        if (!compatibleAPI) return
+
+        const supported = Array.isArray(compatibleAPI)
+            ? compatibleAPI
+            : [compatibleAPI]
+        const runtimeVersion = this.getProjectStruxRuntimeVersion()
+        const apiKey = this.getStruxAPIKey(runtimeVersion)
+
+        if (!apiKey) {
+            Logger.warning(`Could not determine Strux runtime API version from ${runtimeVersion}; skipping BSP API compatibility check.`)
+            return
+        }
+
+        if (supported.includes(apiKey)) return
+
+        Logger.errorWithExit(
+            `BSP ${Settings.bspName ?? "selected"} supports Strux API ${supported.join(", ")}, but this project uses Strux API ${apiKey}. ` +
+            `If this BSP has been tested with ${apiKey}, add "${apiKey}" to ${yamlPath} at bsp.runtime.compatible_strux_api.`
+        )
+    }
+
+    private static getProjectStruxRuntimeVersion(): string {
+        const goModPath = join(Settings.projectPath, "go.mod")
+        if (!fileExists(goModPath)) return Settings.struxVersion
+
+        const content = readFileSync(goModPath, "utf-8")
+        const match = /github\.com\/strux-dev\/strux\s+(v?\d+\.\d+\.\d+(?:[-+\w.]*)?)/.exec(content)
+        return match?.[1] ?? Settings.struxVersion
+    }
+
+    private static getStruxAPIKey(version: string): string | null {
+        const match = /^v?(\d+)\.(\d+)/.exec(version.trim())
+        if (!match) return null
+        return `${match[1]}.${match[2]}`
     }
 
     /**

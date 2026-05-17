@@ -16,6 +16,13 @@ The `strux dev` terminal interface has been rebuilt from the ground up. The old 
 - The resource list now includes nested device log streams (App, Cage, System Logs, Early Logs, Screen Logs, Client) alongside Vite, QEMU, Watcher, and Screen.
 - New filter mode (`/`) for log views, pause/resume watcher (`p`), and context-sensitive keybinds shown in the bottom command bar.
 - Config panel is accessible from any pane via `c`, with `Esc` to return.
+- The Config panel can now run host-side BSP flashing workflows and stream output into a dedicated Flash log view.
+
+### New: Host Flash Scripts
+
+- `strux flash [bsp]` runs BSP `flash_script_tool` scripts followed by `flash_script` scripts on the host, outside of the Docker builder.
+- Flash scripts run with `dist/flash/<bsp>` as their working directory so BSPs can prepare and reuse host flashing tools in a scoped workspace.
+- Flash scripts receive the standard BSP script environment plus `PROJECT_DIST_FLASH_FOLDER` and `FLASH_DIR`.
 
 ### New: Dev Protocol Refactor
 
@@ -66,6 +73,30 @@ build:
 
 **New CLI flag:**
 - `--local-builder` — Forces a local Dockerfile build instead of pulling from GHCR. Useful for offline work, custom Dockerfile modifications, or development on strux itself
+
+### New: USB Debug Ethernet for `strux dev`
+
+Strux dev images can now expose a USB Ethernet gadget from the device to the development machine. This gives `strux dev` a direct point-to-point network path over USB while preserving the existing Vite/WebSocket/browser workflow instead of inventing a custom USB transport.
+
+**How it works:**
+- The Strux client configures a Linux configfs USB gadget at boot with a fixed identity: vendor ID `0x1209`, product ID `0x5358`, manufacturer `Strux`, and product name `Strux USB Debug`.
+- The gadget exposes a USB Ethernet interface (`usb0`) and starts an embedded DHCP responder using `github.com/insomniacslk/dhcp`.
+- `dev.usb.subnet` controls the point-to-point subnet. The device uses the second usable address and leases the first usable address to the host. For example, `192.168.7.0/24` gives the host `192.168.7.1` and the device `192.168.7.2`.
+- When USB setup succeeds, the client prioritizes the USB host address for dev server discovery and disables mDNS for that session. If USB setup fails, the client logs the reason and falls back to the existing network discovery path.
+
+**Configuration:**
+```yaml
+dev:
+  usb:
+    enabled: true
+    subnet: 192.168.7.0/24
+```
+
+**BSP requirements:**
+- USB debug requires a USB peripheral/OTG-capable port. Host-only USB ports cannot expose the device as a USB Ethernet adapter.
+- The BSP kernel must enable USB gadget/configfs support and at least one USB Ethernet function. For macOS/Linux hosts, enable ECM or NCM; for Windows hosts, enable RNDIS.
+- The default BSP template now documents the required kernel fragment options:
+  `CONFIG_USB_GADGET`, `CONFIG_USB_LIBCOMPOSITE`, `CONFIG_USB_CONFIGFS`, `CONFIG_USB_CONFIGFS_ECM`, `CONFIG_USB_CONFIGFS_NCM`, and `CONFIG_USB_CONFIGFS_RNDIS`.
 
 ### Minor Changes
 

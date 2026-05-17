@@ -206,9 +206,10 @@ Available hook steps:
 - `before_bootloader`, `custom_bootloader`, `after_bootloader`
 - `before_rootfs`, `after_rootfs`
 - `before_bundle`, `make_image`
+- `flash_script_tool`
 - `flash_script`
 
-Use `custom_kernel` to replace Strux's built-in kernel build. Use `custom_bootloader` to replace the built-in bootloader build. `flash_script` is for flashing workflows and is not part of the normal build.
+Use `custom_kernel` to replace Strux's built-in kernel build. Use `custom_bootloader` to replace the built-in bootloader build. `flash_script_tool` and `flash_script` are host-side flashing workflows and are not part of the normal Docker build.
 
 Declare cache behavior:
 
@@ -244,6 +245,8 @@ BSP scripts can rely on these environment variables:
 - `PROJECT_DIST_FOLDER`: `dist/`.
 - `PROJECT_DIST_CACHE_FOLDER`: `dist/cache/<bsp>/`.
 - `PROJECT_DIST_OUTPUT_FOLDER`: `dist/output/<bsp>/`.
+- `PROJECT_DIST_FLASH_FOLDER`: `dist/flash/<bsp>/`.
+- `FLASH_DIR`: alias for `PROJECT_DIST_FLASH_FOLDER`.
 - `PROJECT_DIST_ARTIFACTS_FOLDER`: `dist/artifacts/`.
 - `SHARED_CACHE_DIR`: shared `dist/cache/`.
 - `BSP_CACHE_DIR`: alias for the BSP cache folder.
@@ -381,4 +384,3 @@ Keep board-specific image logic inside the BSP, not in app code.
 - After changing BSP structure, run or recommend `strux build <bsp> --clean`.
 - After changing frontend or Go app behavior, run the fastest relevant frontend, Go, or Strux check available in the project.
 - Document hardware assumptions in `bsp/<name>/README.md` when adding a new board.
-

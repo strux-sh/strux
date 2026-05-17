@@ -9,6 +9,7 @@
  */
 
 import { join } from "path"
+import { mkdir as mkdirp } from "fs/promises"
 import { Settings } from "../../settings"
 import { fileExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
@@ -57,6 +58,8 @@ import defaultLogoPNG from "../../assets/template-base/logo.png" with { type: "f
 
 // Go Client-base files
 // @ts-ignore
+import clientDevConnectPNG from "../../assets/client-base/assets/dev-connect.png" with { type: "file" }
+// @ts-ignore
 import clientGoMain from "../../assets/client-base/main.go" with { type: "text" }
 // @ts-ignore
 import clientGoBinary from "../../assets/client-base/binary.go" with { type: "text" }
@@ -80,6 +83,8 @@ import clientGoExec from "../../assets/client-base/exec.go" with { type: "text" 
 import clientGoWebsocket from "../../assets/client-base/websocket.go" with {type: "text"}
 // @ts-ignore
 import clientGoScreen from "../../assets/client-base/screen.go" with { type: "text" }
+// @ts-ignore
+import clientGoUSBNet from "../../assets/client-base/usbnet.go" with { type: "text" }
 // @ts-ignore
 import clientGoMod from "../../assets/client-base/go.mod" with { type: "text" }
 // @ts-ignore
@@ -275,6 +280,8 @@ export async function copyBootSplashLogo(): Promise<void> {
  * Files are only written on first build - users can modify them afterwards.
  */
 export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> {
+    await mkdirp(join(clientSrcPath, "assets"), { recursive: true })
+
     if (!fileExists(join(clientSrcPath, "main.go"))) {
         Logger.log("Copying Strux Client (Go) base files...")
         await Bun.write(join(clientSrcPath, "main.go"), clientGoMain)
@@ -288,9 +295,11 @@ export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> 
         await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
         await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
         await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
+        await Bun.write(join(clientSrcPath, "usbnet.go"), clientGoUSBNet)
         await Bun.write(join(clientSrcPath, "websocket.go"), clientGoWebsocket)
         await Bun.write(join(clientSrcPath, "go.mod"), clientGoMod)
         await Bun.write(join(clientSrcPath, "go.sum"), clientGoSum)
+        await Bun.write(join(clientSrcPath, "assets", "dev-connect.png"), Bun.file(clientDevConnectPNG))
         return
     }
 
@@ -302,6 +311,16 @@ export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> 
     if (!fileExists(join(clientSrcPath, "screen.go"))) {
         Logger.log("Adding missing screen.go to client base...")
         await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
+    }
+
+    if (!fileExists(join(clientSrcPath, "usbnet.go"))) {
+        Logger.log("Adding missing usbnet.go to client base...")
+        await Bun.write(join(clientSrcPath, "usbnet.go"), clientGoUSBNet)
+    }
+
+    if (!fileExists(join(clientSrcPath, "assets", "dev-connect.png"))) {
+        Logger.log("Adding missing dev-connect.png to client base assets...")
+        await Bun.write(join(clientSrcPath, "assets", "dev-connect.png"), Bun.file(clientDevConnectPNG))
     }
 }
 
@@ -446,6 +465,7 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     await Bun.write(join(systemdDir, "20-ethernet.network"), systemdEthernetNetwork)
 
     // Go client source files
+    await mkdirp(join(clientSrcPath, "assets"), { recursive: true })
     await Bun.write(join(clientSrcPath, "main.go"), clientGoMain)
     await Bun.write(join(clientSrcPath, "binary.go"), clientGoBinary)
     await Bun.write(join(clientSrcPath, "cage.go"), clientGoCage)
@@ -457,9 +477,11 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
     await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
     await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
+    await Bun.write(join(clientSrcPath, "usbnet.go"), clientGoUSBNet)
     await Bun.write(join(clientSrcPath, "websocket.go"), clientGoWebsocket)
     await Bun.write(join(clientSrcPath, "go.mod"), clientGoMod)
     await Bun.write(join(clientSrcPath, "go.sum"), clientGoSum)
+    await Bun.write(join(clientSrcPath, "assets", "dev-connect.png"), Bun.file(clientDevConnectPNG))
 
     // Cage compositor source files
     await Bun.write(join(cageSrcPath, "cage.c"), cageMain)

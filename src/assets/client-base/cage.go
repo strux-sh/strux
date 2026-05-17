@@ -28,6 +28,8 @@ var ErrBackendNotReady = errors.New("backend not ready")
 type LaunchOptions struct {
 	// CogURL is the base URL to load in Cog browser
 	CogURL string
+	// OnlyDisplayImage shows an image in Cage without launching Cog
+	OnlyDisplayImage string
 	// Resolution is the display resolution for single-monitor mode (e.g., "1920x1080")
 	Resolution string
 	// SplashImage is the path to the splash image (optional)
@@ -41,6 +43,7 @@ type LaunchOptions struct {
 // CageLauncher manages the Cage compositor process
 type CageLauncher struct {
 	process *exec.Cmd
+	done    chan error
 	logger  *Logger
 	logFile *os.File
 }
@@ -88,6 +91,26 @@ func (c *CageLauncher) WaitForBackend(timeout time.Duration) bool {
 // 3) Default route is present
 func (c *CageLauncher) WaitForNetworkReady(timeout time.Duration) bool {
 	return c.WaitForNetworkReadyWithPort(timeout, 0)
+}
+
+// WaitForPortFree waits until the specified local TCP port is not listening.
+func (c *CageLauncher) WaitForPortFree(timeout time.Duration, port int) bool {
+	deadline := time.Now().Add(timeout)
+	attempt := 0
+
+	for time.Now().Before(deadline) {
+		attempt++
+		if c.isPortFree(port) {
+			return true
+		}
+		if attempt%10 == 1 {
+			c.logger.Info("Port %d not free yet (attempt %d)", port, attempt)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	c.logger.Error("Port %d did not become free within %v", port, timeout)
+	return false
 }
 
 // WaitForNetworkReadyWithPort waits for network readiness, checking a specific port
@@ -219,10 +242,12 @@ func (c *CageLauncher) writeDisplayMap(opts LaunchOptions) error {
 
 	if opts.DisplayConfig != nil {
 		for _, monitor := range opts.DisplayConfig.Monitors {
-			cogURL := withLaunchToken(opts.CogURL+monitor.Path, launchToken)
 			for _, name := range monitor.Names {
-				c.logger.Info("Display map: %s -> %s", name, cogURL)
-				lines = append(lines, fmt.Sprintf("%s=%s", name, cogURL))
+				if opts.CogURL != "" {
+					cogURL := withLaunchToken(opts.CogURL+monitor.Path, launchToken)
+					c.logger.Info("Display map: %s -> %s", name, cogURL)
+					lines = append(lines, fmt.Sprintf("%s=%s", name, cogURL))
+				}
 				if monitor.Resolution != "" {
 					lines = append(lines, fmt.Sprintf("%s.resolution=%s", name, monitor.Resolution))
 				}
@@ -296,7 +321,9 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	}
 
 	// Add splash image if provided
-	if opts.SplashImage != "" {
+	if opts.OnlyDisplayImage != "" {
+		args = append(args, fmt.Sprintf("--only-display-image=%s", opts.OnlyDisplayImage))
+	} else if opts.SplashImage != "" {
 		args = append(args, fmt.Sprintf("--splash-image=%s", opts.SplashImage))
 	}
 
@@ -371,16 +398,24 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 		return fmt.Errorf("failed to start Cage: %w", err)
 	}
 
-	c.logger.Info("Cage and Cog launched successfully (PID: %d)", c.process.Process.Pid)
+	if opts.OnlyDisplayImage != "" {
+		c.logger.Info("Cage image display launched successfully (PID: %d)", c.process.Process.Pid)
+	} else {
+		c.logger.Info("Cage and Cog launched successfully (PID: %d)", c.process.Process.Pid)
+	}
 
 	// Monitor the process in a goroutine
+	done := make(chan error, 1)
+	c.done = done
+	process := c.process
 	go func() {
-		err := c.process.Wait()
+		err := process.Wait()
 		if err != nil {
 			c.logger.Error("Cage exited with error: %v", err)
 		} else {
 			c.logger.Info("Cage exited normally")
 		}
+		done <- err
 	}()
 
 	return nil
@@ -391,7 +426,15 @@ func (c *CageLauncher) Cleanup() {
 	if c.process != nil && c.process.Process != nil {
 		c.logger.Info("Cleaning up Cage process...")
 		c.process.Process.Kill()
+		if c.done != nil {
+			select {
+			case <-c.done:
+			case <-time.After(5 * time.Second):
+				c.logger.Warn("Timed out waiting for Cage process to exit")
+			}
+		}
 		c.process = nil
+		c.done = nil
 	}
 
 	if c.logFile != nil {
