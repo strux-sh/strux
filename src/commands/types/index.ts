@@ -7,11 +7,10 @@
 
 import { $ } from "bun"
 import { join, dirname } from "path"
+import { tmpdir } from "os"
+import { unlink } from "node:fs/promises"
 import {
     type IntrospectionOutput,
-    type MethodDef,
-    type FieldDef,
-    type StructDef,
     validateIntrospection
 } from "../../types/introspection"
 import { STRUX_RUNTIME_TYPES } from "../../types/strux-runtime"
@@ -61,30 +60,6 @@ async function getIntrospectBinaryPath(): Promise<string> {
 
     // Return local path even if not found (will fail with better error message later)
     return localPath
-}
-
-// Runtime types JSON structure from gen-runtime-types
-interface RuntimeParamDef {
-    name: string
-    goType: string
-    tsType: string
-}
-
-interface RuntimeMethodInfo {
-    name: string
-    params?: RuntimeParamDef[]
-    returnType?: string
-    hasError: boolean
-}
-
-interface RuntimeExtensionInfo {
-    namespace: string
-    subNamespace: string
-    methods: RuntimeMethodInfo[]
-}
-
-interface RuntimeTypes {
-    extensions: RuntimeExtensionInfo[]
 }
 
 export interface GenerateTypesOptions {
@@ -141,205 +116,31 @@ export async function runIntrospection(
     }
 }
 
-/**
- * Get the runtime types string from the already-generated strux-runtime.ts file
- * This file is generated during the build process, not on the fly
- */
-async function getRuntimeTypesString(runtimeExtensionDirs: string[] = []): Promise<string> {
-    let runtimeTypes = ""
+async function runDTSGeneration(
+    mainGoPath: string,
+    runtimeExtensionDirs: string[],
+    binaryPath?: string
+): Promise<string> {
+    const binary = binaryPath ?? await getIntrospectBinaryPath()
+    const runtimeJSONPath = join(tmpdir(), `strux-runtime-types-${process.pid}-${Date.now()}.json`)
+
+    await Bun.write(runtimeJSONPath, JSON.stringify(STRUX_RUNTIME_TYPES))
+
     try {
-        runtimeTypes = STRUX_RUNTIME_TYPES
-    } catch {
-        // If we can't import it, return empty (user projects don't need runtime types)
-        runtimeTypes = ""
-    }
-
-    const localRuntimeTypes = await generateLocalRuntimeTypesString(runtimeExtensionDirs)
-    if (localRuntimeTypes) {
-        return runtimeTypes
-            ? `${runtimeTypes}\n${localRuntimeTypes}`
-            : localRuntimeTypes
-    }
-
-    return runtimeTypes
-}
-
-async function generateLocalRuntimeTypesString(runtimeExtensionDirs: string[]): Promise<string> {
-    const dirs = runtimeExtensionDirs.filter(Boolean)
-    if (dirs.length === 0) return ""
-
-    const generatorDir = join(import.meta.dir, "..", "..", "..", "cmd", "gen-runtime-types")
-    if (!(await Bun.file(join(generatorDir, "main.go")).exists())) {
-        throw new Error("Cannot generate BSP runtime extension types because cmd/gen-runtime-types is not available")
-    }
-
-    const result = await $`go run ${generatorDir} -format=dts -dir ${dirs.join(",")}`.quiet()
-    if (result.exitCode !== 0) {
-        const stderr = result.stderr.toString().trim()
-        throw new Error(`Failed to generate BSP runtime extension types${stderr ? `: ${stderr}` : ""}`)
-    }
-
-    return result.stdout.toString().trim()
-}
-
-/**
- * Generate TypeScript interface from runtime types JSON
- */
-export function generateRuntimeTypesInterface(runtimeTypes: RuntimeTypes): string {
-    const lines: string[] = []
-
-    // Group extensions by namespace
-    const namespaces = new Map<string, RuntimeExtensionInfo[]>()
-    for (const ext of runtimeTypes.extensions) {
-        if (!namespaces.has(ext.namespace)) {
-            namespaces.set(ext.namespace, [])
-        }
-        namespaces.get(ext.namespace)!.push(ext)
-    }
-
-    // Generate interface for each namespace
-    for (const [namespace, exts] of namespaces) {
-        // Capitalize first letter for interface name
-        const interfaceName = namespace.charAt(0).toUpperCase() + namespace.slice(1)
-
-        lines.push(`interface ${interfaceName} {`)
-
-        for (const ext of exts) {
-            lines.push(`  ${ext.subNamespace}: {`)
-
-            for (const method of ext.methods) {
-                const params = (method.params ?? [])
-                    .map(p => `${p.name}: ${p.tsType}`)
-                    .join(", ")
-
-                let returnType = "void"
-                if (method.returnType) {
-                    returnType = method.returnType
-                    if (method.hasError) {
-                        returnType += " | null"
-                    }
-                }
-                returnType = `Promise<${returnType}>`
-
-                lines.push(`    ${method.name}(${params}): ${returnType};`)
-            }
-
-            lines.push("  };")
+        const result = await $`${binary} ${mainGoPath} --runtime-dts ${runtimeExtensionDirs.filter(Boolean).join(",")} --runtime-json ${runtimeJSONPath}`.quiet()
+        if (result.exitCode !== 0) {
+            const stderr = result.stderr.toString().trim()
+            throw new Error(`strux-introspect failed with exit code ${result.exitCode}${stderr ? `: ${stderr}` : ""}`)
         }
 
-        lines.push("}")
-    }
-
-    return lines.join("\n")
-}
-
-/**
- * Generate TypeScript definition content from introspection data and runtime types
- */
-export function generateTypeScriptDefinitions(
-    introspection: IntrospectionOutput,
-    runtimeTypesString: string
-): string {
-    const lines: string[] = []
-
-    // Header - match the format from init
-    lines.push("// Auto-generated Strux type definitions")
-    lines.push("// Run 'strux types' to regenerate from Go code")
-    lines.push("// This file is automatically generated. DO NOT EDIT")
-    lines.push("")
-
-    const { app, structs } = introspection
-
-    // Generate and add Strux runtime types FIRST (matching init format)
-    // Only include if we have runtime types (they're optional for user projects)
-    if (runtimeTypesString) {
-        lines.push("// Strux Runtime API")
-        lines.push(runtimeTypesString)
-        lines.push("")
-    }
-
-    const globalLines: string[] = []
-    const appendInterfaceBlock = (block: string[]): void => {
-        if (globalLines.length > 0 && globalLines[globalLines.length - 1] !== "") {
-            globalLines.push("")
+        const output = result.stdout.toString()
+        if (!output.trim()) {
+            throw new Error("strux-introspect produced no DTS output")
         }
-        globalLines.push(...block)
+        return output
+    } finally {
+        await unlink(runtimeJSONPath).catch(() => {})
     }
-
-    // Generate interfaces for custom structs (excluding the app struct)
-    const usedStructs = findUsedStructs(app, structs)
-    for (const structName of usedStructs) {
-        const structDef = structs[structName]
-        if (structDef) {
-            const block: string[] = [`interface ${structName} {`]
-            for (const field of structDef.fields) {
-                block.push(`  ${field.name}: ${field.tsType};`)
-            }
-            if (structDef.methods && structDef.methods.length > 0) {
-                if (structDef.fields.length > 0) {
-                    block.push("")
-                }
-                for (const method of structDef.methods) {
-                    const params = formatMethodParams(method)
-                    const returnType = formatReturnType(method)
-                    block.push(`  ${method.name}(${params}): ${returnType};`)
-                }
-            }
-            block.push("}")
-            appendInterfaceBlock(block)
-        }
-    }
-
-    // Generate the App interface inside the global scope
-    const appBlock: string[] = [`interface ${app.name} {`]
-
-    for (const field of app.fields) {
-        appBlock.push(`  ${field.name}: ${field.tsType};`)
-    }
-
-    if (app.fields.length > 0 && app.methods.length > 0) {
-        appBlock.push("")
-    }
-
-    for (const method of app.methods) {
-        const params = formatMethodParams(method)
-        const returnType = formatReturnType(method)
-        appBlock.push(`  ${method.name}(${params}): ${returnType};`)
-    }
-
-    appBlock.push("}")
-    appendInterfaceBlock(appBlock)
-
-    if (globalLines.length > 0 && globalLines[globalLines.length - 1] !== "") {
-        globalLines.push("")
-    }
-
-    // Top-level shortcut: allows using App.Method() instead of window.go.main.App.Method()
-    globalLines.push(`const ${app.name}: ${app.name};`)
-    globalLines.push("")
-
-    // Generate Window interface augmentation with both user app and strux runtime
-    globalLines.push("const strux: Strux;")
-    globalLines.push("interface Window {")
-    globalLines.push("  strux: Strux;")
-    globalLines.push(`  ${app.name}: ${app.name};`)
-    globalLines.push("  go: {")
-    globalLines.push(`    ${app.packageName}: {`)
-    globalLines.push(`      ${app.name}: ${app.name};`)
-    globalLines.push("    }")
-    globalLines.push("  }")
-    globalLines.push("}")
-
-    lines.push("// Global type declarations")
-    lines.push("declare global {")
-    for (const line of globalLines) {
-        lines.push(line === "" ? "" : `  ${line}`)
-    }
-    lines.push("}")
-    lines.push("")
-    lines.push("export {};")
-
-    return lines.join("\n")
 }
 
 /**
@@ -366,14 +167,8 @@ export async function generateTypes(
             }
         }
 
-        // Run introspection for user's app
+        const tsContent = await runDTSGeneration(mainGoPath, runtimeExtensionDirs, introspectBinaryPath)
         const introspection = await runIntrospection(mainGoPath, introspectBinaryPath)
-
-        // Get runtime types string from the already-generated file (not generated on the fly)
-        const runtimeTypesString = await getRuntimeTypesString(runtimeExtensionDirs)
-
-        // Generate TypeScript definitions from introspection and runtime types string
-        const tsContent = generateTypeScriptDefinitions(introspection, runtimeTypesString)
 
         // Ensure output directory exists
         await $`mkdir -p ${outputDir}`.quiet()
@@ -394,85 +189,5 @@ export async function generateTypes(
             success: false,
             error: error instanceof Error ? error.message : String(error),
         }
-    }
-}
-
-// Helper functions
-
-function formatMethodParams(method: MethodDef): string {
-    return method.params
-        .map((param, index) => {
-            const name = param.name ?? `arg${index}`
-            return `${name}: ${param.tsType}`
-        })
-        .join(", ")
-}
-
-function formatReturnType(method: MethodDef): string {
-    let baseType = "void"
-
-    const returnTypes = method.returnTypes
-    if (returnTypes && returnTypes.length > 0) {
-        if (returnTypes.length === 1) {
-            // Single return value
-            baseType = returnTypes[0]!.tsType
-        } else {
-            // Multiple return values - use tuple type
-            const types = returnTypes.map(rt => rt.tsType)
-            baseType = `[${types.join(", ")}]`
-        }
-
-        if (method.hasError) {
-            baseType += " | null"
-        }
-    }
-
-    return `Promise<${baseType}>`
-}
-
-function findUsedStructs(
-    app: { fields: FieldDef[]; methods: MethodDef[] },
-    structs: Record<string, StructDef>
-): string[] {
-    const used = new Set<string>()
-    const knownStructNames = new Set(Object.keys(structs))
-
-    // Check fields
-    for (const field of app.fields) {
-        checkTypeForStruct(field.tsType, knownStructNames, used)
-    }
-
-    // Check methods
-    for (const method of app.methods) {
-        for (const param of method.params) {
-            checkTypeForStruct(param.tsType, knownStructNames, used)
-        }
-        if (method.returnTypes) {
-            for (const rt of method.returnTypes) {
-                checkTypeForStruct(rt.tsType, knownStructNames, used)
-            }
-        }
-    }
-
-    // Include structs that have methods (they'll be exposed as JS objects)
-    for (const [name, structDef] of Object.entries(structs)) {
-        if (structDef.methods && structDef.methods.length > 0) {
-            used.add(name)
-        }
-    }
-
-    return Array.from(used)
-}
-
-function checkTypeForStruct(
-    tsType: string,
-    knownStructs: Set<string>,
-    used: Set<string>
-): void {
-    // Remove array suffix
-    const baseType = tsType.replace(/\[\]$/, "")
-
-    if (knownStructs.has(baseType)) {
-        used.add(baseType)
     }
 }

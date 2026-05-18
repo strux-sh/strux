@@ -11,7 +11,7 @@ import { Box, useInput, useStdout } from "ink"
 import { theme } from "./theme"
 
 
-export type ConfigAction = "restore" | "rebuild-transfer" | "rebuild-builder" | "restart-service" | "reboot" | "flash"
+export type ConfigAction = "restore" | "rebuild-transfer" | "rebuild-builder" | "install-update" | "restart-service" | "reboot" | "flash"
 
 
 interface ConfigSection {
@@ -27,6 +27,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             { label: "Restore Strux Artifacts to Built-in Version", action: "restore" },
             { label: "Rebuild Strux Components and Transfer To Device", action: "rebuild-transfer" },
             { label: "Rebuild Strux-Builder Docker Image", action: "rebuild-builder" },
+            { label: "Install Latest System Update Bundle", action: "install-update" },
         ],
     },
     {

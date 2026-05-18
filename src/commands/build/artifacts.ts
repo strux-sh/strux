@@ -76,6 +76,8 @@ import clientGoLogs from "../../assets/client-base/logs.go" with { type: "text" 
 // @ts-ignore
 import clientGoSocket from "../../assets/client-base/socket.go" with { type: "text" }
 // @ts-ignore
+import clientGoUpdate from "../../assets/client-base/update.go" with { type: "text" }
+// @ts-ignore
 import clientGoHelpers from "../../assets/client-base/helpers.go" with { type: "text" }
 // @ts-ignore
 import clientGoExec from "../../assets/client-base/exec.go" with { type: "text" }
@@ -279,6 +281,21 @@ export async function copyBootSplashLogo(): Promise<void> {
  * Copies Go client base files to dist/artifacts/client/ if they don't exist.
  * Files are only written on first build - users can modify them afterwards.
  */
+async function ensureClientBaseFile(clientSrcPath: string, fileName: string, contents: string, marker: string): Promise<void> {
+    const filePath = join(clientSrcPath, fileName)
+
+    if (!fileExists(filePath)) {
+        await Bun.write(filePath, contents)
+        return
+    }
+
+    const existing = await Bun.file(filePath).text()
+    if (!existing.includes(marker)) {
+        Logger.log(`Refreshing ${fileName} in client base artifacts...`)
+        await Bun.write(filePath, contents)
+    }
+}
+
 export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> {
     await mkdirp(join(clientSrcPath, "assets"), { recursive: true })
 
@@ -292,6 +309,7 @@ export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> 
         await Bun.write(join(clientSrcPath, "logger.go"), clientGoLogger)
         await Bun.write(join(clientSrcPath, "logs.go"), clientGoLogs)
         await Bun.write(join(clientSrcPath, "socket.go"), clientGoSocket)
+        await Bun.write(join(clientSrcPath, "update.go"), clientGoUpdate)
         await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
         await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
         await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
@@ -307,6 +325,9 @@ export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> 
         Logger.log("Adding missing exec.go to client base...")
         await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
     }
+
+    await ensureClientBaseFile(clientSrcPath, "socket.go", clientGoSocket, "writeUpdateProgress(payload)")
+    await ensureClientBaseFile(clientSrcPath, "update.go", clientGoUpdate, "verifyBundleCompatibility")
 
     if (!fileExists(join(clientSrcPath, "screen.go"))) {
         Logger.log("Adding missing screen.go to client base...")
@@ -474,6 +495,7 @@ export async function forceRestoreAllArtifacts(): Promise<void> {
     await Bun.write(join(clientSrcPath, "logger.go"), clientGoLogger)
     await Bun.write(join(clientSrcPath, "logs.go"), clientGoLogs)
     await Bun.write(join(clientSrcPath, "socket.go"), clientGoSocket)
+    await Bun.write(join(clientSrcPath, "update.go"), clientGoUpdate)
     await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
     await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
     await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)

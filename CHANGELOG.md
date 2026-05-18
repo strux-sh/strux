@@ -104,11 +104,13 @@ dev:
 - Local builds (`bun run build`) now read the version from `package.json` instead of falling back to `0.0.1`. CI builds are unaffected — the `--define` flag still takes precedence.
 - Cog browser is now compiled from source during the build process. The Debian-packaged Cog 0.18.5 lacks support for configuring the WebKit autoplay policy, which was added in Cog 0.19.1 (not available in any Debian repository). The build now clones Cog 0.18.5 from source, applies a backported patch that adds the `--autoplay-policy` CLI flag, and cross-compiles it alongside the WPE extension. The patched binary is installed over the Debian package version. The Cog launch script (`strux-run-cog.sh`) now passes `--autoplay-policy=allow`, permitting unmuted media autoplay without requiring a user gesture.
 - Cage output orientation can now be configured per monitor with `display.monitors[].transform` in `strux.yaml`, or board-wide with `STRUX_OUTPUT_TRANSFORM` in `bsp.yaml` `cage.env`. Supported transforms are `normal`, `90`, `180`, `270`, `flipped`, `flipped-90`, `flipped-180`, and `flipped-270`. The transform is applied when Cage enables the wlroots output, and the early framebuffer splash also honors `90`, `180`, and `270` so the splash and browser UI share the same orientation.
+- Added `STRUX_PROGRESS_BAR: <message> (<percent>%)` script output markers. BSP and host scripts can emit these markers to render colored CLI progress bars while keeping regular tool output raw.
 
 **Cage touch input rotation fix:**
 - Touch devices mapped to a rotated Cage output now have their normalized coordinates transformed with the output's wlroots transform before Cage performs surface hit-testing. This keeps touchscreen input aligned with the visible browser UI when `display.monitors[].transform` or `STRUX_OUTPUT_TRANSFORM` rotates the output, while preserving the previous coordinate path for unrotated outputs.
 
 - Fixed cached `strux build <bsp> --dev` builds not enabling dev mode in the generated image. The build now refreshes the BSP-specific `.dev-env.json` even when the client binary is cached, removes stale dev config for cached production builds, and makes `rootfs-post` depend on the dev config file so switching between dev and production rebuilds the image contents correctly.
+- Fixed BSP lifecycle scripts running before `dist/artifacts/logo.png` exists on fresh builds. Initial artifacts are now prepared before BSP hooks run, so scripts such as `before_rootfs` can safely read the copied splash logo and Plymouth files.
 
 ## v0.2.2
 

@@ -15,6 +15,7 @@ import { BSPYamlValidator } from "../../types/bsp-yaml"
 import type { BSPScript, ScriptStep } from "../../types/bsp-yaml"
 import { Logger } from "../../utils/log"
 import { fileExists } from "../../utils/path"
+import { assertShellSafeEnv } from "../../utils/sanitize"
 
 export type FlashOutputSource = "stdout" | "stderr" | "system"
 
@@ -94,15 +95,41 @@ function emit(options: FlashRunOptions, message: string, source: FlashOutputSour
     }
 }
 
-async function streamOutput(
+async function streamOutputWithPrettyProgress(
     stream: ReadableStream<Uint8Array>,
     source: FlashOutputSource,
     options: FlashRunOptions
 ): Promise<void> {
     const decoder = new TextDecoder()
-    for await (const chunk of stream) {
-        emit(options, decoder.decode(chunk, { stream: true }), source)
+    let pending = ""
+
+    const emitLine = (line: string, delimiter = ""): void => {
+        if (Logger.tryHandleProgressMarker(line)) return
+        Logger.finishProgressBar()
+        emit(options, `${line}${delimiter}`, source)
     }
+
+    for await (const chunk of stream) {
+        const text = decoder.decode(chunk, { stream: true })
+
+        if (options.onOutput || Settings.verbose) {
+            emit(options, text, source)
+            continue
+        }
+
+        const parts = text.split(/(\r?\n|\r)/)
+
+        for (const part of parts) {
+            if (part === "\n" || part === "\r" || part === "\r\n") {
+                emitLine(pending, part)
+                pending = ""
+            } else {
+                pending += part
+            }
+        }
+    }
+
+    if (!options.onOutput && !Settings.verbose && pending) emitLine(pending)
 }
 
 async function loadFlashConfig(options: FlashRunOptions): Promise<LoadedFlashConfig> {
@@ -166,9 +193,12 @@ async function runHostScript(
         ? { stdout: "inherit" as const, stderr: "inherit" as const, stdin: "inherit" as const }
         : { stdout: "pipe" as const, stderr: "pipe" as const, stdin: "ignore" as const }
 
+    const env = getFlashEnv(step, config.bspName, config.flashDir)
+    assertShellSafeEnv(env, "flash script environment variable")
+
     const proc = Bun.spawn(["/bin/bash", scriptPath], {
         cwd: config.flashDir,
-        env: { ...process.env, ...getFlashEnv(step, config.bspName, config.flashDir) },
+        env: { ...process.env, ...env },
         ...stdio,
     })
 
@@ -178,8 +208,8 @@ async function runHostScript(
         }
 
         await Promise.all([
-            streamOutput(proc.stdout, "stdout", options),
-            streamOutput(proc.stderr, "stderr", options),
+            streamOutputWithPrettyProgress(proc.stdout, "stdout", options),
+            streamOutputWithPrettyProgress(proc.stderr, "stderr", options),
         ])
     }
 
@@ -214,5 +244,5 @@ export async function runFlashScripts(options: FlashRunOptions = {}): Promise<vo
 }
 
 export async function flash(options: FlashRunOptions = {}): Promise<void> {
-    await runFlashScripts({ ...options, inheritStdio: options.inheritStdio ?? true })
+    await runFlashScripts({ ...options, inheritStdio: options.inheritStdio ?? false })
 }

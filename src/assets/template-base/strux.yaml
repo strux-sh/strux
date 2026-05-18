@@ -1,4 +1,4 @@
-strux_version: ${version}
+project_version: 0.1.0
 name: ${projectName}
 
 bsp: qemu
@@ -44,6 +44,10 @@ boot:
     # --- The color of the web browser background to ensure a smooth transition from the bootsplash to your app ---
     color: "000000"
   
+
+update:
+  enabled: false
+  auto_bundle: false
 
 
 # --- Global RootFS Configuration ---

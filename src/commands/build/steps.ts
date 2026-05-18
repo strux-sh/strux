@@ -13,9 +13,10 @@ import { Settings } from "../../settings"
 import { Runner } from "../../utils/run"
 import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
-import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles, copyPatches } from "./artifacts"
+import { copyClientBaseFiles, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles, copyPatches } from "./artifacts"
 import { generateTypes } from "../types"
 import { getLocalBSPRuntimeExtensionDirs, writeBSPRuntimeExtensionImports } from "../../utils/bsp-runtime"
+import { bundleUpdate } from "../update"
 
 // Build Scripts
 // @ts-ignore
@@ -44,6 +45,10 @@ function bspBuildEnv(bspName: string, extra: Record<string, string> = {}): Recor
         PRESELECTED_BSP: bspName,
         HOST_ARCH: Settings.arch,
         TARGET_ARCH: Settings.targetArch,
+        PROJECT_NAME: Settings.projectName,
+        PROJECT_VERSION: Settings.projectVersion,
+        STRUX_VERSION: Settings.struxVersion,
+        STRUX_UPDATE_ENABLED: Settings.main?.update?.enabled ? "true" : "false",
         ...extra
     }
 }
@@ -304,9 +309,7 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
         message: "Compiling Strux Client...",
         messageOnError: "Failed to compile Strux Client. Please check the build logs for more information.",
         exitOnError: true,
-        env: bspBuildEnv(bspName, {
-            STRUX_VERSION: Settings.struxVersion!
-        })
+        env: bspBuildEnv(bspName)
     })
 
     Logger.success("Strux Client built successfully")
@@ -372,13 +375,10 @@ export async function buildBootloader(): Promise<void> {
 
 /**
  * Post-processes the root filesystem.
- * Copies init scripts, systemd services, plymouth theme, and runs the post-processing script.
+ * Runs the post-processing script using the prepared artifacts.
  */
 export async function postProcessRootFS(): Promise<void> {
     const bspName = Settings.bspName!
-
-    // Copy all initial artifacts (init scripts, systemd, plymouth, logo)
-    await copyAllInitialArtifacts()
 
     // Run post process script
     await Runner.runScriptInDocker(scriptBuildPost, {
@@ -389,4 +389,23 @@ export async function postProcessRootFS(): Promise<void> {
     })
 
     Logger.success("RootFS post processing completed successfully")
+}
+
+/**
+ * Generates the default signed Strux rootfs update bundle from rootfs.ext4.
+ */
+export async function bundleSystemUpdate(): Promise<void> {
+    if (!Settings.main?.update?.enabled) {
+        Logger.debug("Skipping update bundle generation: update.enabled is false")
+        return
+    }
+    if (!Settings.main?.update?.auto_bundle) {
+        Logger.debug("Skipping update bundle generation: update.auto_bundle is false")
+        return
+    }
+
+    await bundleUpdate(undefined, {
+        bsp: Settings.bspName ?? undefined,
+        version: Settings.projectVersion,
+    })
 }

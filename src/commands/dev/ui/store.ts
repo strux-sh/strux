@@ -8,6 +8,18 @@
 import type { ResourceName } from "./App"
 import type { LogEntry } from "./LogView"
 import type { ResourceStatus } from "./theme"
+import type { UpdateStatus } from "../types"
+
+export interface SystemUpdateProgressState {
+    status: UpdateStatus
+    progress: number
+    message?: string
+    bytesWritten?: number
+    totalBytes?: number
+    slot?: string
+    version?: string
+    updatedAt: number
+}
 
 
 export class TUIStore {
@@ -54,6 +66,7 @@ export class TUIStore {
     inspectorPorts: { path: string, port: number }[] = []
     deviceOutputs: { name: string, label?: string }[] = []
     buildStatus = "idle"
+    systemUpdateProgress: SystemUpdateProgressState | null = null
     bspName = "qemu"
     canFlash = false
     projectRoot = ""
@@ -172,6 +185,26 @@ export class TUIStore {
     setBuildStatus(status: string): void {
 
         this.buildStatus = status
+        this.notify()
+
+    }
+
+
+    setSystemUpdateProgress(progress: Omit<SystemUpdateProgressState, "updatedAt">): void {
+
+        this.systemUpdateProgress = {
+            ...progress,
+            progress: Math.max(0, Math.min(100, Math.round(progress.progress))),
+            updatedAt: Date.now(),
+        }
+        this.notify()
+
+    }
+
+
+    clearSystemUpdateProgress(): void {
+
+        this.systemUpdateProgress = null
         this.notify()
 
     }

@@ -9,6 +9,10 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
 progress "Post-processing Root Filesystem..."
 
 PROJECT_DIR="${PROJECT_DIR:-/project}"
@@ -33,6 +37,7 @@ tar -xzf "$BSP_CACHE/rootfs-base.tar.gz" -C "$ROOTFS_DIR"
 
 # Create the Strux Directory
 mkdir -p "$ROOTFS_DIR/strux"
+mkdir -p "$ROOTFS_DIR/etc/strux"
 
 # ============================================================================
 # SECTION 4: MOUNT NECESSARY FILESYSTEMS FOR CHROOT OPERATIONS
@@ -86,6 +91,28 @@ if [ ! -f "$BSP_CONFIG" ]; then
     echo "Error: BSP configuration file not found: $BSP_CONFIG"
     exit 1
 fi
+
+PROJECT_NAME="${PROJECT_NAME:-$(yq '.name' "$PROJECT_DIR/strux.yaml" 2>/dev/null || echo "")}"
+PROJECT_VERSION="${PROJECT_VERSION:-$(yq '.project_version' "$PROJECT_DIR/strux.yaml" 2>/dev/null || echo "")}"
+STRUX_VERSION="${STRUX_VERSION:-unknown}"
+TARGET_ARCH="${TARGET_ARCH:-unknown}"
+BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+JSON_PROJECT_NAME=$(json_escape "$PROJECT_NAME")
+JSON_PROJECT_VERSION=$(json_escape "$PROJECT_VERSION")
+JSON_STRUX_VERSION=$(json_escape "$STRUX_VERSION")
+JSON_BSP_NAME=$(json_escape "$BSP_NAME")
+JSON_TARGET_ARCH=$(json_escape "$TARGET_ARCH")
+
+cat > "$ROOTFS_DIR/etc/strux/project.json" <<EOF
+{
+  "name": "$JSON_PROJECT_NAME",
+  "projectVersion": "$JSON_PROJECT_VERSION",
+  "struxVersion": "$JSON_STRUX_VERSION",
+  "bsp": "$JSON_BSP_NAME",
+  "arch": "$JSON_TARGET_ARCH",
+  "builtAt": "$BUILD_TIME"
+}
+EOF
 
 
 # ============================================================================

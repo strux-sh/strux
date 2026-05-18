@@ -5,8 +5,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-
-	"github.com/strux-dev/strux/pkg/runtime/extension"
 )
 
 // GenerateTypeScript creates TypeScript type definitions for the bound methods and extensions
@@ -30,7 +28,7 @@ func (rt *Runtime) GenerateTypeScript(outputPath string) error {
 					continue
 				}
 
-				methods, ok := subDataMap["methods"].([]extension.MethodInfo)
+				methods, ok := subDataMap["methods"].([]MethodInfo)
 				if !ok {
 					continue
 				}

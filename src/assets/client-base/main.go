@@ -67,9 +67,17 @@ func main() {
 	}
 
 	usbDevEnabled := false
+	usbManager := NewUSBNetManager()
+	var usbNetConfig usbNetConfig
+	defer func() {
+		if usbDevEnabled {
+			usbManager.Cleanup(usbNetConfig)
+		}
+	}()
 	if config.USB.IsEnabled() {
 		logger.Info("Configuring USB debug Ethernet...")
-		usbNetConfig, err := NewUSBNetManager().Setup(config.USB)
+		var err error
+		usbNetConfig, err = usbManager.Setup(config.USB)
 		if err != nil {
 			logger.Warn("USB debug Ethernet setup failed: %v", err)
 			logger.Warn("Continuing with non-USB dev discovery")
@@ -284,6 +292,12 @@ func launchProduction() error {
 	cage := CageLauncherInstance
 	if !cage.WaitForBackend(60 * time.Second) {
 		return ErrBackendNotReady
+	}
+
+	if err := markPendingUpdateGood(); err != nil {
+		logger.Warn("Failed to mark pending update good: %v", err)
+	} else {
+		logger.Info("Strux update state is good for this boot")
 	}
 
 	logger.Info("Launching with resolution: %s", resolution)

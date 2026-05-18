@@ -1,4 +1,4 @@
-package extension
+package api
 
 import (
 	"encoding/json"
@@ -13,23 +13,12 @@ import (
 )
 
 const (
+	DevNamespace = "dev"
+
 	defaultDevConfigPath      = "/strux/.dev-env.json"
 	defaultDisabledConfigPath = "/strux/.dev-env.json.disabled"
 	defaultInspectorPort      = 9223
 )
-
-// DevExtension provides runtime control over the device dev-mode config.
-type DevExtension struct{}
-
-// Namespace returns "strux".
-func (d *DevExtension) Namespace() string {
-	return "strux"
-}
-
-// SubNamespace returns "dev".
-func (d *DevExtension) SubNamespace() string {
-	return "dev"
-}
 
 // DevHost represents a dev server host.
 type DevHost struct {
@@ -64,35 +53,27 @@ type DevState struct {
 	Config  DevConfig `json:"config"`
 }
 
-// DevMethods provides runtime methods under window.strux.dev.*.
-type DevMethods struct {
+// DevService provides runtime methods under window.strux.dev.*.
+type DevService struct {
 	activeConfigPath   string
 	disabledConfigPath string
 	restart            func() error
 }
 
-// NewDevMethods returns the built-in dev-mode controller.
-func NewDevMethods() *DevMethods {
-	return &DevMethods{
-		activeConfigPath:   defaultDevConfigPath,
-		disabledConfigPath: defaultDisabledConfigPath,
-		restart: func() error {
-			return exec.Command("systemctl", "restart", "strux").Run()
-		},
-	}
-}
-
 // GetConfig returns the currently stored dev-mode config.
-func (d *DevMethods) GetConfig() (DevState, error) {
+func (d *DevService) GetConfig() (DevState, error) {
+	activePath := d.activePath()
+	disabledPath := d.disabledPath()
+
 	switch {
-	case fileExists(d.activeConfigPath):
-		config, err := d.readConfig(d.activeConfigPath)
+	case fileExists(activePath):
+		config, err := d.readConfig(activePath)
 		if err != nil {
 			return DevState{}, err
 		}
 		return DevState{Enabled: true, Config: config}, nil
-	case fileExists(d.disabledConfigPath):
-		config, err := d.readConfig(d.disabledConfigPath)
+	case fileExists(disabledPath):
+		config, err := d.readConfig(disabledPath)
 		if err != nil {
 			return DevState{}, err
 		}
@@ -106,24 +87,29 @@ func (d *DevMethods) GetConfig() (DevState, error) {
 }
 
 // SetConfig writes the dev config without changing whether dev mode is enabled.
-func (d *DevMethods) SetConfig(config DevConfig) error {
+func (d *DevService) SetConfig(config DevConfig) error {
 	config = normalizeDevConfig(config)
 	if err := validateDevConfig(config); err != nil {
 		return err
 	}
 
-	targetPath := d.disabledConfigPath
-	if fileExists(d.activeConfigPath) {
-		targetPath = d.activeConfigPath
-	} else if fileExists(d.disabledConfigPath) {
-		targetPath = d.disabledConfigPath
+	activePath := d.activePath()
+	disabledPath := d.disabledPath()
+	targetPath := disabledPath
+	if fileExists(activePath) {
+		targetPath = activePath
+	} else if fileExists(disabledPath) {
+		targetPath = disabledPath
 	}
 
 	return d.writeConfig(targetPath, config)
 }
 
 // SetEnabled toggles whether the stored dev config is active.
-func (d *DevMethods) SetEnabled(enabled bool) error {
+func (d *DevService) SetEnabled(enabled bool) error {
+	activePath := d.activePath()
+	disabledPath := d.disabledPath()
+
 	if enabled {
 		state, err := d.GetConfig()
 		if err != nil {
@@ -133,26 +119,26 @@ func (d *DevMethods) SetEnabled(enabled bool) error {
 			return err
 		}
 
-		if fileExists(d.activeConfigPath) {
+		if fileExists(activePath) {
 			return nil
 		}
-		if !fileExists(d.disabledConfigPath) {
+		if !fileExists(disabledPath) {
 			return errors.New("no stored dev config found; call SetConfig or Apply first")
 		}
-		_ = os.Remove(d.activeConfigPath)
-		return os.Rename(d.disabledConfigPath, d.activeConfigPath)
+		_ = os.Remove(activePath)
+		return os.Rename(disabledPath, activePath)
 	}
 
-	if !fileExists(d.activeConfigPath) {
+	if !fileExists(activePath) {
 		return nil
 	}
 
-	_ = os.Remove(d.disabledConfigPath)
-	return os.Rename(d.activeConfigPath, d.disabledConfigPath)
+	_ = os.Remove(disabledPath)
+	return os.Rename(activePath, disabledPath)
 }
 
 // Apply stores the config and toggles dev mode in one call.
-func (d *DevMethods) Apply(config DevConfig, enabled bool) error {
+func (d *DevService) Apply(config DevConfig, enabled bool) error {
 	config = normalizeDevConfig(config)
 	if err := validateDevConfig(config); err != nil {
 		return err
@@ -163,9 +149,11 @@ func (d *DevMethods) Apply(config DevConfig, enabled bool) error {
 		}
 	}
 
-	targetPath := d.disabledConfigPath
+	activePath := d.activePath()
+	disabledPath := d.disabledPath()
+	targetPath := disabledPath
 	if enabled {
-		targetPath = d.activeConfigPath
+		targetPath = activePath
 	}
 
 	if err := d.writeConfig(targetPath, config); err != nil {
@@ -173,23 +161,24 @@ func (d *DevMethods) Apply(config DevConfig, enabled bool) error {
 	}
 
 	if enabled {
-		_ = os.Remove(d.disabledConfigPath)
+		_ = os.Remove(disabledPath)
 		return nil
 	}
 
-	_ = os.Remove(d.activeConfigPath)
+	_ = os.Remove(activePath)
 	return nil
 }
 
 // RestartService restarts the Strux systemd service after returning to the caller.
-func (d *DevMethods) RestartService() error {
-	if d.restart == nil {
+func (d *DevService) RestartService() error {
+	restart := d.restartFunc()
+	if restart == nil {
 		return errors.New("restart function not configured")
 	}
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		if err := d.restart(); err != nil {
+		if err := restart(); err != nil {
 			fmt.Printf("Strux Dev: Failed to restart service: %v\n", err)
 		}
 	}()
@@ -198,14 +187,14 @@ func (d *DevMethods) RestartService() error {
 }
 
 // ApplyAndRestart stores the config, toggles dev mode, and restarts the service.
-func (d *DevMethods) ApplyAndRestart(config DevConfig, enabled bool) error {
+func (d *DevService) ApplyAndRestart(config DevConfig, enabled bool) error {
 	if err := d.Apply(config, enabled); err != nil {
 		return err
 	}
 	return d.RestartService()
 }
 
-func (d *DevMethods) readConfig(path string) (DevConfig, error) {
+func (d *DevService) readConfig(path string) (DevConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return DevConfig{}, fmt.Errorf("failed to read dev config: %w", err)
@@ -219,7 +208,7 @@ func (d *DevMethods) readConfig(path string) (DevConfig, error) {
 	return normalizeDevConfig(config), nil
 }
 
-func (d *DevMethods) writeConfig(path string, config DevConfig) error {
+func (d *DevService) writeConfig(path string, config DevConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("failed to prepare config directory: %w", err)
 	}
@@ -238,6 +227,29 @@ func (d *DevMethods) writeConfig(path string, config DevConfig) error {
 	}
 
 	return nil
+}
+
+func (d *DevService) activePath() string {
+	if d.activeConfigPath != "" {
+		return d.activeConfigPath
+	}
+	return defaultDevConfigPath
+}
+
+func (d *DevService) disabledPath() string {
+	if d.disabledConfigPath != "" {
+		return d.disabledConfigPath
+	}
+	return defaultDisabledConfigPath
+}
+
+func (d *DevService) restartFunc() func() error {
+	if d.restart != nil {
+		return d.restart
+	}
+	return func() error {
+		return exec.Command("systemctl", "restart", "strux").Run()
+	}
 }
 
 func defaultDevConfig() DevConfig {

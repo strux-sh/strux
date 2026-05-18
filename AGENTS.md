@@ -36,3 +36,4 @@
 
 # Rules
 - Always ask questions for certain developer decisions and the shape of things. Confirm what changes you are going to make before changing them.
+- For changes to `kernel-source` or `bootloader-source`, never hand-edit the `.diff` patch file directly. Make the change in the actual checked-out source tree first, generate the patch from that source tree with `git diff`, write that output to the BSP patch file, then run `git reset --hard HEAD` inside the source tree afterward. Leave unrelated untracked files alone unless explicitly told otherwise.

@@ -122,7 +122,14 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
 
     // Build the resource list from store
     const resources: Resource[] = [
-        { name: "device",         label: "Device",      status: store.statuses.device, detail: store.deviceIP },
+        {
+            name: "device",
+            label: "Device",
+            status: store.statuses.device,
+            detail: store.systemUpdateProgress
+                ? `update ${store.systemUpdateProgress.progress}%`
+                : store.deviceIP
+        },
         { name: "device:app",     label: "App",         status: store.statuses["device:app"],    indent: 1 },
         { name: "device:cage",    label: "Cage",        status: store.statuses["device:cage"],   indent: 1 },
         { name: "device:system",  label: "System Logs", status: store.statuses["device:system"], indent: 1 },

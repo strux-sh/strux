@@ -47,36 +47,32 @@ func (s *SampleMethods) Apply(config Config) (State, error) { return State{}, ni
 		t.Fatalf("parseExtensions failed: %v", err)
 	}
 
-	if len(runtimeTypes.Extensions) != 1 {
-		t.Fatalf("expected 1 extension, got %d", len(runtimeTypes.Extensions))
+	if len(runtimeTypes.Extensions["strux"]) != 1 {
+		t.Fatalf("expected 1 strux extension, got %d", len(runtimeTypes.Extensions["strux"]))
 	}
 
-	method := runtimeTypes.Extensions[0].Methods[0]
+	method := runtimeTypes.Extensions["strux"]["sample"].Methods[0]
 	if got := method.Params[0].TSType; got != "StruxRuntime.Config" {
 		t.Fatalf("expected qualified param type, got %q", got)
 	}
-	if got := method.ReturnType; got != "StruxRuntime.State" {
+	if got := method.ReturnTypes[0].TSType; got != "StruxRuntime.State" {
 		t.Fatalf("expected qualified return type, got %q", got)
 	}
 
 	typeNames := make(map[string]bool)
-	for _, typeInfo := range runtimeTypes.Types {
-		typeNames[typeInfo.Name] = true
+	for name := range runtimeTypes.Structs {
+		typeNames[name] = true
 	}
 
-	for _, want := range []string{"Alias", "Child", "Config", "State"} {
+	for _, want := range []string{"Child", "Config", "State"} {
 		if !typeNames[want] {
 			t.Fatalf("expected referenced type %q to be emitted", want)
 		}
 	}
 
-	for _, typeInfo := range runtimeTypes.Types {
-		if typeInfo.Name != "Config" {
-			continue
-		}
-		if len(typeInfo.Fields) == 0 || typeInfo.Fields[0].Name != "child" {
-			t.Fatalf("expected JSON field names to be used for runtime helper structs, got %#v", typeInfo.Fields)
-		}
+	config := runtimeTypes.Structs["Config"]
+	if len(config.Fields) == 0 || config.Fields[0].Name != "child" {
+		t.Fatalf("expected JSON field names to be used for runtime helper structs, got %#v", config.Fields)
 	}
 }
 
@@ -111,14 +107,11 @@ func (g *GPIOMethods) Read(pin int) (bool, error) { return true, nil }
 		t.Fatalf("parseExtensions failed: %v", err)
 	}
 
-	if len(runtimeTypes.Extensions) != 1 {
-		t.Fatalf("expected 1 extension, got %d", len(runtimeTypes.Extensions))
+	if len(runtimeTypes.Extensions["strux"]) != 1 {
+		t.Fatalf("expected 1 strux extension, got %d", len(runtimeTypes.Extensions["strux"]))
 	}
 
-	ext := runtimeTypes.Extensions[0]
-	if ext.Namespace != "strux" || ext.SubNamespace != "gpio" {
-		t.Fatalf("unexpected extension namespace: %#v", ext)
-	}
+	ext := runtimeTypes.Extensions["strux"]["gpio"]
 	if len(ext.Methods) != 2 {
 		t.Fatalf("expected 2 methods, got %#v", ext.Methods)
 	}
@@ -160,42 +153,36 @@ func (g *GPIOMethods) Write(pin int, value bool) error { return nil }
 		t.Fatalf("parseExtensions failed: %v", err)
 	}
 
-	if len(runtimeTypes.Extensions) != 1 {
-		t.Fatalf("expected 1 extension, got %d", len(runtimeTypes.Extensions))
+	if len(runtimeTypes.Extensions["strux"]) != 1 {
+		t.Fatalf("expected 1 strux extension, got %d", len(runtimeTypes.Extensions["strux"]))
 	}
-	ext := runtimeTypes.Extensions[0]
-	if ext.Namespace != "strux" || ext.SubNamespace != "gpio" {
-		t.Fatalf("unexpected extension namespace: %#v", ext)
+	if _, ok := runtimeTypes.Extensions["strux"]["gpio"]; !ok {
+		t.Fatalf("expected strux.gpio extension, got %#v", runtimeTypes.Extensions)
 	}
 }
 
 func TestGenerateTypeScriptNamespacesRuntimeSupportTypes(t *testing.T) {
 	runtimeTypes := RuntimeTypes{
-		Types: []TypeInfo{
-			{
-				Name: "DevConfig",
-				Kind: "struct",
+		Structs: map[string]StructDef{
+			"DevConfig": {
 				Fields: []FieldDef{
 					{Name: "fallbackHosts", TSType: "DevHost[]"},
 				},
 			},
-			{
-				Name: "DevHost",
-				Kind: "struct",
+			"DevHost": {
 				Fields: []FieldDef{
 					{Name: "host", TSType: "string"},
 				},
 			},
 		},
-		Extensions: []ExtensionInfo{
-			{
-				Namespace:    "strux",
-				SubNamespace: "dev",
-				Methods: []MethodInfo{
-					{
-						Name:       "Apply",
-						Params:     []ParamDef{{Name: "config", TSType: "StruxRuntime.DevConfig"}},
-						ReturnType: "void",
+		Extensions: map[string]map[string]RuntimeExtensionDef{
+			"strux": {
+				"dev": {
+					Methods: []MethodDef{
+						{
+							Name:   "Apply",
+							Params: []ParamDef{{Name: "config", TSType: "StruxRuntime.DevConfig"}},
+						},
 					},
 				},
 			},
@@ -204,11 +191,11 @@ func TestGenerateTypeScriptNamespacesRuntimeSupportTypes(t *testing.T) {
 
 	output := generateTypeScript(runtimeTypes)
 
-	if !strings.Contains(output, "declare namespace StruxRuntime {") {
-		t.Fatal("expected helper types to be namespaced under StruxRuntime")
+	if !strings.Contains(output, `"structs": {`) {
+		t.Fatal("expected helper types to be emitted as runtime JSON")
 	}
-	if !strings.Contains(output, "Apply(config: StruxRuntime.DevConfig): Promise<void>;") {
-		t.Fatal("expected extension method to reference the namespaced helper type")
+	if !strings.Contains(output, `"tsType": "StruxRuntime.DevConfig"`) {
+		t.Fatal("expected extension method metadata to reference the namespaced helper type")
 	}
 	if strings.Contains(output, "\ninterface DevConfig {\n") {
 		t.Fatal("did not expect DevConfig to be emitted as a top-level interface")

@@ -1,16 +1,6 @@
-package extension
+package runtime
 
 import "testing"
-
-type testRegistryExtension struct{}
-
-func (e *testRegistryExtension) Namespace() string {
-	return "test"
-}
-
-func (e *testRegistryExtension) SubNamespace() string {
-	return "config"
-}
 
 type testRegistryHost struct {
 	Host string `json:"host"`
@@ -37,8 +27,8 @@ func (m *testRegistryMethods) CountPorts(hosts []testRegistryHost) int {
 }
 
 func TestRegistryExecuteMethodDecodesStructParameters(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(&testRegistryExtension{}, &testRegistryMethods{}); err != nil {
+	registry := newRegistry()
+	if err := registry.Register("test", "config", &testRegistryMethods{}); err != nil {
 		t.Fatalf("register failed: %v", err)
 	}
 
@@ -67,8 +57,8 @@ func TestRegistryExecuteMethodDecodesStructParameters(t *testing.T) {
 }
 
 func TestRegistryExecuteMethodDecodesSliceParameters(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(&testRegistryExtension{}, &testRegistryMethods{}); err != nil {
+	registry := newRegistry()
+	if err := registry.Register("test", "config", &testRegistryMethods{}); err != nil {
 		t.Fatalf("register failed: %v", err)
 	}
 

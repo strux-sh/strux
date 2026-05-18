@@ -11,11 +11,38 @@ import { join } from "path"
 import { Settings } from "../settings"
 import { Logger } from "../utils/log"
 import { fileExists } from "../utils/path"
+import { assertSafeRelativePath, assertShellSafeText } from "../utils/sanitize"
+
+function shellSafeString(label: string): z.ZodString {
+    return z.string().superRefine((value, ctx) => {
+        try {
+            assertShellSafeText(value, label)
+        } catch (error) {
+            ctx.addIssue({
+                code: "custom",
+                message: error instanceof Error ? error.message : String(error)
+            })
+        }
+    })
+}
+
+function shellSafeRelativePath(label: string): z.ZodString {
+    return z.string().superRefine((value, ctx) => {
+        try {
+            assertSafeRelativePath(value, label)
+        } catch (error) {
+            ctx.addIssue({
+                code: "custom",
+                message: error instanceof Error ? error.message : String(error)
+            })
+        }
+    })
+}
 
 // Boot splash configuration schema
 const BootSplashSchema = z.object({
     enabled: z.boolean(),
-    logo: z.string(),
+    logo: shellSafeRelativePath("boot.splash.logo"),
     color: z.string().regex(/^[0-9A-Fa-f]{6}$/, "Color must be a 6-digit hex color"),
 })
 
@@ -24,16 +51,27 @@ const BootSchema = z.object({
     splash: BootSplashSchema.optional(),
 })
 
+// Update configuration schema
+const UpdateSchema = z.object({
+    enabled: z.boolean().default(false),
+    auto_bundle: z.boolean().default(false),
+})
+
+const SemverSchema = z.string().regex(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+    "Version must be valid semver, for example 1.2.3 or 1.2.3-beta.1"
+)
+
 // RootFS configuration schema
 const RootFSSchema = z.object({
-    overlay: z.string().optional(),
-    packages: z.array(z.string()).optional(),
+    overlay: shellSafeRelativePath("rootfs.overlay").optional(),
+    packages: z.array(shellSafeString("rootfs.packages")).optional(),
 })
 
 // QEMU USB device schema
 const QemuUsbDeviceSchema = z.object({
-    vendor_id: z.string(),
-    product_id: z.string(),
+    vendor_id: z.string().regex(/^[0-9A-Fa-f]{4}$/, "USB vendor_id must be 4 hex digits"),
+    product_id: z.string().regex(/^[0-9A-Fa-f]{4}$/, "USB product_id must be 4 hex digits"),
 })
 
 // QEMU configuration schema
@@ -41,7 +79,7 @@ const QemuSchema = z.object({
     enabled: z.boolean(),
     network: z.boolean(),
     usb: z.array(QemuUsbDeviceSchema).optional(),
-    flags: z.array(z.string()).optional(),
+    flags: z.array(shellSafeString("qemu.flags")).optional(),
 })
 
 // Cache configuration schema
@@ -53,13 +91,13 @@ const CacheConfigSchema = z.object({
 
 // Build configuration schema
 const BuildSchema = z.object({
-    host_packages: z.array(z.string()).optional(),
+    host_packages: z.array(shellSafeString("build.host_packages")).optional(),
     cache: CacheConfigSchema.optional(),
 })
 
 // Dev server fallback host schema
 const DevFallbackHostSchema = z.object({
-    host: z.string(),
+    host: shellSafeString("dev.server.fallback_hosts.host"),
     port: z.number().int().positive(),
 })
 
@@ -140,11 +178,12 @@ const DisplaySchema = z.object({
 
 // Main strux.yaml schema
 export const StruxYamlSchema = z.object({
-    strux_version: z.string(),
-    name: z.string(),
-    bsp: z.string(),
-    hostname: z.string().optional(),
+    project_version: SemverSchema,
+    name: shellSafeString("name"),
+    bsp: shellSafeString("bsp"),
+    hostname: shellSafeString("hostname").optional(),
     boot: BootSchema.optional(),
+    update: UpdateSchema.optional(),
     display: DisplaySchema.optional(),
     rootfs: RootFSSchema.optional(),
     qemu: QemuSchema.optional(),
@@ -227,7 +266,7 @@ export class MainYAMLValidator {
                 Settings.projectName = validated.name
             }
 
-            if (validated.strux_version) Settings.projectVersion = validated.strux_version
+            Settings.projectVersion = validated.project_version
 
             // Only set bspName from strux.yaml if it wasn't already set by a CLI argument
             if (validated.bsp && !Settings.bspName) Settings.bspName = validated.bsp

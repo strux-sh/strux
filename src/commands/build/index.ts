@@ -41,10 +41,12 @@ import {
     buildKernel,
     buildBootloader,
     postProcessRootFS,
+    bundleSystemUpdate,
     removeDevEnvConfig,
     updateDevEnvConfig,
     writeDisplayConfig
 } from "./steps"
+import { copyAllInitialArtifacts } from "./artifacts"
 
 // BSP Script Execution
 import { runScriptsForStep } from "./bsp-scripts"
@@ -54,6 +56,7 @@ export interface BuildMetadata {
     buildTime: string
     bspName: string
     struxVersion: string
+    projectVersion: string
 }
 
 export interface BuildLogger {
@@ -72,6 +75,7 @@ export interface BuildValidators {
 export interface BuildFiles {
     fileExists(path: string): boolean
     prepareBuildDirectories(): Promise<void>
+    prepareInitialArtifacts(): Promise<void>
     writeBuildMetadata(bspName: string, metadata: BuildMetadata): Promise<void>
 }
 
@@ -113,6 +117,7 @@ export interface BuildSteps {
     buildRootFS(): Promise<void>
     writeDisplayConfig(bspName: string): Promise<void>
     postProcessRootFS(): Promise<void>
+    bundleSystemUpdate(): Promise<void>
     updateDevEnvConfig(bspName: string): Promise<void>
     removeDevEnvConfig(bspName: string): Promise<void>
 }
@@ -147,6 +152,7 @@ export const realBuildDeps: BuildDeps = {
     files: {
         fileExists,
         prepareBuildDirectories,
+        prepareInitialArtifacts: copyAllInitialArtifacts,
         writeBuildMetadata,
     },
     cache: {
@@ -169,6 +175,7 @@ export const realBuildDeps: BuildDeps = {
         buildRootFS,
         writeDisplayConfig,
         postProcessRootFS,
+        bundleSystemUpdate,
         updateDevEnvConfig,
         removeDevEnvConfig,
     },
@@ -218,6 +225,7 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
     // PREPARE BUILD DIRECTORIES
     // ========================================
     await deps.files.prepareBuildDirectories()
+    await deps.files.prepareInitialArtifacts()
 
     // ========================================
     // SMART BUILD CACHING SYSTEM
@@ -452,6 +460,11 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
         // Run BSP's make_image script(s)
         await runBspScripts("make_image")
 
+        if (Settings.main?.update?.enabled && Settings.main?.update?.auto_bundle) {
+            anyStepRan = true
+            await deps.steps.bundleSystemUpdate()
+        }
+
         // ========================================
         // BUILD LIFECYCLE: after_build
         // ========================================
@@ -464,7 +477,8 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
             buildMode: isDevMode ? "dev" : "production",
             buildTime: deps.now().toISOString(),
             bspName,
-            struxVersion: Settings.struxVersion
+            struxVersion: Settings.struxVersion,
+            projectVersion: Settings.projectVersion
         } satisfies BuildMetadata
         await deps.files.writeBuildMetadata(bspName, buildMetadata)
 

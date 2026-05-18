@@ -5,11 +5,13 @@
  */
 
 import { Command } from "commander"
+import chalk from "chalk"
 import { join, resolve } from "path"
 import { normalizeBuilderTag, Settings, type ArchType, type TemplateType } from "./settings"
 import { STRUX_VERSION } from "./version"
 import { Logger } from "./utils/log"
 import { fileExists } from "./utils/path"
+import { MainYAMLValidator } from "./types/main-yaml"
 import { init } from "./commands/init"
 import { build } from "./commands/build"
 import { run } from "./commands/run"
@@ -17,11 +19,33 @@ import { dev } from "./commands/dev"
 import { flash } from "./commands/flash"
 import { usb, usbAdd, usbList } from "./commands/usb"
 import { kernelMenuconfig, kernelClean } from "./commands/kernel"
+import { bundleUpdate, generateUpdateKeypair, sendUpdate } from "./commands/update"
 import { UpdateChecker } from "./updatecheck"
 
 const program = new Command()
 
 await UpdateChecker.checkForUpdates()
+
+async function showDevelopmentImageWarning(): Promise<void> {
+    const lines = [
+        "YOU ARE BUILDING A DEVELOPMENT IMAGE",
+        "This image enables development-only services and remote control paths.",
+        "It is not hardened and must not be used in production deployments.",
+        "Build will continue in 5 seconds..."
+    ]
+    const width = Math.max(...lines.map((line) => line.length))
+    const border = "=".repeat(width + 4)
+
+    console.log()
+    console.log(chalk.bgRed.white.bold(border))
+    for (const line of lines) {
+        console.log(chalk.bgRed.white.bold(`  ${line.padEnd(width)}  `))
+    }
+    console.log(chalk.bgRed.white.bold(border))
+    console.log()
+
+    await Bun.sleep(5000)
+}
 
 program
     .name("strux")
@@ -131,6 +155,9 @@ program.command("build")
             Settings.isDevMode = options.dev ?? false
             Settings.noChown = options.chown === false
             Settings.localRuntime = options.localRuntime ? resolve(options.localRuntime) : null
+            if (Settings.isDevMode) {
+                await showDevelopmentImageWarning()
+            }
             await build()
         } catch (err) {
             Logger.error(`Build failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -138,6 +165,65 @@ program.command("build")
         }
 
 
+    })
+
+const updateCommand = program.command("update")
+    .description("Create and manage Strux OS update artifacts")
+
+updateCommand.command("gen-keypair")
+    .description("Generate a 4096-bit RSA-PSS keypair for Strux system update bundles")
+    .option("--private-key <path>", "Private key output path. Defaults to ./strux-update.key.")
+    .option("--public-key <path>", "Public key output path. Defaults to ./strux-update.pub.")
+    .option("-f, --force", "Overwrite existing key files", false)
+    .action(async (options: {privateKey?: string, publicKey?: string, force?: boolean}) => {
+        try {
+            Settings.projectPath = process.cwd()
+            await generateUpdateKeypair(options)
+        } catch (err) {
+            Logger.error(`Update keypair generation failed: ${err instanceof Error ? err.message : String(err)}`)
+            process.exit(1)
+        }
+    })
+
+updateCommand.command("bundle")
+    .description("Create a signed full-rootfs update bundle")
+    .argument("[rootfs-image]", "The full rootfs image to bundle. Defaults to dist/output/<bsp>/rootfs.ext4.")
+    .option("--private-key <path>", "RSA private key PEM used to sign the bundle with RSA-PSS/SHA-512. Defaults to ./strux-update.key.")
+    .option("--bsp <name>", "Target BSP name")
+    .option("--version <version>", "Update version/generation label")
+    .option("-o, --out <path>", "Output .struxb path")
+    .action(async (rootfsImage: string | undefined, options: {privateKey?: string, bsp?: string, version?: string, out?: string}) => {
+        try {
+            Settings.projectPath = process.cwd()
+            if (fileExists(join(Settings.projectPath, "strux.yaml"))) {
+                MainYAMLValidator.validateAndLoad(join(Settings.projectPath, "strux.yaml"))
+            }
+            await bundleUpdate(rootfsImage, options)
+        } catch (err) {
+            Logger.error(`Update bundle failed: ${err instanceof Error ? err.message : String(err)}`)
+            process.exit(1)
+        }
+    })
+
+updateCommand.command("send")
+    .description("Ask a running dev server to install a system update bundle on connected devices")
+    .argument("[bundle]", "Path to a .struxb bundle. If omitted, the dev server uses the newest bundle in dist/output/<bsp>.")
+    .option("--server <url>", "Running dev server URL for control requests. Defaults to STRUX_DEV_SERVER_URL or http://127.0.0.1:8000.", "")
+    .option("--key <key>", "Client/dev server key. Defaults to dev.server.client_key from strux.yaml.")
+    .action(async (bundlePath: string | undefined, options: {server?: string, key?: string}) => {
+        try {
+            Settings.projectPath = process.cwd()
+            if (fileExists(join(Settings.projectPath, "strux.yaml"))) {
+                MainYAMLValidator.validateAndLoad(join(Settings.projectPath, "strux.yaml"))
+            }
+            await sendUpdate(bundlePath, {
+                server: options.server || undefined,
+                key: options.key,
+            })
+        } catch (err) {
+            Logger.error(`Update send failed: ${err instanceof Error ? err.message : String(err)}`)
+            process.exit(1)
+        }
     })
 
 program.command("run")

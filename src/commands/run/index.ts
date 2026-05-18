@@ -15,6 +15,7 @@ import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
 import { USBRedirect } from "./usb"
 import { waitForPort } from "../../utils/network"
+import { assertShellSafeList } from "../../utils/sanitize"
 
 const decoder = new TextDecoder()
 
@@ -225,6 +226,7 @@ export async function run(options: RunOptions = {}) {
     }
 
     const customFlags = Settings.main!.qemu!.flags! ?? []
+    assertShellSafeList(customFlags, "qemu.flags")
 
     // Split each flag string into separate arguments (e.g., "-m 2G" becomes ["-m", "2G"])
     const splitFlags = customFlags.flatMap(flag => flag.split(/\s+/).filter(Boolean))

@@ -33,6 +33,8 @@ type USBConfig struct {
 	Subnet  string `json:"subnet"`
 }
 
+const defaultUSBSubnet = "192.168.7.0/24"
+
 func (u USBConfig) IsEnabled() bool {
 	return u.Enabled == nil || *u.Enabled
 }

@@ -1,4 +1,4 @@
-package extension
+package runtime
 
 import (
 	"encoding/json"
@@ -7,43 +7,23 @@ import (
 	"sync"
 )
 
-// Extension represents a collection of methods that can be registered
-// with the Strux runtime to extend the JavaScript API
-type Extension interface {
-	// Namespace returns the top-level namespace (e.g., "strux")
-	Namespace() string
-
-	// SubNamespace returns the sub-namespace (e.g., "boot", "storage", "system")
-	SubNamespace() string
-}
-
-// MethodInfo describes a bound method for the frontend
-type MethodInfo struct {
-	Name       string   `json:"name"`
-	ParamCount int      `json:"paramCount"`
-	ParamTypes []string `json:"paramTypes"`
-}
-
 // Registry manages all registered extensions
 type Registry struct {
 	extensions map[string]map[string]interface{} // namespace -> subnamespace -> extension instance
 	mu         sync.RWMutex
 }
 
-// NewRegistry creates a new extension registry
-func NewRegistry() *Registry {
+// newRegistry creates a new runtime API registry.
+func newRegistry() *Registry {
 	return &Registry{
 		extensions: make(map[string]map[string]interface{}),
 	}
 }
 
 // Register adds an extension to the registry
-func (r *Registry) Register(ext Extension, instance interface{}) error {
+func (r *Registry) Register(namespace string, subNamespace string, instance interface{}) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	namespace := ext.Namespace()
-	subNamespace := ext.SubNamespace()
 
 	if namespace == "" || subNamespace == "" {
 		return fmt.Errorf("namespace and sub-namespace cannot be empty")

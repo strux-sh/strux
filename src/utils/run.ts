@@ -9,6 +9,7 @@ import { Spinner, Logger } from "./log"
 import { Settings } from "../settings"
 import { mkdir } from "fs/promises"
 import { join } from "path"
+import { assertShellSafeEnv, splitSafeCommand } from "./sanitize"
 
 // @ts-ignore
 import scriptsBaseDockerfile from "../assets/scripts-base/Dockerfile" with { type: "text" }
@@ -60,7 +61,11 @@ export class RunnerClass {
         return null
     }
 
-    public async runCommand(command: string, options: RunnerOptions) {
+    public async runCommand(command: string | string[], options: RunnerOptions) {
+        const args = Array.isArray(command)
+            ? command
+            : splitSafeCommand(command)
+
         const spinner = new Spinner(options.message)
         // If verbose mode is enabled, don't use spinner (it interferes with output)
         if (!Settings.verbose) {
@@ -70,7 +75,6 @@ export class RunnerClass {
             Logger.log(options.message)
         }
 
-        const args = command.split(" ")
         let stdout = ""
         let stderr = ""
 
@@ -98,21 +102,10 @@ export class RunnerClass {
                     }
                 }
 
-                // Parse for progress markers line by line
-                const lines = text.split("\n")
-                for (const line of lines) {
-                    const marker = "STRUX_PROGRESS:"
-                    const idx = line.indexOf(marker)
-                    if (idx >= 0) {
-                        const msg = line.substring(idx + marker.length).trim()
-                        if (msg) {
-                            if (Settings.verbose) {
-                                // In verbose mode, progress markers are already in the output above
-                                // No need to log separately
-                            } else {
-                                spinner.updateMessage(msg)
-                            }
-                        }
+                if (!Settings.verbose) {
+                    const lines = text.split("\n")
+                    for (const line of lines) {
+                        Logger.tryHandleProgressMarker(line, { spinner })
                     }
                 }
             }
@@ -162,7 +155,7 @@ export class RunnerClass {
             if (stdout?.trim()) {
                 const filteredStdout = stdout
                     .split("\n")
-                    .filter(line => !line.includes("STRUX_PROGRESS:"))
+                    .filter(line => !Logger.isProgressMarkerLine(line))
                     .join("\n")
                 if (filteredStdout.trim()) {
                     Logger.raw(filteredStdout)
@@ -251,7 +244,7 @@ export class RunnerClass {
         Logger.log(`Pulling builder image: ${remoteImage}`)
 
         try {
-            const pullResult = await this.runCommand(`docker pull ${remoteImage}`, {
+            const pullResult = await this.runCommand(["docker", "pull", remoteImage], {
                 message: "Pulling builder image from registry...",
                 exitOnError: false,
             })
@@ -321,7 +314,7 @@ export class RunnerClass {
         const hashChanged = compareHash !== undefined && compareHash !== currentHash
         // Rebuild if: no image, hash mismatch, forced, or image has no label (unlabeled GHCR image)
         const noLabel = imageExists && compareHash === undefined && cachedDockerHash === undefined && this.lastDockerImageHash === undefined
-        const needsRebuild = !imageExists || hashChanged || force || noLabel
+        const needsRebuild = !imageExists || hashChanged || (force ?? false) || noLabel
 
         Logger.log(`Local builder: imageExists=${imageExists}, compareHash=${compareHash}, currentHash=${currentHash}, needsRebuild=${needsRebuild}`)
 
@@ -370,7 +363,7 @@ export class RunnerClass {
         await Bun.write(join(Settings.projectPath, "dist", "artifacts", "Dockerfile"), scriptsBaseDockerfile)
 
         // Build Docker image using the Dockerfile, labeling with the hash for future comparison
-        await this.runCommand(`docker build -t strux-builder --label "strux.dockerfile.hash=${currentHash}" -f dist/artifacts/Dockerfile .`, {
+        await this.runCommand(["docker", "build", "-t", "strux-builder", "--label", `strux.dockerfile.hash=${currentHash}`, "-f", "dist/artifacts/Dockerfile", "."], {
             message: "Building Docker image locally...",
             exitOnError: true,
             cwd: Settings.projectPath
@@ -478,6 +471,7 @@ export class RunnerClass {
         const args = ["/bin/bash", "-c", finalScript]
         let stdout = ""
         let stderr = ""
+        assertShellSafeEnv({ ...options.env, ...this.getScriptPathEnv() }, "script environment variable")
 
         // In verbose mode without UI, use inherit stdio
         if (Settings.verbose && !Logger.hasSink()) {
@@ -522,15 +516,10 @@ export class RunnerClass {
                     Logger.raw(text)
                 }
 
-                const lines = text.split("\n")
-                for (const line of lines) {
-                    const marker = "STRUX_PROGRESS:"
-                    const idx = line.indexOf(marker)
-                    if (idx >= 0) {
-                        const msg = line.substring(idx + marker.length).trim()
-                        if (msg && !verboseWithUi) {
-                            spinner.updateMessage(msg)
-                        }
+                if (!verboseWithUi) {
+                    const lines = text.split("\n")
+                    for (const line of lines) {
+                        Logger.tryHandleProgressMarker(line, { spinner })
                     }
                 }
             }
@@ -570,7 +559,7 @@ export class RunnerClass {
                 if (stdout?.trim()) {
                     const filteredStdout = stdout
                         .split("\n")
-                        .filter(line => !line.includes("STRUX_PROGRESS:"))
+                        .filter(line => !Logger.isProgressMarkerLine(line))
                         .join("\n")
                     if (filteredStdout.trim()) {
                         Logger.raw(filteredStdout)
@@ -629,6 +618,7 @@ export class RunnerClass {
         ]
 
         const scriptEnv = { ...options.env, ...this.getScriptPathEnv() }
+        assertShellSafeEnv(scriptEnv, "script environment variable")
 
         // Add environment variable flags
         for (const [key, value] of Object.entries(scriptEnv)) {
@@ -698,16 +688,10 @@ export class RunnerClass {
                     Logger.raw(text)
                 }
 
-                // Parse for progress markers line by line
-                const lines = text.split("\n")
-                for (const line of lines) {
-                    const marker = "STRUX_PROGRESS:"
-                    const idx = line.indexOf(marker)
-                    if (idx >= 0) {
-                        const msg = line.substring(idx + marker.length).trim()
-                        if (msg && !verboseWithUi) {
-                            spinner.updateMessage(msg)
-                        }
+                if (!verboseWithUi) {
+                    const lines = text.split("\n")
+                    for (const line of lines) {
+                        Logger.tryHandleProgressMarker(line, { spinner })
                     }
                 }
             }
@@ -754,7 +738,7 @@ export class RunnerClass {
                 if (stdout?.trim()) {
                     const filteredStdout = stdout
                         .split("\n")
-                        .filter(line => !line.includes("STRUX_PROGRESS:"))
+                        .filter(line => !Logger.isProgressMarkerLine(line))
                         .join("\n")
                     if (filteredStdout.trim()) {
                         Logger.raw(filteredStdout)
@@ -832,6 +816,7 @@ export class RunnerClass {
         ]
 
         const scriptEnv = { ...options.env, ...this.getScriptPathEnv() }
+        assertShellSafeEnv(scriptEnv, "script environment variable")
 
         // Add environment variable flags
         for (const [key, value] of Object.entries(scriptEnv)) {

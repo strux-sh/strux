@@ -51,6 +51,8 @@ import clientGoLogs from "../../assets/client-base/logs.go" with { type: "text" 
 // @ts-ignore
 import clientGoSocket from "../../assets/client-base/socket.go" with { type: "text" }
 // @ts-ignore
+import clientGoUpdate from "../../assets/client-base/update.go" with { type: "text" }
+// @ts-ignore
 import clientGoHelpers from "../../assets/client-base/helpers.go" with { type: "text" }
 // @ts-ignore
 import clientGoExec from "../../assets/client-base/exec.go" with { type: "text" }
@@ -191,6 +193,7 @@ export function computeInternalAssetHashes(): Record<string, string> {
             clientGoLogger,
             clientGoLogs,
             clientGoSocket,
+            clientGoUpdate,
             clientGoHelpers,
             clientGoExec,
             clientGoUSBNet,

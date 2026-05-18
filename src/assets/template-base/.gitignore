@@ -1,6 +1,7 @@
 dist/
 *.img
 strux_bsp_runtime_extensions.go
+strux-update.key
 
 # Dependencies
 node_modules/

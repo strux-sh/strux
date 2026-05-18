@@ -17,6 +17,8 @@ import type { ResourceName } from "../ui/App"
 export function registerClientHandlers(client: Socket<ClientMessageSendable, ClientMessageReceivable>): void {
 
     const dev = DevServer.getInstance()
+    let lastLoggedUpdateStatus = ""
+    let lastLoggedUpdateBucket = -1
 
 
     // Connection lifecycle
@@ -33,6 +35,8 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
 
     client.onDisconnect((_ws) => {
         Logger.warning("Client disconnected")
+        lastLoggedUpdateStatus = ""
+        lastLoggedUpdateBucket = -1
         dev.ssh.clearAll()
         dev.ui.store.updateStatus("device", "disconnected")
         dev.ui.store.updateStatus("device:app", "stopped")
@@ -42,6 +46,7 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
         dev.ui.store.updateStatus("device:screen", "stopped")
         dev.ui.store.updateStatus("device:client", "stopped")
         dev.ui.store.setDeviceIP(undefined)
+        dev.ui.store.clearSystemUpdateProgress()
     })
 
 
@@ -93,6 +98,48 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
 
     client.on("component-archive-ack", (payload, _ws) => {
         Logger.info(`Archive ${payload.extractPath || payload.message}: ${payload.status}`)
+    })
+
+    client.on("system-update-ack", (payload, _ws) => {
+        const detail = [
+            payload.version ? `version=${payload.version}` : "",
+            payload.slot ? `slot=${payload.slot}` : "",
+            payload.message,
+        ].filter(Boolean).join(", ")
+        Logger.info(`System update: ${payload.status}${detail ? ` (${detail})` : ""}`)
+        dev.handleSystemUpdateAck(payload.status, payload.message)
+    })
+
+    client.on("update-progress", (payload, _ws) => {
+        const progress = Math.max(0, Math.min(100, Math.round(payload.progress ?? 0)))
+        const details = [
+            payload.version ? `version=${payload.version}` : "",
+            payload.slot ? `slot=${payload.slot}` : "",
+            payload.message,
+        ].filter(Boolean).join(", ")
+
+        const bucket = Math.floor(progress / 10)
+        const shouldLog =
+            payload.status !== lastLoggedUpdateStatus ||
+            payload.status === "completed" ||
+            payload.status === "failed" ||
+            bucket > lastLoggedUpdateBucket
+
+        if (shouldLog) {
+            Logger.info(`System update ${payload.status}: ${progress}%${details ? ` (${details})` : ""}`)
+            lastLoggedUpdateStatus = payload.status
+            lastLoggedUpdateBucket = bucket
+        }
+
+        dev.ui.store.setSystemUpdateProgress({
+            status: payload.status,
+            progress,
+            message: payload.message,
+            bytesWritten: payload.bytesWritten,
+            totalBytes: payload.totalBytes,
+            slot: payload.slot,
+            version: payload.version,
+        })
     })
 
 

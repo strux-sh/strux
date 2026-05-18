@@ -1,4 +1,4 @@
-package extension
+package api
 
 import (
 	"path/filepath"
@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-func TestDevMethodsApplySetEnabledAndReadState(t *testing.T) {
+func TestDevServiceApplySetEnabledAndReadState(t *testing.T) {
 	tempDir := t.TempDir()
-	methods := &DevMethods{
+	methods := &DevService{
 		activeConfigPath:   filepath.Join(tempDir, ".dev-env.json"),
 		disabledConfigPath: filepath.Join(tempDir, ".dev-env.json.disabled"),
 		restart:            func() error { return nil },
@@ -76,10 +76,10 @@ func TestDevMethodsApplySetEnabledAndReadState(t *testing.T) {
 	}
 }
 
-func TestDevMethodsApplyAndRestartSchedulesRestart(t *testing.T) {
+func TestDevServiceApplyAndRestartSchedulesRestart(t *testing.T) {
 	tempDir := t.TempDir()
 	restarted := make(chan struct{}, 1)
-	methods := &DevMethods{
+	methods := &DevService{
 		activeConfigPath:   filepath.Join(tempDir, ".dev-env.json"),
 		disabledConfigPath: filepath.Join(tempDir, ".dev-env.json.disabled"),
 		restart: func() error {
@@ -102,9 +102,9 @@ func TestDevMethodsApplyAndRestartSchedulesRestart(t *testing.T) {
 	}
 }
 
-func TestDevMethodsRejectEnableWithoutClientKey(t *testing.T) {
+func TestDevServiceRejectEnableWithoutClientKey(t *testing.T) {
 	tempDir := t.TempDir()
-	methods := &DevMethods{
+	methods := &DevService{
 		activeConfigPath:   filepath.Join(tempDir, ".dev-env.json"),
 		disabledConfigPath: filepath.Join(tempDir, ".dev-env.json.disabled"),
 		restart:            func() error { return nil },

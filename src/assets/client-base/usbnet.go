@@ -23,22 +23,21 @@ import (
 )
 
 const (
-	configFSRoot     = "/sys/kernel/config"
-	usbGadgetRoot    = "/sys/kernel/config/usb_gadget"
-	usbVendorID      = "0x1209"
-	usbProductID     = "0x5358"
-	usbManufacturer  = "Strux"
-	usbProduct       = "Strux USB Debug"
-	usbSerialNumber  = "strux-dev"
-	usbGadgetName    = "strux"
-	usbConfigName    = "c.1"
-	usbFunction      = "ecm"
-	usbInterface     = "usb0"
-	defaultUSBSubnet = "192.168.7.0/24"
-	usbDeviceMAC     = "02:53:74:72:75:78"
-	usbHostMAC       = "02:53:74:72:75:79"
-	usbLeaseSeconds  = 3600
-	dhcpServerPort   = 67
+	configFSRoot    = "/sys/kernel/config"
+	usbGadgetRoot   = "/sys/kernel/config/usb_gadget"
+	usbVendorID     = "0x1209"
+	usbProductID    = "0x5358"
+	usbManufacturer = "Strux"
+	usbProduct      = "Strux USB Debug"
+	usbSerialNumber = "strux-dev"
+	usbGadgetName   = "strux"
+	usbConfigName   = "c.1"
+	usbFunction     = "ecm"
+	usbInterface    = "usb0"
+	usbDeviceMAC    = "02:53:74:72:75:78"
+	usbHostMAC      = "02:53:74:72:75:79"
+	usbLeaseSeconds = 3600
+	dhcpServerPort  = 67
 )
 
 type usbNetConfig struct {
@@ -65,6 +64,25 @@ type USBNetManager struct {
 
 func NewUSBNetManager() *USBNetManager {
 	return &USBNetManager{logger: NewLogger("USBNet")}
+}
+
+func (m *USBNetManager) Cleanup(config usbNetConfig) {
+	if strings.TrimSpace(config.GadgetName) == "" {
+		return
+	}
+
+	gadgetPath := filepath.Join(usbGadgetRoot, config.GadgetName)
+	udcPath := filepath.Join(gadgetPath, "UDC")
+	boundUDC, err := readFileIntoString(udcPath)
+	if err != nil || strings.TrimSpace(boundUDC) == "" {
+		return
+	}
+
+	if err := writeConfigFSFile(udcPath, "\n"); err != nil {
+		m.logger.Warn("Failed to unbind USB gadget during cleanup: %v", err)
+		return
+	}
+	m.logger.Info("USB gadget unbound from %s", strings.TrimSpace(boundUDC))
 }
 
 func (m *USBNetManager) Setup(usbConfig USBConfig) (usbNetConfig, error) {
