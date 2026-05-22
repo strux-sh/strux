@@ -5,13 +5,6 @@ bats_load_library 'bats-support'
 
 setup_file() {
   export STRUX="$PWD/strux"
-  export TEST_WORKDIR="$PWD/tests/tmp/init-tests"
-  rm -rf "$TEST_WORKDIR"
-  mkdir -p "$TEST_WORKDIR"
-}
-
-teardown_file() {
-  rm -rf "$TEST_WORKDIR"
 }
 
 @test "strux init --help displays help" {
@@ -24,7 +17,7 @@ teardown_file() {
 }
 
 @test "strux init requires project name" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init
 
   assert_failure
@@ -32,7 +25,7 @@ teardown_file() {
 }
 
 @test "strux init fails if directory exists" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   mkdir -p existing-project
 
   run "$STRUX" --verbose init existing-project
@@ -42,43 +35,43 @@ teardown_file() {
 }
 
 @test "strux init creates project with default template" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project
 
   assert_success
-  assert [ -d "$TEST_WORKDIR/my-project" ]
-  assert [ -f "$TEST_WORKDIR/my-project/strux.yaml" ]
-  assert [ -f "$TEST_WORKDIR/my-project/main.go" ]
+  assert [ -d "$BATS_TEST_TMPDIR/my-project" ]
+  assert [ -f "$BATS_TEST_TMPDIR/my-project/strux.yaml" ]
+  assert [ -f "$BATS_TEST_TMPDIR/my-project/main.go" ]
 }
 
 @test "strux init with vanilla template" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project -t vanilla
 
   assert_success
-  assert [ -d "$TEST_WORKDIR/my-project/frontend" ]
+  assert [ -d "$BATS_TEST_TMPDIR/my-project/frontend" ]
 }
 
 @test "strux init with react template" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project -t react
 
   assert_success
-  assert [ -d "$TEST_WORKDIR/my-project/frontend" ]
-  assert [ -f "$TEST_WORKDIR/my-project/frontend/package.json" ]
+  assert [ -d "$BATS_TEST_TMPDIR/my-project/frontend" ]
+  assert [ -f "$BATS_TEST_TMPDIR/my-project/frontend/package.json" ]
 }
 
 @test "strux init with vue template" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project -t vue
 
   assert_success
-  assert [ -d "$TEST_WORKDIR/my-project/frontend" ]
-  assert [ -f "$TEST_WORKDIR/my-project/frontend/package.json" ]
+  assert [ -d "$BATS_TEST_TMPDIR/my-project/frontend" ]
+  assert [ -f "$BATS_TEST_TMPDIR/my-project/frontend/package.json" ]
 }
 
 @test "strux init with invalid template fails" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project -t invalid
 
   assert_failure
@@ -86,23 +79,23 @@ teardown_file() {
 }
 
 @test "strux init with arm64 arch" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project -a arm64
 
   assert_success
-  assert [ -f "$TEST_WORKDIR/my-project/bsp/qemu/bsp.yaml" ]
+  assert [ -f "$BATS_TEST_TMPDIR/my-project/bsp/qemu/bsp.yaml" ]
 }
 
 @test "strux init with x86_64 arch" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project -a x86_64
 
   assert_success
-  assert [ -f "$TEST_WORKDIR/my-project/bsp/qemu/bsp.yaml" ]
+  assert [ -f "$BATS_TEST_TMPDIR/my-project/bsp/qemu/bsp.yaml" ]
 }
 
 @test "strux init with invalid arch fails" {
-  cd "$TEST_WORKDIR"
+  cd "$BATS_TEST_TMPDIR"
   run "$STRUX" --verbose init my-project -a mips
 
   assert_failure
