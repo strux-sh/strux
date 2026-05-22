@@ -87,7 +87,7 @@ jobs:
 
       - name: Install BATS and dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y jq
+          sudo apt-get update && sudo apt-get install -y jq usbutils
           git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
           git clone --depth 1 https://github.com/bats-core/bats-assert.git /tmp/bats-assert
           git clone --depth 1 https://github.com/bats-core/bats-support.git /tmp/bats-support
