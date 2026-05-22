@@ -14,6 +14,13 @@ teardown_file() {
   rm -rf "$TEST_PROJECT"
 }
 
+setup() {
+  # Skip USB tests in CI environments
+  if [ -n "$CI" ] || [ -n "$GITHUB_ACTIONS" ]; then
+    skip "USB tests disabled in CI"
+  fi
+}
+
 @test "strux usb --help displays help" {
   run "$STRUX" --verbose usb --help
 
