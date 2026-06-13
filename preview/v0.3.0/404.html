@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="generator" content="VuePress 2.0.0-rc.20" />
+    <style>
+      :root {
+        --vp-c-bg: #fff;
+      }
+
+      [data-theme='dark'] {
+        --vp-c-bg: #1b1b1f;
+      }
+
+      html,
+      body {
+        background-color: var(--vp-c-bg);
+      }
+    </style>
+    <script>
+      const useChoice = localStorage.getItem('vuepress-color-scheme')
+      const systemStatus =
+        'matchMedia' in window
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+          : false
+
+      if (useChoice === 'light') {
+        document.documentElement.dataset.theme = 'light'
+      } else if (useChoice === 'dark' || systemStatus) {
+        document.documentElement.dataset.theme = 'dark'
+      }
+    </script>
+    <link rel="icon" href="/strux-icon.svg"><meta name="docs-versions-url" content="/strux/versions.json"><title>Strux OS Documentation</title><meta name="description" content="A framework for building kiosk-style Linux operating systems.">
+    <link rel="preload" href="/strux/preview/v0.3.0/assets/style-BGIb2vYo.css" as="style"><link rel="stylesheet" href="/strux/preview/v0.3.0/assets/style-BGIb2vYo.css">
+    <link rel="modulepreload" href="/strux/preview/v0.3.0/assets/app-BxL53bLZ.js"><link rel="modulepreload" href="/strux/preview/v0.3.0/assets/404.html-Cj4qfGD0.js">
+    <link rel="prefetch" href="/strux/preview/v0.3.0/assets/index.html-DH4qR5gU.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/artifacts.html-BBgScldX.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/bsp.html-BjuhNtDL.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/build-pipeline.html-C3BwMyc-.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/caching.html-DvKgl6qr.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/display-stack.html-dAdcjK10.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/overview.html-BQ3yvc_W.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/update-system.html-DAu_Ki49.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/backend.html-BApG08uN.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/building.html-5fDfDoQ2.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/customizing-the-os.html-wv1xiWrk.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/dev-mode.html-BdSPOQ1x.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/flashing.html-CE2N3L5V.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/frontend.html-B0MlDR5M.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/getting-started.html-Os7J80NC.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/installation.html-CgITSxNe.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/introduction.html-CdcBgJ1G.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/project-structure.html-G5IVCUgw.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/running-qemu.html-CeRP20JH.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/updates.html-BLvQy1mC.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/cli.html-q1ynw4as.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/frontend-api.html-BAUexY_e.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/go-runtime.html-D3sUpLdV.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/strux-yaml.html-Wl57bf6s.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/lifecycle-scripts.html-BmTHyb1N.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/bootloader.html-BIcij7Ei.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/examples.html-Cl69QgLQ.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/flash-scripts.html-C_9iMRcI.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/introduction.html-B7GiJNVV.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/kernel.html-BtSmDWeI.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/runtime-extensions.html-CHxRA0iB.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/scripts.html-M7nzmJmx.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/writing-a-bsp.html-bMkqAyul.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/bsp-yaml.html-gIMH-RNm.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/build-steps.html-BtRwJZPt.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/environment-variables.html-Bbz15aDM.js" as="script"><link rel="prefetch" href="/strux/preview/v0.3.0/assets/path-resolution.html-DUasDHod.js" as="script">
+  </head>
+  <body>
+    <div id="app"><!--[--><div class="vp-theme-container" vp-container data-v-ec9917b8><main class="page" data-v-ec9917b8><div vp-content data-v-ec9917b8><h1 data-v-ec9917b8>404</h1><blockquote data-v-ec9917b8>How did we get here?</blockquote><a class="route-link" href="/strux/preview/v0.3.0/" data-v-ec9917b8>Take me home</a></div></main></div><!--[--><!----><!----><!--]--><!--]--></div>
+    <script type="module" src="/strux/preview/v0.3.0/assets/app-BxL53bLZ.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "latest": null,
+  "releases": [],
+  "previews": [
+    {
+      "branch": "feature/v0.3.0",
+      "path": "/strux/preview/v0.3.0/"
+    }
+  ]
+}
