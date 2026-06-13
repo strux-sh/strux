@@ -10,6 +10,21 @@
 
 A framework for building kiosk-style operating systems. Strux enables developers to create customized, minimal Linux distributions optimized for single-purpose applications like digital signage, point-of-sale systems, embedded displays, and more.
 
+## 📚 Documentation
+
+<p>
+  <a href="https://strux-sh.github.io/strux/"><img alt="Read the Docs" src="https://img.shields.io/badge/Read_the_Docs-strux--sh.github.io%2Fstrux-5B5BD6?style=for-the-badge&logo=readthedocs&logoColor=white" /></a>
+</p>
+
+**👉 [strux-sh.github.io/strux](https://strux-sh.github.io/strux/)** — the full documentation, organized into:
+
+| Section | Description | |
+|---------|-------------|---|
+| 🚀 **[Guide](https://strux-sh.github.io/strux/guide/introduction)** | Step-by-step from install to flashing your first image | [Get Started →](https://strux-sh.github.io/strux/guide/getting-started) |
+| 🧠 **[Concepts](https://strux-sh.github.io/strux/concepts/overview)** | How the build pipeline, caching, and display stack work | [Learn More →](https://strux-sh.github.io/strux/concepts/build-pipeline) |
+| 🔧 **[BSP Development](https://strux-sh.github.io/strux/bsp/guide/introduction)** | Write Board Support Packages for custom hardware | [Build a BSP →](https://strux-sh.github.io/strux/bsp/guide/writing-a-bsp) |
+| 📖 **[Reference](https://strux-sh.github.io/strux/reference/cli)** | CLI, `strux.yaml`, Go runtime, and frontend API specs | [Browse →](https://strux-sh.github.io/strux/reference/strux-yaml) |
+
 ## Features
 
 - **Kiosk-Focused**: Build minimal, purpose-built Linux images for embedded displays
