@@ -57,7 +57,7 @@ const UpdateSchema = z.object({
     auto_bundle: z.boolean().default(false),
 })
 
-const SemverSchema = z.string().regex(
+const SemverSchema = z.coerce.string().regex(
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
     "Version must be valid semver, for example 1.2.3 or 1.2.3-beta.1"
 )

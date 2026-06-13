@@ -15,8 +15,26 @@ import (
 const socketPath = "/tmp/strux-ipc.sock"
 
 const CapabilityDisplay = api.CapabilityDisplay
+const CapabilityNetwork = api.CapabilityNetwork
+const CapabilityWiFi = api.CapabilityWiFi
 
 type DisplayProvider = api.DisplayProvider
+type NetworkProvider = api.NetworkProvider
+type NetworkDefaultInterface = api.NetworkDefaultInterface
+type NetworkInterface = api.NetworkInterface
+type NetworkIPConfig = api.NetworkIPConfig
+type NetworkStatus = api.NetworkStatus
+type NetworkIPConfigRequest = api.NetworkIPConfigRequest
+type WiFiProvider = api.WiFiProvider
+type WiFiDefaultInterface = api.WiFiDefaultInterface
+type WiFiInterface = api.WiFiInterface
+type WiFiNetwork = api.WiFiNetwork
+type WiFiIPConfig = api.WiFiIPConfig
+type WiFiStatus = api.WiFiStatus
+type WiFiKnownNetwork = api.WiFiKnownNetwork
+type WiFiConnectRequest = api.WiFiConnectRequest
+type WiFiKnownNetworkRequest = api.WiFiKnownNetworkRequest
+type WiFiIPConfigRequest = api.WiFiIPConfigRequest
 type CapabilityInfo = api.CapabilityInfo
 type CapabilityMethodSpec = api.MethodSpec
 

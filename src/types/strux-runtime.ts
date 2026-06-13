@@ -375,6 +375,96 @@ export const STRUX_RUNTIME_TYPES = {
           }
         ]
       },
+      "network": {
+        "methods": [
+          {
+            "name": "ListInterfaces",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "[]NetworkInterface",
+                "tsType": "StruxRuntime.NetworkInterface[]"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "GetDefaultInterface",
+            "params": [
+              {
+                "name": "kind",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [
+              {
+                "goType": "NetworkDefaultInterface",
+                "tsType": "StruxRuntime.NetworkDefaultInterface"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "GetStatus",
+            "params": [
+              {
+                "name": "interfaceName",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [
+              {
+                "goType": "NetworkStatus",
+                "tsType": "StruxRuntime.NetworkStatus"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "ConfigureIP",
+            "params": [
+              {
+                "name": "req",
+                "goType": "NetworkIPConfigRequest",
+                "tsType": "StruxRuntime.NetworkIPConfigRequest"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "SetEnabled",
+            "params": [
+              {
+                "name": "interfaceName",
+                "goType": "string",
+                "tsType": "string"
+              },
+              {
+                "name": "enabled",
+                "goType": "bool",
+                "tsType": "boolean"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "RenewDHCP",
+            "params": [
+              {
+                "name": "interfaceName",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          }
+        ]
+      },
       "project": {
         "methods": [
           {
@@ -412,6 +502,154 @@ export const STRUX_RUNTIME_TYPES = {
                 "tsType": "StruxRuntime.UpdateState"
               }
             ],
+            "hasError": true
+          }
+        ]
+      },
+      "wifi": {
+        "methods": [
+          {
+            "name": "ListInterfaces",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "[]WiFiInterface",
+                "tsType": "StruxRuntime.WiFiInterface[]"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "GetDefaultInterface",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "WiFiDefaultInterface",
+                "tsType": "StruxRuntime.WiFiDefaultInterface"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "GetStatus",
+            "params": [
+              {
+                "name": "interfaceName",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [
+              {
+                "goType": "WiFiStatus",
+                "tsType": "StruxRuntime.WiFiStatus"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "Scan",
+            "params": [
+              {
+                "name": "interfaceName",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [
+              {
+                "goType": "[]WiFiNetwork",
+                "tsType": "StruxRuntime.WiFiNetwork[]"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "Connect",
+            "params": [
+              {
+                "name": "req",
+                "goType": "WiFiConnectRequest",
+                "tsType": "StruxRuntime.WiFiConnectRequest"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "ConnectKnown",
+            "params": [
+              {
+                "name": "req",
+                "goType": "WiFiKnownNetworkRequest",
+                "tsType": "StruxRuntime.WiFiKnownNetworkRequest"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "Disconnect",
+            "params": [
+              {
+                "name": "interfaceName",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "ListKnownNetworks",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "[]WiFiKnownNetwork",
+                "tsType": "StruxRuntime.WiFiKnownNetwork[]"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "Forget",
+            "params": [
+              {
+                "name": "id",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "SetKnownNetworkPriority",
+            "params": [
+              {
+                "name": "id",
+                "goType": "string",
+                "tsType": "string"
+              },
+              {
+                "name": "priority",
+                "goType": "int",
+                "tsType": "number"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "ConfigureIP",
+            "params": [
+              {
+                "name": "req",
+                "goType": "WiFiIPConfigRequest",
+                "tsType": "StruxRuntime.WiFiIPConfigRequest"
+              }
+            ],
+            "returnTypes": [],
             "hasError": true
           }
         ]
@@ -736,6 +974,171 @@ export const STRUX_RUNTIME_TYPES = {
         }
       ]
     },
+    "NetworkDefaultInterface": {
+      "fields": [
+        {
+          "name": "found",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "NetworkIPConfig": {
+      "fields": [
+        {
+          "name": "mode",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "address",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "gateway",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "subnet",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "dns",
+          "goType": "[]string",
+          "tsType": "string[]"
+        }
+      ]
+    },
+    "NetworkIPConfigRequest": {
+      "fields": [
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "config",
+          "goType": "NetworkIPConfig",
+          "tsType": "NetworkIPConfig"
+        }
+      ]
+    },
+    "NetworkInterface": {
+      "fields": [
+        {
+          "name": "name",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "kind",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "hardwareAddress",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "driver",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "state",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "managed",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "enabled",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "connected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "linkDetected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "speedMbps",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "duplex",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "supportsWakeOnLAN",
+          "goType": "bool",
+          "tsType": "boolean"
+        }
+      ]
+    },
+    "NetworkStatus": {
+      "fields": [
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "kind",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "connected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "linkDetected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "hardwareAddress",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "speedMbps",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "duplex",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "ip",
+          "goType": "NetworkIPConfig",
+          "tsType": "NetworkIPConfig"
+        }
+      ]
+    },
     "ProjectInfo": {
       "fields": [
         {
@@ -850,6 +1253,262 @@ export const STRUX_RUNTIME_TYPES = {
           "name": "lastError",
           "goType": "string",
           "tsType": "string"
+        }
+      ]
+    },
+    "WiFiConnectRequest": {
+      "fields": [
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "ssid",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "password",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "bssid",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "WiFiDefaultInterface": {
+      "fields": [
+        {
+          "name": "found",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "WiFiIPConfig": {
+      "fields": [
+        {
+          "name": "mode",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "address",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "gateway",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "subnet",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "dns",
+          "goType": "[]string",
+          "tsType": "string[]"
+        }
+      ]
+    },
+    "WiFiIPConfigRequest": {
+      "fields": [
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "config",
+          "goType": "WiFiIPConfig",
+          "tsType": "WiFiIPConfig"
+        }
+      ]
+    },
+    "WiFiInterface": {
+      "fields": [
+        {
+          "name": "name",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "hardwareAddress",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "driver",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "state",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "managed",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "supportsScan",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "supportsAPMode",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "supports5GHz",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "supports6GHz",
+          "goType": "bool",
+          "tsType": "boolean"
+        }
+      ]
+    },
+    "WiFiKnownNetwork": {
+      "fields": [
+        {
+          "name": "id",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "ssid",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "priority",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "autoConnect",
+          "goType": "bool",
+          "tsType": "boolean"
+        }
+      ]
+    },
+    "WiFiKnownNetworkRequest": {
+      "fields": [
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "id",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "WiFiNetwork": {
+      "fields": [
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "ssid",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "bssid",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "signalStrength",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "security",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "channel",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "isKnown",
+          "goType": "bool",
+          "tsType": "boolean"
+        }
+      ]
+    },
+    "WiFiStatus": {
+      "fields": [
+        {
+          "name": "interfaceName",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "connected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "ssid",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "bssid",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "signalStrength",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "security",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "hardwareAddress",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "ip",
+          "goType": "WiFiIPConfig",
+          "tsType": "WiFiIPConfig"
         }
       ]
     }

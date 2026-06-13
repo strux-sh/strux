@@ -35,6 +35,66 @@ export class RunnerClass {
 
     private dockerImageReady = false
 
+    private writeVerboseOutputLine(line: string, stream: "stdout" | "stderr"): void {
+        if (Logger.hasSink()) {
+            Logger.raw(line)
+            return
+        }
+
+        Logger.finishProgressBar()
+        const output = stream === "stderr" ? process.stderr : process.stdout
+        output.write(`${line}\n`)
+    }
+
+    private async collectProcessStream(
+        stream: ReadableStream<Uint8Array>,
+        options: {
+            verboseOutput?: boolean
+            outputStream?: "stdout" | "stderr"
+            handleProgressMarkers?: boolean
+            spinner?: Spinner
+        } = {}
+    ): Promise<string> {
+        const decoder = new TextDecoder()
+        let output = ""
+        let pendingLine = ""
+
+        const processLine = (line: string): void => {
+            if (options.handleProgressMarkers && Logger.isProgressMarkerLine(line)) {
+                Logger.tryHandleProgressMarker(line, { spinner: options.spinner })
+                return
+            }
+
+            if (options.verboseOutput) {
+                this.writeVerboseOutputLine(line, options.outputStream ?? "stdout")
+            }
+        }
+
+        for await (const chunk of stream) {
+            const text = decoder.decode(chunk, { stream: true })
+            output += text
+            pendingLine += text
+
+            const lines = pendingLine.split("\n")
+            pendingLine = lines.pop() ?? ""
+            for (const line of lines) {
+                processLine(line.endsWith("\r") ? line.slice(0, -1) : line)
+            }
+        }
+
+        const remainingText = decoder.decode()
+        if (remainingText) {
+            output += remainingText
+            pendingLine += remainingText
+        }
+
+        if (pendingLine) {
+            processLine(pendingLine.endsWith("\r") ? pendingLine.slice(0, -1) : pendingLine)
+        }
+
+        return output
+    }
+
     /**
      * When true, runScriptInDocker skips the per-script chown.
      * Set this during the build pipeline and call chownProjectFiles() once at the end.
@@ -75,9 +135,6 @@ export class RunnerClass {
             Logger.log(options.message)
         }
 
-        let stdout = ""
-        let stderr = ""
-
         const proc = Bun.spawn(args, {
             stdout: "pipe",
             stderr: "pipe",
@@ -86,52 +143,23 @@ export class RunnerClass {
         })
 
         // Process stdout stream
-        const stdoutPromise = (async () => {
-            const decoder = new TextDecoder()
-            for await (const chunk of proc.stdout) {
-                const text = decoder.decode(chunk, { stream: true })
-                stdout += text
-
-                // In verbose mode, output everything immediately
-                if (Settings.verbose) {
-                    // Route through Logger when UI is active, otherwise write directly
-                    if (Logger.hasSink()) {
-                        Logger.raw(text)
-                    } else {
-                        process.stdout.write(text)
-                    }
-                }
-
-                if (!Settings.verbose) {
-                    const lines = text.split("\n")
-                    for (const line of lines) {
-                        Logger.tryHandleProgressMarker(line, { spinner })
-                    }
-                }
-            }
-        })()
+        const stdoutPromise = this.collectProcessStream(proc.stdout, {
+            verboseOutput: Settings.verbose,
+            outputStream: "stdout",
+            handleProgressMarkers: true,
+            spinner,
+        })
 
         // Process stderr stream
-        const stderrPromise = (async () => {
-            const decoder = new TextDecoder()
-            for await (const chunk of proc.stderr) {
-                const text = decoder.decode(chunk, { stream: true })
-                stderr += text
-
-                // Output stderr if verbose is enabled
-                if (Settings.verbose) {
-                    // Route through Logger when UI is active, otherwise write directly
-                    if (Logger.hasSink()) {
-                        Logger.raw(text)
-                    } else {
-                        process.stderr.write(text)
-                    }
-                }
-            }
-        })()
+        const stderrPromise = this.collectProcessStream(proc.stderr, {
+            verboseOutput: Settings.verbose,
+            outputStream: "stderr",
+            handleProgressMarkers: Settings.verbose,
+            spinner,
+        })
 
         // Wait for both streams to finish and process to exit
-        await Promise.all([stdoutPromise, stderrPromise])
+        const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
         const exitCode = await proc.exited
 
         if (exitCode === 0) {
@@ -386,6 +414,10 @@ export class RunnerClass {
         return `(UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -path "*/.git" -prune -o -exec chown -h "$UIDGID" {} +)`
     }
 
+    private withGitSafeProjectDirectory(script: string): string {
+        return `git config --global --add safe.directory "$PROJECT_DIR" 2>/dev/null || true\n${script.trimEnd()}`
+    }
+
     private getScriptPathEnv(): Record<string, string> {
         const projectDir = Settings.inContainer ? Settings.projectPath : "/project"
         const projectDistDir = `${projectDir}/dist`
@@ -467,34 +499,9 @@ export class RunnerClass {
             Logger.log(options.message)
         }
 
-        const finalScript = script.trimEnd()
+        const finalScript = this.withGitSafeProjectDirectory(script)
         const args = ["/bin/bash", "-c", finalScript]
-        let stdout = ""
-        let stderr = ""
         assertShellSafeEnv({ ...options.env, ...this.getScriptPathEnv() }, "script environment variable")
-
-        // In verbose mode without UI, use inherit stdio
-        if (Settings.verbose && !Logger.hasSink()) {
-            const proc = Bun.spawn(args, {
-                stdout: "inherit",
-                stderr: "inherit",
-                env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
-                cwd: Settings.projectPath,
-            })
-
-            const exitCode = await proc.exited
-
-            if (exitCode === 0) {
-                Logger.success(options.messageOnSuccess ?? options.message)
-            } else {
-                Logger.error(options.messageOnError ?? `Command failed with exit code ${exitCode}`)
-                if (options.exitOnError) {
-                    process.exit(exitCode)
-                }
-            }
-
-            return { exitCode, stdout: "", stderr: "" }
-        }
 
         // Capture output for spinner, error display, and verbose output to UI
         const proc = Bun.spawn(args, {
@@ -504,55 +511,37 @@ export class RunnerClass {
             cwd: Settings.projectPath,
         })
 
-        const verboseWithUi = Settings.verbose && Logger.hasSink()
+        const stdoutPromise = this.collectProcessStream(proc.stdout, {
+            verboseOutput: Settings.verbose,
+            outputStream: "stdout",
+            handleProgressMarkers: true,
+            spinner,
+        })
 
-        const stdoutPromise = (async () => {
-            const decoder = new TextDecoder()
-            for await (const chunk of proc.stdout) {
-                const text = decoder.decode(chunk, { stream: true })
-                stdout += text
+        const stderrPromise = this.collectProcessStream(proc.stderr, {
+            verboseOutput: Settings.verbose,
+            outputStream: "stderr",
+            handleProgressMarkers: Settings.verbose,
+            spinner,
+        })
 
-                if (verboseWithUi) {
-                    Logger.raw(text)
-                }
-
-                if (!verboseWithUi) {
-                    const lines = text.split("\n")
-                    for (const line of lines) {
-                        Logger.tryHandleProgressMarker(line, { spinner })
-                    }
-                }
-            }
-        })()
-
-        const stderrPromise = (async () => {
-            const decoder = new TextDecoder()
-            for await (const chunk of proc.stderr) {
-                const text = decoder.decode(chunk, { stream: true })
-                stderr += text
-                if (verboseWithUi) {
-                    Logger.raw(text)
-                }
-            }
-        })()
-
-        await Promise.all([stdoutPromise, stderrPromise])
+        const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
         const exitCode = await proc.exited
 
         if (exitCode === 0) {
             const successMessage = options.messageOnSuccess ?? options.message
-            if (verboseWithUi) {
+            if (Settings.verbose) {
                 Logger.success(successMessage)
             } else {
                 spinner.stopWithSuccess(successMessage)
             }
         } else {
             const errorMessage = options.messageOnError ?? `Command failed with exit code ${exitCode}`
-            if (!verboseWithUi) {
+            if (!Settings.verbose) {
                 spinner.stop()
             }
             Logger.error(errorMessage)
-            if (!verboseWithUi) {
+            if (!Settings.verbose) {
                 if (stderr?.trim()) {
                     Logger.raw(stderr)
                 }
@@ -599,7 +588,7 @@ export class RunnerClass {
         // Build the script, optionally appending chown to fix permissions.
         // When skipChown is true (e.g., during build pipeline), chown is deferred
         // to a single call at the end via chownProjectFiles().
-        let finalScript = script.trimEnd()
+        let finalScript = this.withGitSafeProjectDirectory(script)
 
         if (!this.skipChown) {
             const chownCmd = this.getChownCommand()
@@ -635,37 +624,6 @@ export class RunnerClass {
 
         // Add image and command (use bash since scripts use bash features)
         args.push("strux-builder", "/bin/bash", "-c", finalScript)
-        let stdout = ""
-        let stderr = ""
-
-        // In verbose mode without UI, use inherit stdio so output goes directly to terminal
-        // This avoids buffering issues and matches the old working implementation
-        // When UI is active, we need to capture output and route it through the Logger
-        if (Settings.verbose && !Logger.hasSink()) {
-            const proc = Bun.spawn(args, {
-                stdout: "inherit",
-                stderr: "inherit",
-            })
-
-            const exitCode = await proc.exited
-
-            if (exitCode === 0) {
-                const successMessage = options.messageOnSuccess ?? options.message
-                Logger.success(successMessage)
-            } else {
-                const errorMessage = options.messageOnError ?? `Command failed with exit code ${exitCode}`
-                Logger.error(errorMessage)
-                if (options.exitOnError) {
-                    process.exit(exitCode)
-                }
-            }
-
-            return {
-                exitCode,
-                stdout: "", // Not captured in verbose mode
-                stderr: ""  // Not captured in verbose mode
-            }
-        }
 
         // Capture output for spinner, error display, and verbose output to UI
         const proc = Bun.spawn(args, {
@@ -673,63 +631,41 @@ export class RunnerClass {
             stderr: "pipe",
         })
 
-        // Check if we're in verbose mode with UI active
-        const verboseWithUi = Settings.verbose && Logger.hasSink()
-
         // Process stdout stream
-        const stdoutPromise = (async () => {
-            const decoder = new TextDecoder()
-            for await (const chunk of proc.stdout) {
-                const text = decoder.decode(chunk, { stream: true })
-                stdout += text
-
-                // In verbose mode with UI, output everything immediately
-                if (verboseWithUi) {
-                    Logger.raw(text)
-                }
-
-                if (!verboseWithUi) {
-                    const lines = text.split("\n")
-                    for (const line of lines) {
-                        Logger.tryHandleProgressMarker(line, { spinner })
-                    }
-                }
-            }
-        })()
+        const stdoutPromise = this.collectProcessStream(proc.stdout, {
+            verboseOutput: Settings.verbose,
+            outputStream: "stdout",
+            handleProgressMarkers: true,
+            spinner,
+        })
 
         // Process stderr stream
-        const stderrPromise = (async () => {
-            const decoder = new TextDecoder()
-            for await (const chunk of proc.stderr) {
-                const text = decoder.decode(chunk, { stream: true })
-                stderr += text
-
-                // In verbose mode with UI, output stderr immediately
-                if (verboseWithUi) {
-                    Logger.raw(text)
-                }
-            }
-        })()
+        const stderrPromise = this.collectProcessStream(proc.stderr, {
+            verboseOutput: Settings.verbose,
+            outputStream: "stderr",
+            handleProgressMarkers: Settings.verbose,
+            spinner,
+        })
 
         // Wait for both streams to finish and process to exit
-        await Promise.all([stdoutPromise, stderrPromise])
+        const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
         const exitCode = await proc.exited
 
         if (exitCode === 0) {
             const successMessage = options.messageOnSuccess ?? options.message
-            if (verboseWithUi) {
+            if (Settings.verbose) {
                 Logger.success(successMessage)
             } else {
                 spinner.stopWithSuccess(successMessage)
             }
         } else {
             const errorMessage = options.messageOnError ?? `Command failed with exit code ${exitCode}`
-            if (!verboseWithUi) {
+            if (!Settings.verbose) {
                 spinner.stop()
             }
             Logger.error(errorMessage)
-            // In verbose+UI mode, output was already streamed, so only show on error in non-verbose mode
-            if (!verboseWithUi) {
+            // In verbose mode, output was already streamed, so only show on error in non-verbose mode
+            if (!Settings.verbose) {
                 // Always show stderr if available
                 if (stderr?.trim()) {
                     Logger.raw(stderr)
@@ -772,7 +708,7 @@ export class RunnerClass {
         if (Settings.inContainer) {
             Logger.log(options.message)
 
-            const proc = Bun.spawn(["/bin/bash", "-c", script.trimEnd()], {
+            const proc = Bun.spawn(["/bin/bash", "-c", this.withGitSafeProjectDirectory(script)], {
                 stdout: "inherit",
                 stderr: "inherit",
                 stdin: "inherit",
@@ -800,7 +736,7 @@ export class RunnerClass {
 
         // Build the script with chown at the end to fix permissions
         const userInfo = this.getHostUserInfo()
-        let finalScript = script.trimEnd()
+        let finalScript = this.withGitSafeProjectDirectory(script)
 
         if (userInfo) {
             finalScript = `${finalScript} && (UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -path "*/.git" -prune -o -exec chown -h "$UIDGID" {} +)`

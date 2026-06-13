@@ -31,6 +31,8 @@ func main() {
 	logger := NewLogger("Main")
 	logger.Info("Starting Strux Client (v%s)...", Version)
 
+	markCurrentBootGood(logger)
+
 	// Check if dev mode config file exists
 	if !fileExists("/strux/.dev-env.json") {
 		logger.Info("Production mode: Launching Cage and Cog")
@@ -276,6 +278,17 @@ func loadDisplaySettings() (*DisplayConfig, string) {
 	return displayConfig, resolution
 }
 
+func markCurrentBootGood(logger *Logger) {
+	if err := migrateBootDataFiles(); err != nil {
+		logger.Warn("Failed to migrate Strux boot data files: %v", err)
+	}
+	if err := markPendingUpdateGood(); err != nil {
+		logger.Warn("Failed to mark pending update good: %v", err)
+	} else {
+		logger.Info("Strux update state is good for this boot")
+	}
+}
+
 // launchProduction launches Cage with production settings
 func launchProduction() error {
 	logger := NewLogger("Production")
@@ -292,12 +305,6 @@ func launchProduction() error {
 	cage := CageLauncherInstance
 	if !cage.WaitForBackend(60 * time.Second) {
 		return ErrBackendNotReady
-	}
-
-	if err := markPendingUpdateGood(); err != nil {
-		logger.Warn("Failed to mark pending update good: %v", err)
-	} else {
-		logger.Info("Strux update state is good for this boot")
 	}
 
 	logger.Info("Launching with resolution: %s", resolution)

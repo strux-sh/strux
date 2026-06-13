@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto"
 	"crypto/rsa"
@@ -15,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,11 +25,15 @@ import (
 
 const (
 	struxDataDir       = "/strux-data/strux"
-	bootEnvPath        = struxDataDir + "/boot.env"
-	bootEnvBackupPath  = struxDataDir + "/boot.env.bak"
+	dataBootScriptPath = struxDataDir + "/boot.scr"
+	bootEnvPath        = struxDataDir + "/BOOTENV.TXT"
+	bootEnvBackupPath  = struxDataDir + "/BOOTBAK.TXT"
+	legacyBootEnvPath  = struxDataDir + "/boot.env"
+	legacyBootEnvBak   = struxDataDir + "/boot.env.bak"
 	updateStatePath    = struxDataDir + "/update-state.json"
 	updateProgressPath = "/run/strux/update-progress.json"
 	projectInfoPath    = "/etc/strux/project.json"
+	projectBootScript  = "/etc/strux/boot.scr"
 	updatePublicKey    = "/etc/strux/update.pub"
 )
 
@@ -224,7 +230,7 @@ func parseBootEnv(data []byte) (bootEnv, error) {
 }
 
 func readBootEnv() (bootEnv, error) {
-	for _, path := range []string{bootEnvPath, bootEnvBackupPath} {
+	for _, path := range []string{bootEnvPath, bootEnvBackupPath, legacyBootEnvPath, legacyBootEnvBak} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -236,6 +242,30 @@ func readBootEnv() (bootEnv, error) {
 	}
 
 	return bootEnv{}, fmt.Errorf("no valid Strux boot env found")
+}
+
+func migrateBootDataFiles() error {
+	if data, err := os.ReadFile(projectBootScript); err == nil {
+		current, readErr := os.ReadFile(dataBootScriptPath)
+		if readErr != nil || !bytes.Equal(current, data) {
+			if err := writeStateFile(dataBootScriptPath, data, 0644); err != nil {
+				return fmt.Errorf("install data boot script: %w", err)
+			}
+		}
+	}
+
+	if _, err := os.Stat(bootEnvPath); err == nil {
+		return nil
+	}
+
+	env, err := readBootEnv()
+	if err != nil {
+		return nil
+	}
+	if err := writeBootEnvRedundant(env); err != nil {
+		return fmt.Errorf("migrate boot env filenames: %w", err)
+	}
+	return nil
 }
 
 func renderBootEnv(env bootEnv) []byte {
@@ -255,7 +285,7 @@ func writeStateFile(path string, data []byte, mode os.FileMode) error {
 	}
 
 	// /strux-data is FAT so U-Boot can read it. Avoid temp-file + rename
-	// sequences here; redundant boot.env files provide the recovery path.
+	// sequences here; redundant boot env files provide the recovery path.
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
@@ -338,7 +368,7 @@ func markPendingUpdateGood() error {
 
 	env, err := readBootEnv()
 	if err != nil {
-		return nil
+		return err
 	}
 
 	if env.Pending == "" && env.Active == slot {
@@ -376,6 +406,41 @@ func slotDevice(slot string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown slot %q", slot)
 	}
+}
+
+func slotFilesystemLabel(slot string) (string, error) {
+	switch slot {
+	case "A":
+		return "strux-rootfs-a", nil
+	case "B":
+		return "strux-rootfs-b", nil
+	default:
+		return "", fmt.Errorf("unknown slot %q", slot)
+	}
+}
+
+func relabelRootfsSlot(devicePath string, slot string) error {
+	label, err := slotFilesystemLabel(slot)
+	if err != nil {
+		return err
+	}
+
+	e2label, err := exec.LookPath("e2label")
+	if err != nil {
+		return fmt.Errorf("e2label not found: %w", err)
+	}
+
+	output, err := exec.Command(e2label, devicePath, label).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("e2label %s %s failed: %w: %s", devicePath, label, err, strings.TrimSpace(string(output)))
+	}
+
+	if file, err := os.OpenFile(devicePath, os.O_RDONLY, 0600); err == nil {
+		_ = file.Sync()
+		_ = file.Close()
+	}
+
+	return nil
 }
 
 func loadUpdatePublicKey(path string) (*rsa.PublicKey, error) {
@@ -495,6 +560,29 @@ func writeRootfsPayloadToSlot(src io.Reader, destPath string, expectedSize int64
 	actualSHA256 := fmt.Sprintf("%x", hasher.Sum(nil))
 	if !strings.EqualFold(actualSHA256, expectedSHA256) {
 		return fmt.Errorf("payload sha256 mismatch")
+	}
+	return nil
+}
+
+func verifyRootfsSlotContents(devicePath string, expectedSize int64, expectedSHA256 string) error {
+	device, err := os.Open(devicePath)
+	if err != nil {
+		return err
+	}
+	defer device.Close()
+
+	hasher := sha256.New()
+	read, err := io.CopyN(hasher, device, expectedSize)
+	if err != nil {
+		return fmt.Errorf("read slot for verification: %w", err)
+	}
+	if read != expectedSize {
+		return fmt.Errorf("slot verification size mismatch: manifest=%d actual=%d", expectedSize, read)
+	}
+
+	actualSHA256 := fmt.Sprintf("%x", hasher.Sum(nil))
+	if !strings.EqualFold(actualSHA256, expectedSHA256) {
+		return fmt.Errorf("slot verification sha256 mismatch")
 	}
 	return nil
 }
@@ -624,6 +712,34 @@ func streamInstallUpdateBundle(source string, compressedBundle io.Reader, progre
 			}
 			if err := writeRootfsPayloadToSlot(tarReader, devicePath, manifest.Payload.Size, manifest.Payload.SHA256, progressWriter); err != nil {
 				return systemUpdateResult{Status: "error", Message: "write inactive slot: " + err.Error(), Slot: targetSlot, Version: manifest.Version}
+			}
+			if progress != nil {
+				progress(systemUpdateProgress{
+					Status:       "installing",
+					Progress:     100,
+					Message:      "Verifying inactive rootfs",
+					BytesWritten: manifest.Payload.Size,
+					TotalBytes:   manifest.Payload.Size,
+					Slot:         targetSlot,
+					Version:      manifest.Version,
+				})
+			}
+			if err := verifyRootfsSlotContents(devicePath, manifest.Payload.Size, manifest.Payload.SHA256); err != nil {
+				return systemUpdateResult{Status: "error", Message: "verify inactive slot: " + err.Error(), Slot: targetSlot, Version: manifest.Version}
+			}
+			if progress != nil {
+				progress(systemUpdateProgress{
+					Status:       "installing",
+					Progress:     100,
+					Message:      "Relabeling inactive rootfs",
+					BytesWritten: manifest.Payload.Size,
+					TotalBytes:   manifest.Payload.Size,
+					Slot:         targetSlot,
+					Version:      manifest.Version,
+				})
+			}
+			if err := relabelRootfsSlot(devicePath, targetSlot); err != nil {
+				return systemUpdateResult{Status: "error", Message: "relabel inactive slot: " + err.Error(), Slot: targetSlot, Version: manifest.Version}
 			}
 			if progress != nil {
 				progress(systemUpdateProgress{

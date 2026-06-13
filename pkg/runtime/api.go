@@ -22,6 +22,11 @@ func (rt *Runtime) Dev() *api.DevService {
 	return &api.DevService{}
 }
 
+// Network returns Strux-owned generic network APIs backed by the active BSP.
+func (rt *Runtime) Network() *api.NetworkService {
+	return &api.NetworkService{}
+}
+
 // Project returns Strux project image metadata APIs.
 func (rt *Runtime) Project() *api.ProjectService {
 	return &api.ProjectService{}
@@ -30,6 +35,11 @@ func (rt *Runtime) Project() *api.ProjectService {
 // Update returns Strux-owned system update state APIs.
 func (rt *Runtime) Update() *api.UpdateService {
 	return &api.UpdateService{}
+}
+
+// WiFi returns Strux-owned Wi-Fi APIs backed by the active BSP.
+func (rt *Runtime) WiFi() *api.WiFiService {
+	return &api.WiFiService{}
 }
 
 // Capabilities returns Strux-owned capabilities APIs backed by the active BSP.
@@ -46,6 +56,14 @@ func RegisterDisplayProvider(provider DisplayProvider) {
 	api.RegisterDisplayProvider(provider)
 }
 
+func RegisterNetworkProvider(provider NetworkProvider) {
+	api.RegisterNetworkProvider(provider)
+}
+
+func RegisterWiFiProvider(provider WiFiProvider) {
+	api.RegisterWiFiProvider(provider)
+}
+
 // ----------------------------------------------------------------------------
 
 // registerBuiltinExtensions registers all built-in Strux framework extensions
@@ -55,8 +73,10 @@ func (rt *Runtime) registerBuiltinExtensions() {
 	rt.registerStruxAPI(api.BootNamespace, rt.Boot())
 	rt.registerStruxAPI(api.DevNamespace, rt.Dev())
 	rt.registerStruxAPI(api.DisplayNamespace, rt.Display())
+	rt.registerStruxAPI(api.NetworkNamespace, rt.Network())
 	rt.registerStruxAPI(api.ProjectNamespace, rt.Project())
 	rt.registerStruxAPI(api.UpdateNamespace, rt.Update())
+	rt.registerStruxAPI(api.WiFiNamespace, rt.WiFi())
 	rt.registerStruxAPI(api.CapabilitiesNamespace, rt.Capabilities())
 
 	// ----------------------------------------------------------------------------
