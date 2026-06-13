@@ -5,11 +5,20 @@ import { viteBundler } from '@vuepress/bundler-vite'
 export default defineUserConfig({
   lang: 'en-US',
 
+  // Base path is configurable so the same site can be published at the root
+  // (latest) or under a versioned/preview subfolder. Defaults to "/" for
+  // local development. The CI workflow sets DOCS_BASE per deployment target,
+  // e.g. "/strux/", "/strux/v0.1.1/" or "/strux/preview/my-branch/".
+  base: process.env.DOCS_BASE || '/',
+
   title: 'Strux OS Documentation',
   description: 'A framework for building kiosk-style Linux operating systems.',
 
   head: [
     ['link', { rel: 'icon', href: '/strux-icon.svg' }],
+    // Absolute URL of the versions manifest used by the version switcher.
+    // Set by CI; empty locally so the switcher simply hides itself.
+    ['meta', { name: 'docs-versions-url', content: process.env.DOCS_VERSIONS_URL || '' }],
   ],
 
   theme: defaultTheme({
