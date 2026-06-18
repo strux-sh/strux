@@ -20,7 +20,7 @@ A framework for building kiosk-style operating systems. Strux enables developers
 
 | Section | Description | |
 |---------|-------------|---|
-| 🚀 **[Guide](https://strux-sh.github.io/strux/guide/introduction)** | Step-by-step from install to flashing your first image | [Get Started →](https://strux-sh.github.io/strux/guide/getting-started) |
+| 🚀 **[Guide](https://strux-sh.github.io/strux/guide/introduction)** | Step-by-step from install to flashing your first image | [Get Started →](https://strux-sh.github.io/strux/guide/introduction) |
 | 🧠 **[Concepts](https://strux-sh.github.io/strux/concepts/overview)** | How the build pipeline, caching, and display stack work | [Learn More →](https://strux-sh.github.io/strux/concepts/build-pipeline) |
 | 🔧 **[BSP Development](https://strux-sh.github.io/strux/bsp/guide/introduction)** | Write Board Support Packages for custom hardware | [Build a BSP →](https://strux-sh.github.io/strux/bsp/guide/writing-a-bsp) |
 | 📖 **[Reference](https://strux-sh.github.io/strux/reference/cli)** | CLI, `strux.yaml`, Go runtime, and frontend API specs | [Browse →](https://strux-sh.github.io/strux/reference/strux-yaml) |

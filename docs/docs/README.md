@@ -6,7 +6,7 @@ heroAlt: Strux OS - Build kiosk-style Linux operating systems
 heroHeight: 560
 actions:
   - text: Get Started
-    link: /guide/getting-started.html
+    link: /guide/introduction.html
     type: primary
 
   - text: Concepts
