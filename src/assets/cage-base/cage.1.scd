@@ -33,6 +33,12 @@ activities outside the scope of the running application are prevented.
 *-v*
 	Show the version number and exit.
 
+*--splash-image* <path>
+	Show splash screen from a PNG image.
+
+*--only-display-image* <path>
+	Display only a PNG image and do not launch applications.
+
 # ENVIRONMENT
 
 _DISPLAY_

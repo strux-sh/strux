@@ -15,6 +15,7 @@
 //   - "ssh-exit"             { sessionID: string }
 //   - "system-restart"
 //   - "system-restart-strux"
+//   - "system-update"         { url?: string, path?: string }
 //   - "screen-request"       { outputName, serverHostURL }
 //   - "screen-picture"       { outputName }
 //
@@ -22,6 +23,8 @@
 //   - "binary-requested"
 //   - "binary-ack"           { status, binary, currentChecksum?, receivedChecksum? }
 //   - "component-ack"        { status, message, destPath }
+//   - "system-update-ack"    { status, message, slot?, version? }
+//   - "update-progress"      { status, progress, message?, bytesWritten?, totalBytes?, slot?, version? }
 //   - "device-info"          { ip, inspectorPorts, outputs? }
 //   - "log-line"             { type, line, timestamp }
 //   - "ssh-output"           { sessionID, data }
@@ -128,6 +131,14 @@ type ComponentArchivePayload struct {
 	ExtractPath string `json:"extractPath"` // Target directory to replace on device
 }
 
+// SystemUpdatePayload represents a signed Strux full-rootfs update bundle.
+// URL responses are streamed through the installer. Path can point at a local
+// .struxb already staged on the device.
+type SystemUpdatePayload struct {
+	URL  string `json:"url,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
 // ComponentAckPayload represents the acknowledgment of a component update
 type ComponentAckPayload struct {
 	Status   string `json:"status"` // "updated", "error"
@@ -140,6 +151,14 @@ type ComponentArchiveAckPayload struct {
 	Status      string `json:"status"` // "updated", "error"
 	Message     string `json:"message"`
 	ExtractPath string `json:"extractPath"`
+}
+
+// SystemUpdateAckPayload reports update installation status.
+type SystemUpdateAckPayload struct {
+	Status  string `json:"status"` // "pending", "error"
+	Message string `json:"message"`
+	Slot    string `json:"slot,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 // DeviceInfoInspectorPort describes one inspector port for one monitor path
@@ -360,6 +379,16 @@ func (s *SocketClient) setupEventHandlers(ws *WSClient) {
 			return
 		}
 		s.handleComponentArchiveUpdate(archivePayload)
+	})
+
+	ws.On("system-update", func(payload json.RawMessage) {
+		var updatePayload SystemUpdatePayload
+		if err := json.Unmarshal(payload, &updatePayload); err != nil {
+			s.logger.Error("Failed to parse system-update payload: %v", err)
+			s.SendSystemUpdateAck("error", "Failed to parse update payload: "+err.Error(), "", "")
+			return
+		}
+		s.handleSystemUpdate(updatePayload)
 	})
 
 	// Handle system-restart-strux event
@@ -705,6 +734,47 @@ func (s *SocketClient) handleComponentArchiveUpdate(payload ComponentArchivePayl
 	s.SendComponentArchiveAck("updated", fmt.Sprintf("Updated at %s", payload.ExtractPath), payload.ExtractPath)
 }
 
+// handleSystemUpdate installs a signed full-rootfs update bundle.
+func (s *SocketClient) handleSystemUpdate(payload SystemUpdatePayload) {
+	s.logger.Info("Received system update")
+
+	if payload.Path == "" && payload.URL == "" {
+		message := "system-update payload requires url or path"
+		s.SendSystemUpdateAck("error", message, "", "")
+		s.SendSystemUpdateProgress(systemUpdateProgress{Status: "failed", Message: message})
+		return
+	}
+
+	s.SendSystemUpdateAck("pending", "System update accepted", "", "")
+	s.SendSystemUpdateProgress(systemUpdateProgress{
+		Status:  "pending",
+		Message: "System update accepted",
+	})
+
+	go func() {
+		progress := func(updateProgress systemUpdateProgress) {
+			s.SendSystemUpdateProgress(updateProgress)
+		}
+
+		var result systemUpdateResult
+		if payload.Path != "" {
+			result = installUpdateBundle(payload.Path, progress)
+		} else {
+			result = downloadAndInstallUpdateBundle(payload.URL, progress)
+		}
+
+		if result.Status == "error" {
+			s.SendSystemUpdateProgress(systemUpdateProgress{
+				Status:  "failed",
+				Message: result.Message,
+				Slot:    result.Slot,
+				Version: result.Version,
+			})
+			s.logger.Error("System update failed: %s", result.Message)
+		}
+	}()
+}
+
 // SendComponentAck sends a component update acknowledgment to the server
 func (s *SocketClient) SendComponentAck(status, message, destPath string) {
 	if s.ws == nil {
@@ -736,6 +806,39 @@ func (s *SocketClient) SendComponentArchiveAck(status, message, extractPath stri
 
 	if err := s.ws.Emit("component-archive-ack", payload); err != nil {
 		s.logger.Error("Failed to send component archive ack: %v", err)
+	}
+}
+
+// SendSystemUpdateAck sends a system update acknowledgment to the server.
+func (s *SocketClient) SendSystemUpdateAck(status, message, slot, version string) {
+	if s.ws == nil {
+		return
+	}
+
+	payload := SystemUpdateAckPayload{
+		Status:  status,
+		Message: message,
+		Slot:    slot,
+		Version: version,
+	}
+
+	if err := s.ws.Emit("system-update-ack", payload); err != nil {
+		s.logger.Error("Failed to send system update ack: %v", err)
+	}
+}
+
+// SendSystemUpdateProgress sends update install progress to the server.
+func (s *SocketClient) SendSystemUpdateProgress(payload systemUpdateProgress) {
+	if err := writeUpdateProgress(payload); err != nil {
+		s.logger.Error("Failed to persist system update progress: %v", err)
+	}
+
+	if s.ws == nil {
+		return
+	}
+
+	if err := s.ws.Emit("update-progress", payload); err != nil {
+		s.logger.Error("Failed to send system update progress: %v", err)
 	}
 }
 

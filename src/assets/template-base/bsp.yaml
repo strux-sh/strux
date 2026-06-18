@@ -9,6 +9,7 @@ bsp:
     env:
       - WLR_DRM_NO_MODIFIERS=1
       - WLR_NO_HARDWARE_CURSORS=1
+      # - STRUX_OUTPUT_TRANSFORM=90
 
   arch: ${hostArch}
   hostname: ${projectName}
@@ -74,7 +75,8 @@ bsp:
   #     - before_bundle     After post-processing, before make_image
   #     - make_image        Creates the final disk image for target device
   #
-  #   FLASHING (handled separately by `strux flash` command):
+  #   FLASHING (handled separately by `strux flash` command, run on the host):
+  #     - flash_script_tool Script for downloading/compiling host flashing tools
   #     - flash_script      Script for flashing to device (not run during build)
   #
   # Environment variables available to scripts:
@@ -83,6 +85,8 @@ bsp:
   #   - PROJECT_DIST_FOLDER           dist/ directory
   #   - PROJECT_DIST_CACHE_FOLDER     BSP-specific cache: dist/cache/{bsp}/ directory
   #   - PROJECT_DIST_OUTPUT_FOLDER    BSP-specific output: dist/output/{bsp}/ directory
+  #   - PROJECT_DIST_FLASH_FOLDER     BSP-specific flash workspace: dist/flash/{bsp}/ directory
+  #   - FLASH_DIR                     Alias for PROJECT_DIST_FLASH_FOLDER
   #   - PROJECT_DIST_ARTIFACTS_FOLDER dist/artifacts/ directory (shared)
   #   - SHARED_CACHE_DIR              Shared cache: dist/cache/ (for cross-BSP artifacts)
   #   - BSP_CACHE_DIR                 Alias for PROJECT_DIST_CACHE_FOLDER
@@ -152,6 +156,10 @@ bsp:
     #     - cache/bootloader/u-boot.bin
     #   depends_on:
     #     - ./dts/board-u-boot.dts
+    #
+    # - location: ./scripts/prepare-flash-tool.sh
+    #   step: flash_script_tool
+    #   description: "Prepare flashing tools"
     #
     # - location: ./scripts/flash-to-sd.sh
     #   step: flash_script
@@ -286,6 +294,8 @@ bsp:
       # defconfig: defconfig
 
       # --- Kernel Fragments to apply ---
+      # --- Strux dev over USB requires USB gadget Ethernet support in the BSP kernel. ---
+      # --- For macOS/Linux hosts, enable ECM or NCM; for Windows hosts, enable RNDIS. ---
       # fragments:
       #   - "./configs/kernel-networking.config"  # file path
       #   - "./configs/kernel-usb.config"         # another file
@@ -293,6 +303,13 @@ bsp:
       #       CONFIG_USB_SUPPORT=y
       #       CONFIG_USB_XHCI_HCD=y
       #       CONFIG_NETWORK_FILESYSTEMS=y
+      #   - |  # USB debug Ethernet gadget support for `strux dev` over USB
+      #       CONFIG_USB_GADGET=y
+      #       CONFIG_USB_LIBCOMPOSITE=y
+      #       CONFIG_USB_CONFIGFS=y
+      #       CONFIG_USB_CONFIGFS_ECM=y
+      #       CONFIG_USB_CONFIGFS_NCM=y
+      #       CONFIG_USB_CONFIGFS_RNDIS=y
       
 
       # --- Kernel Patches to apply ---

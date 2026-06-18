@@ -40,12 +40,14 @@ interface ClientMessageScreenRequest { type: "screen-request", payload: { output
 interface ClientMessageScreenPicture { type: "screen-picture", payload: { outputName: string }}
 interface ClientMessageScreenPictureReceived { type: "screen-picture-received", payload: { outputName: string, data: string, width: number, height: number }}
 
-// Update (Future use)
-type UpdateStatus = "pending" | "downloading" | "installing" | "completed" | "failed"
+// Update
+export type UpdateStatus = "pending" | "downloading" | "installing" | "completed" | "failed"
 
 interface ClientMessageUpdate { type: "update", payload: { url: string} }
+interface ClientMessageSystemUpdate { type: "system-update", payload: { url?: string, path?: string }}
+interface ClientMessageSystemUpdateAck { type: "system-update-ack", payload: { status: "pending" | "error", message: string, slot?: string, version?: string }}
 interface ClientMessageUpdateStatus { type: "update-status", payload: { status: UpdateStatus, message?: string }}
-interface ClientMessageUpdateProgress { type: "update-progress", payload: { progress: number, status: UpdateStatus}}
+interface ClientMessageUpdateProgress { type: "update-progress", payload: { progress: number, status: UpdateStatus, message?: string, bytesWritten?: number, totalBytes?: number, slot?: string, version?: string }}
 interface ClientMessageUpdateCheckRequest { type: "update-check-request" }
 interface ClientMessageUpdateCheckResponse { type: "update-check-response", payload: { available: boolean, version: string, checksum: string }}
 
@@ -70,6 +72,7 @@ export type ClientMessageSendable = |
     ClientMessageDeviceInfoRequested |
     ClientMessageScreenRequest |
     ClientMessageUpdate |
+    ClientMessageSystemUpdate |
     ClientMessageUpdateStatus |
     ClientMessageUpdateProgress |
     ClientMessageUpdateCheckResponse |
@@ -89,6 +92,8 @@ export type ClientMessageReceivable = |
     ClientMessageComponentAck |
     ClientMessageComponentArchiveAck |
     ClientMessageDeviceInfo |
+    ClientMessageSystemUpdateAck |
+    ClientMessageUpdateProgress |
     ClientMessageUpdateCheckRequest |
     ClientMessageSSHOutput |
     ClientMessageSSHExitReceived |

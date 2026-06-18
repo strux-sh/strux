@@ -298,7 +298,7 @@ async function detectWindowsUsb(): Promise<USBDevice[]> {
         "-NoProfile",
         "-Command",
         "Get-PnpDevice -Class USB -PresentOnly | Select-Object InstanceId,FriendlyName | ConvertTo-Json -Compress"
-    ].join(" ")
+    ]
 
     const result = await Runner.runCommand(psCommand, {
         message: "Detecting USB devices...",

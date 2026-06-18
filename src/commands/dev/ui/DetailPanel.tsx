@@ -31,7 +31,6 @@ interface DetailPanelProps {
     availableCols?: number
 }
 
-
 export function DetailPanel({ store, resource, logs, focused, filter, sshActive, onSSHInput, onSSHGetScrollback, onSSHDetach, availableRows, availableCols }: DetailPanelProps) {
 
     // Show terminal when SSH session is active on device resource
@@ -103,6 +102,9 @@ export function DetailPanel({ store, resource, logs, focused, filter, sshActive,
 
     }
 
+    const sshNoticeRows = store.sshSessionIds.length > 0 && !store.sshSessionID && resource.name === "device" ? 1 : 0
+    const logHeightOffset = 7 + sshNoticeRows
+
     return (
         <Box
             flexDirection="column"
@@ -160,10 +162,11 @@ export function DetailPanel({ store, resource, logs, focused, filter, sshActive,
                 logs={logs}
                 focused={focused}
                 filter={filter}
-                height={availableRows ? availableRows - (store.sshSessionIds.length > 0 && !store.sshSessionID && resource.name === "device" ? 8 : 7) : undefined}
+                height={availableRows ? availableRows - logHeightOffset : undefined}
                 width={availableCols ? availableCols - 4 : undefined}
                 rowOffset={9}
                 colOffset={33}
+                updateProgress={store.systemUpdateProgress}
             />
 
         </Box>

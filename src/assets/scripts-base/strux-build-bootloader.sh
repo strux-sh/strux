@@ -346,10 +346,49 @@ else
     else
         # Clone fresh
         if [ -n "$GIT_REF" ]; then
-            git clone --depth 1 --branch "$GIT_REF" "$SOURCE_URL" "$BOOTLOADER_SOURCE_DIR" || {
-                echo "Error: Failed to clone bootloader repository with ref: $GIT_REF"
-                exit 1
-            }
+            # --depth 1 --branch only works for branches and tags. If the ref
+            # is a commit hash, fall back to a shallow fetch of that commit
+            # (GitHub supports uploadpack.allowReachableSHA1InWant), and as a
+            # last resort a full clone + checkout.
+            if git clone --depth 1 --branch "$GIT_REF" "$SOURCE_URL" "$BOOTLOADER_SOURCE_DIR" 2>/dev/null; then
+                progress "Shallow clone succeeded (branch/tag: $GIT_REF)"
+            else
+                progress "Shallow branch clone failed, trying commit hash fetch..."
+                rm -rf "$BOOTLOADER_SOURCE_DIR"
+                mkdir -p "$BOOTLOADER_SOURCE_DIR"
+                cd "$BOOTLOADER_SOURCE_DIR"
+                git init
+                # The cache dir is a bind mount; mark it safe BEFORE fetching
+                # or git aborts with "detected dubious ownership".
+                git config --global --add safe.directory "$BOOTLOADER_SOURCE_DIR" 2>/dev/null || true
+                git remote add origin "$SOURCE_URL"
+                # Fetching by commit SHA needs wire protocol v2 on GitHub.
+                FETCH_ERR=$(mktemp)
+                if git -c protocol.version=2 fetch --depth 1 origin "$GIT_REF" 2>"$FETCH_ERR"; then
+                    rm -f "$FETCH_ERR"
+                    git checkout FETCH_HEAD || {
+                        echo "Error: Failed to checkout fetched commit: $GIT_REF"
+                        exit 1
+                    }
+                    progress "Shallow commit fetch succeeded ($GIT_REF)"
+                else
+                    echo "Shallow commit fetch failed:" >&2
+                    cat "$FETCH_ERR" >&2 || true
+                    rm -f "$FETCH_ERR"
+                    progress "Shallow fetch not supported, falling back to full clone..."
+                    cd /
+                    rm -rf "$BOOTLOADER_SOURCE_DIR"
+                    git clone "$SOURCE_URL" "$BOOTLOADER_SOURCE_DIR" || {
+                        echo "Error: Failed to clone bootloader repository with ref: $GIT_REF"
+                        exit 1
+                    }
+                    cd "$BOOTLOADER_SOURCE_DIR"
+                    git checkout "$GIT_REF" || {
+                        echo "Error: Failed to checkout ref: $GIT_REF"
+                        exit 1
+                    }
+                fi
+            fi
         else
             git clone --depth 1 "$SOURCE_URL" "$BOOTLOADER_SOURCE_DIR" || {
                 echo "Error: Failed to clone bootloader repository"

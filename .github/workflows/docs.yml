@@ -1,11 +1,28 @@
 name: docs
 
 on:
-  # trigger deployment on every push to main branch
   push:
-    branches: [main]
-  # trigger deployment manually
+    branches:
+      - main
+      - "feature/**"
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  # trigger deployment manually (uses the branch it is run from)
   workflow_dispatch:
+
+# Required so the workflow can push the built site to the gh-pages branch.
+permissions:
+  contents: write
+
+# Serialize deployments so concurrent runs don't race on the gh-pages branch.
+concurrency:
+  group: docs-pages
+  cancel-in-progress: false
 
 jobs:
   docs:
@@ -17,33 +34,170 @@ jobs:
           # fetch all commits to get last updated time or other git log info
           fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # choose node.js version to use
           node-version: 22
-          # cache deps for pnpm
-          cache: pnpm
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
 
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        working-directory: docs
+        run: npm ci
 
-      # run build script
-      - name: Build VuePress site
-        run: pnpm docs:build
+      # Work out what we are publishing and where, based on the branch.
+      #   main          -> root "latest"   (/<repo>/) + pinned snapshot (/<repo>/vX.Y.Z/)
+      #   feature/<name> -> preview         (/<repo>/preview/<name>/)
+      #   any other      -> preview         (/<repo>/preview/<sanitized-branch>/)
+      - name: Resolve deployment target
+        id: meta
+        run: |
+          set -euo pipefail
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          PAGES_BASE="/${REPO_NAME}"
+          VERSION="$(node -p "require('./docs/package.json').version")"
+          BRANCH="${GITHUB_REF_NAME}"
 
-      # please check out the docs of the workflow for more details
-      # @see https://github.com/crazy-max/ghaction-github-pages
-      - name: Deploy to GitHub Pages
-        uses: crazy-max/ghaction-github-pages@v4
-        with:
-          # deploy to gh-pages branch
-          target_branch: gh-pages
-          # deploy the default output dir of VuePress
-          build_dir: docs/.vuepress/dist
+          if [ "$BRANCH" = "main" ]; then
+            KIND="release"
+            # latest lives at the pages root; pinned snapshot under /vX.Y.Z/
+            LATEST_BASE="${PAGES_BASE}/"
+            VERSION_DIR="v${VERSION}"
+            DEPLOY_BASE="${PAGES_BASE}/${VERSION_DIR}/"
+          else
+            KIND="preview"
+            SLUG="${BRANCH#feature/}"
+            SLUG="$(printf '%s' "$SLUG" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+            [ -n "$SLUG" ] || SLUG="branch"
+            LATEST_BASE=""
+            VERSION_DIR="preview/${SLUG}"
+            DEPLOY_BASE="${PAGES_BASE}/${VERSION_DIR}/"
+          fi
+
+          {
+            echo "repo_name=${REPO_NAME}"
+            echo "pages_base=${PAGES_BASE}"
+            echo "version=${VERSION}"
+            echo "branch=${BRANCH}"
+            echo "kind=${KIND}"
+            echo "latest_base=${LATEST_BASE}"
+            echo "version_dir=${VERSION_DIR}"
+            echo "deploy_base=${DEPLOY_BASE}"
+            echo "versions_url=${PAGES_BASE}/versions.json"
+          } >> "$GITHUB_OUTPUT"
+
+      # On pull requests we only verify the build succeeds; nothing is published.
+      - name: Build (PR verification)
+        if: github.event_name == 'pull_request'
+        working-directory: docs
         env:
-          # @see https://docs.github.com/en/actions/reference/authentication-in-a-workflow#about-the-github_token-secret
+          DOCS_BASE: ${{ steps.meta.outputs.pages_base }}/
+          DOCS_VERSIONS_URL: ${{ steps.meta.outputs.versions_url }}
+        run: npm run docs:build
+
+      # Build "latest" (only on main) into the staging root.
+      - name: Build latest (root)
+        if: github.event_name != 'pull_request' && steps.meta.outputs.kind == 'release'
+        working-directory: docs
+        env:
+          DOCS_BASE: ${{ steps.meta.outputs.latest_base }}
+          DOCS_VERSIONS_URL: ${{ steps.meta.outputs.versions_url }}
+        run: |
+          set -euo pipefail
+          npm run docs:build
+          rm -rf "$GITHUB_WORKSPACE/staging-latest"
+          cp -r docs/.vuepress/dist "$GITHUB_WORKSPACE/staging-latest"
+
+      # Build the versioned/preview copy into its own staging dir.
+      - name: Build versioned copy
+        if: github.event_name != 'pull_request'
+        working-directory: docs
+        env:
+          DOCS_BASE: ${{ steps.meta.outputs.deploy_base }}
+          DOCS_VERSIONS_URL: ${{ steps.meta.outputs.versions_url }}
+        run: |
+          set -euo pipefail
+          npm run docs:build
+          rm -rf "$GITHUB_WORKSPACE/staging-version"
+          cp -r docs/.vuepress/dist "$GITHUB_WORKSPACE/staging-version"
+
+      - name: Publish to gh-pages
+        if: github.event_name != 'pull_request'
+        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KIND: ${{ steps.meta.outputs.kind }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION_DIR: ${{ steps.meta.outputs.version_dir }}
+          DEPLOY_BASE: ${{ steps.meta.outputs.deploy_base }}
+          BRANCH: ${{ steps.meta.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          WORK="$RUNNER_TEMP/gh-pages"
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Clone the existing gh-pages branch, or start an empty one.
+          if git clone --branch gh-pages --depth 1 "$REMOTE" "$WORK" 2>/dev/null; then
+            echo "Cloned existing gh-pages branch."
+          else
+            echo "gh-pages branch not found; creating a fresh one."
+            git clone --depth 1 "$REMOTE" "$WORK"
+            git -C "$WORK" checkout --orphan gh-pages
+            git -C "$WORK" rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          git -C "$WORK" config user.name "github-actions[bot]"
+          git -C "$WORK" config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Replace only the versioned/preview subfolder, preserving siblings.
+          rm -rf "${WORK:?}/${VERSION_DIR}"
+          mkdir -p "$WORK/${VERSION_DIR}"
+          cp -r "$GITHUB_WORKSPACE/staging-version/." "$WORK/${VERSION_DIR}/"
+
+          # On main, refresh the root "latest" site without touching version dirs.
+          if [ "$KIND" = "release" ]; then
+            rsync -a --delete \
+              --exclude '/.git/' \
+              --exclude '/v[0-9]*' \
+              --exclude '/preview' \
+              --exclude '/versions.json' \
+              --exclude '/CNAME' \
+              "$GITHUB_WORKSPACE/staging-latest/" "$WORK/"
+          fi
+
+          # GitHub Pages must not run Jekyll over the VuePress output.
+          touch "$WORK/.nojekyll"
+
+          # Update the versions manifest consumed by the in-page switcher.
+          MANIFEST="$WORK/versions.json" \
+          KIND="$KIND" VERSION="$VERSION" VERSION_DIR="$VERSION_DIR" \
+          DEPLOY_BASE="$DEPLOY_BASE" BRANCH="$BRANCH" \
+          node <<'NODE'
+          const fs = require('fs')
+          const path = process.env.MANIFEST
+          let data = { latest: null, releases: [], previews: [] }
+          try { data = { ...data, ...JSON.parse(fs.readFileSync(path, 'utf8')) } } catch {}
+          data.releases ||= []
+          data.previews ||= []
+
+          if (process.env.KIND === 'release') {
+            data.latest = process.env.VERSION
+            data.releases = data.releases.filter((r) => r.version !== process.env.VERSION)
+            data.releases.push({ version: process.env.VERSION, path: process.env.DEPLOY_BASE })
+            data.releases.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))
+          } else {
+            data.previews = data.previews.filter((p) => p.branch !== process.env.BRANCH)
+            data.previews.push({ branch: process.env.BRANCH, path: process.env.DEPLOY_BASE })
+            data.previews.sort((a, b) => a.branch.localeCompare(b.branch))
+          }
+
+          fs.writeFileSync(path, JSON.stringify(data, null, 2) + '\n')
+          NODE
+
+          git -C "$WORK" add -A
+          if git -C "$WORK" diff --cached --quiet; then
+            echo "No documentation changes to publish."
+          else
+            git -C "$WORK" commit -m "docs: publish ${VERSION_DIR} (${GITHUB_SHA::7})"
+            git -C "$WORK" push origin gh-pages
+          fi

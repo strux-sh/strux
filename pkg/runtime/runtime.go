@@ -9,10 +9,34 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/strux-dev/strux/pkg/runtime/extension"
+	"github.com/strux-dev/strux/pkg/runtime/api"
 )
 
 const socketPath = "/tmp/strux-ipc.sock"
+
+const CapabilityDisplay = api.CapabilityDisplay
+const CapabilityNetwork = api.CapabilityNetwork
+const CapabilityWiFi = api.CapabilityWiFi
+
+type DisplayProvider = api.DisplayProvider
+type NetworkProvider = api.NetworkProvider
+type NetworkDefaultInterface = api.NetworkDefaultInterface
+type NetworkInterface = api.NetworkInterface
+type NetworkIPConfig = api.NetworkIPConfig
+type NetworkStatus = api.NetworkStatus
+type NetworkIPConfigRequest = api.NetworkIPConfigRequest
+type WiFiProvider = api.WiFiProvider
+type WiFiDefaultInterface = api.WiFiDefaultInterface
+type WiFiInterface = api.WiFiInterface
+type WiFiNetwork = api.WiFiNetwork
+type WiFiIPConfig = api.WiFiIPConfig
+type WiFiStatus = api.WiFiStatus
+type WiFiKnownNetwork = api.WiFiKnownNetwork
+type WiFiConnectRequest = api.WiFiConnectRequest
+type WiFiKnownNetworkRequest = api.WiFiKnownNetworkRequest
+type WiFiIPConfigRequest = api.WiFiIPConfigRequest
+type CapabilityInfo = api.CapabilityInfo
+type CapabilityMethodSpec = api.MethodSpec
 
 // ChannelHandshake is the first message sent by the WPE extension on each socket
 // to identify which channel the connection belongs to.
@@ -43,9 +67,20 @@ type Runtime struct {
 	stopChan   chan struct{}
 	structName string
 	pkgName    string
-	extensions *extension.Registry
+	extensions *Registry
 	events     *eventState
 }
+
+type registeredRuntimeExtension struct {
+	namespace    string
+	subNamespace string
+	instance     interface{}
+}
+
+var (
+	registeredRuntimeExtensionsMu sync.RWMutex
+	registeredRuntimeExtensions   []registeredRuntimeExtension
+)
 
 // Message represents a JSON-RPC style message
 type Message struct {
@@ -80,7 +115,7 @@ func New(app interface{}) *Runtime {
 		app:        app,
 		methods:    make(map[string]reflect.Value),
 		stopChan:   make(chan struct{}),
-		extensions: extension.NewRegistry(),
+		extensions: newRegistry(),
 		events:     newEventState(),
 	}
 
@@ -220,12 +255,6 @@ func (rt *Runtime) serializeTreeNode(node *structTreeNode) map[string]interface{
 	}
 
 	return result
-}
-
-// registerBuiltinExtensions registers all built-in Strux framework extensions
-func (rt *Runtime) registerBuiltinExtensions() {
-	rt.registerExtension(&extension.BootExtension{}, &extension.BootMethods{})
-	rt.registerExtension(&extension.DevExtension{}, extension.NewDevMethods())
 }
 
 // extractMetadata gets package and struct name from the app type
@@ -631,7 +660,68 @@ func (rt *Runtime) Stop() {
 	os.Remove(socketPath)
 }
 
-// registerExtension is an internal method for registering framework extensions
-func (rt *Runtime) registerExtension(ext extension.Extension, instance interface{}) error {
-	return rt.extensions.Register(ext, instance)
+// RegisterExtension registers an extension on this runtime instance.
+func (rt *Runtime) RegisterExtension(namespace, subNamespace string, instance interface{}) error {
+	if namespace == "" || subNamespace == "" {
+		return fmt.Errorf("namespace and sub-namespace cannot be empty")
+	}
+	if instance == nil {
+		return fmt.Errorf("extension %s.%s instance cannot be nil", namespace, subNamespace)
+	}
+	return rt.extensions.Register(namespace, subNamespace, instance)
+}
+
+// RegisterCustomExtension registers a process-wide custom BSP extension under window.strux.<name>.
+// It panics on invalid or duplicate registrations because it is intended for BSP init() functions.
+func RegisterCustomExtension(name string, instance interface{}) {
+	if err := RegisterExtension("strux", name, instance); err != nil {
+		panic(err)
+	}
+}
+
+func (rt *Runtime) registerStruxAPI(namespace string, instance interface{}) error {
+	return rt.extensions.Register("strux", namespace, instance)
+}
+
+func (rt *Runtime) registerProcessExtensions() {
+	registeredRuntimeExtensionsMu.RLock()
+	defer registeredRuntimeExtensionsMu.RUnlock()
+
+	for _, registered := range registeredRuntimeExtensions {
+		if err := rt.extensions.Register(registered.namespace, registered.subNamespace, registered.instance); err != nil {
+			fmt.Fprintf(os.Stderr, "Strux Runtime: failed to register extension %s.%s: %v\n",
+				registered.namespace,
+				registered.subNamespace,
+				err,
+			)
+		}
+	}
+}
+
+// RegisterExtension registers a process-wide extension provider. BSP packages can
+// call this from init() so every subsequently created Runtime exposes the methods
+// under window.<namespace>.<subNamespace>.
+func RegisterExtension(namespace, subNamespace string, instance interface{}) error {
+	if namespace == "" || subNamespace == "" {
+		return fmt.Errorf("namespace and sub-namespace cannot be empty")
+	}
+	if instance == nil {
+		return fmt.Errorf("extension %s.%s instance cannot be nil", namespace, subNamespace)
+	}
+
+	registeredRuntimeExtensionsMu.Lock()
+	defer registeredRuntimeExtensionsMu.Unlock()
+
+	for _, registered := range registeredRuntimeExtensions {
+		if registered.namespace == namespace && registered.subNamespace == subNamespace {
+			return fmt.Errorf("extension %s.%s already registered", namespace, subNamespace)
+		}
+	}
+
+	registeredRuntimeExtensions = append(registeredRuntimeExtensions, registeredRuntimeExtension{
+		namespace:    namespace,
+		subNamespace: subNamespace,
+		instance:     instance,
+	})
+	return nil
 }

@@ -16,6 +16,13 @@ The `strux dev` terminal interface has been rebuilt from the ground up. The old 
 - The resource list now includes nested device log streams (App, Cage, System Logs, Early Logs, Screen Logs, Client) alongside Vite, QEMU, Watcher, and Screen.
 - New filter mode (`/`) for log views, pause/resume watcher (`p`), and context-sensitive keybinds shown in the bottom command bar.
 - Config panel is accessible from any pane via `c`, with `Esc` to return.
+- The Config panel can now run host-side BSP flashing workflows and stream output into a dedicated Flash log view.
+
+### New: Host Flash Scripts
+
+- `strux flash [bsp]` runs BSP `flash_script_tool` scripts followed by `flash_script` scripts on the host, outside of the Docker builder.
+- Flash scripts run with `dist/flash/<bsp>` as their working directory so BSPs can prepare and reuse host flashing tools in a scoped workspace.
+- Flash scripts receive the standard BSP script environment plus `PROJECT_DIST_FLASH_FOLDER` and `FLASH_DIR`.
 
 ### New: Dev Protocol Refactor
 
@@ -67,11 +74,76 @@ build:
 **New CLI flag:**
 - `--local-builder` — Forces a local Dockerfile build instead of pulling from GHCR. Useful for offline work, custom Dockerfile modifications, or development on strux itself
 
+### New: USB Debug Ethernet for `strux dev`
+
+Strux dev images can now expose a USB Ethernet gadget from the device to the development machine. This gives `strux dev` a direct point-to-point network path over USB while preserving the existing Vite/WebSocket/browser workflow instead of inventing a custom USB transport.
+
+**How it works:**
+- The Strux client configures a Linux configfs USB gadget at boot with a fixed identity: vendor ID `0x1209`, product ID `0x5358`, manufacturer `Strux`, and product name `Strux USB Debug`.
+- The gadget exposes a USB Ethernet interface (`usb0`) and starts an embedded DHCP responder using `github.com/insomniacslk/dhcp`.
+- `dev.usb.subnet` controls the point-to-point subnet. The device uses the second usable address and leases the first usable address to the host. For example, `192.168.7.0/24` gives the host `192.168.7.1` and the device `192.168.7.2`.
+- When USB setup succeeds, the client prioritizes the USB host address for dev server discovery and disables mDNS for that session. If USB setup fails, the client logs the reason and falls back to the existing network discovery path.
+
+**Configuration:**
+```yaml
+dev:
+  usb:
+    enabled: true
+    subnet: 192.168.7.0/24
+```
+
+**BSP requirements:**
+- USB debug requires a USB peripheral/OTG-capable port. Host-only USB ports cannot expose the device as a USB Ethernet adapter.
+- The BSP kernel must enable USB gadget/configfs support and at least one USB Ethernet function. For macOS/Linux hosts, enable ECM or NCM; for Windows hosts, enable RNDIS.
+- The default BSP template now documents the required kernel fragment options:
+  `CONFIG_USB_GADGET`, `CONFIG_USB_LIBCOMPOSITE`, `CONFIG_USB_CONFIGFS`, `CONFIG_USB_CONFIGFS_ECM`, `CONFIG_USB_CONFIGFS_NCM`, and `CONFIG_USB_CONFIGFS_RNDIS`.
+
+### New: Project Build Scripts
+
+Projects can now run their own build scripts against the assembled root filesystem, without modifying the shared BSP. This is the home for app-specific image customization — installing a tool that isn't packaged, dropping in a binary, or running a one-off `chroot` step — that doesn't belong in a board support package shared across projects.
+
+Scripts are declared in `strux.yaml` and run at the new `rootfs_post` step, after the built-in rootfs post-processing and before image bundling:
+
+```yaml
+scripts:
+  - location: ./scripts/install-yt-dlp.sh
+    step: rootfs_post
+    description: "Install latest yt-dlp from GitHub releases"
+    # Optional caching, same rules as BSP scripts:
+    # depends_on: [./scripts/install-yt-dlp.sh]
+    # cached_generated_artifacts: [...]   # omit to always run
+```
+
+**Managed rootfs context:**
+- The harness extracts `rootfs-post.tar.gz`, mounts it for `chroot` (including the cross-arch QEMU static binary), runs the script, then repacks `rootfs-post.tar.gz` **in place** — so the BSP's `before_bundle`/`make_image` stages and the image transparently pick up the changes with no BSP edits.
+- The repack only happens on success: a failing project script aborts the build and leaves the rootfs untouched.
+- Because the repack is in-place, `rootfs_post` scripts must be **idempotent** (overwrite, don't append) — when the `rootfs-post` cache is warm the script may run against a rootfs that already contains its own previous output.
+
+**Helpers and environment:**
+- Scripts get the full build environment (`TARGET_ARCH`, `HOST_ARCH`, `BSP_NAME`, `PROJECT_NAME`, `PROJECT_VERSION`, `STRUX_VERSION`, splash/display vars) plus path variables (`PROJECT_DIR`, `BSP_CACHE_DIR`, …).
+- `$ROOTFS_DIR` points at the extracted rootfs, and these helper functions are provided: `run_in_chroot` / `strux_chroot` (run a command inside the image), `strux_install_file <src> <abs-dest> [mode]` (copy a host file into the image, creating parent dirs), and `strux_progress` / `strux_progress_bar` (drive the CLI progress display, with `progress` kept as an alias).
+
+**Caching:**
+- Project scripts reuse the existing hash-based script cache. Declaring `cached_generated_artifacts` lets a script be skipped when its outputs exist and inputs are unchanged; omitting it (the default) runs the script every build — ideal for "always fetch the latest" steps.
+
+`rootfs_post` is the only step available today. More project lifecycle steps will be added in future releases.
+
 ### Minor Changes
 
 - Added `host` as a BSP architecture option. When `arch: host` is set in `bsp.yaml`, the build targets the host machine's native architecture instead of a hardcoded value. New projects created with `strux init` now default to `arch: host` instead of baking in the specific host architecture at init time.
 - Local builds (`bun run build`) now read the version from `package.json` instead of falling back to `0.0.1`. CI builds are unaffected — the `--define` flag still takes precedence.
 - Cog browser is now compiled from source during the build process. The Debian-packaged Cog 0.18.5 lacks support for configuring the WebKit autoplay policy, which was added in Cog 0.19.1 (not available in any Debian repository). The build now clones Cog 0.18.5 from source, applies a backported patch that adds the `--autoplay-policy` CLI flag, and cross-compiles it alongside the WPE extension. The patched binary is installed over the Debian package version. The Cog launch script (`strux-run-cog.sh`) now passes `--autoplay-policy=allow`, permitting unmuted media autoplay without requiring a user gesture.
+- Cage output orientation can now be configured per monitor with `display.monitors[].transform` in `strux.yaml`, or board-wide with `STRUX_OUTPUT_TRANSFORM` in `bsp.yaml` `cage.env`. Supported transforms are `normal`, `90`, `180`, `270`, `flipped`, `flipped-90`, `flipped-180`, and `flipped-270`. The transform is applied when Cage enables the wlroots output, and the early framebuffer splash also honors `90`, `180`, and `270` so the splash and browser UI share the same orientation.
+- Added `STRUX_PROGRESS_BAR: <message> (<percent>%)` script output markers. BSP and host scripts can emit these markers to render colored CLI progress bars while keeping regular tool output raw.
+- Verbose Docker build output now still consumes `STRUX_PROGRESS:` and `STRUX_PROGRESS_BAR:` markers, replacing them with the same formatted Strux progress messages used in non-verbose mode instead of printing the raw marker lines.
+- Kernel and bootloader `source:` refs in `bsp.yaml` can now be pinned to exact commit hashes (e.g. `https://github.com/rockchip-linux/kernel.git#<sha>`), not just branches and tags. The fetch scripts previously relied on `git clone --depth 1 --branch <ref>`, which fails for commit hashes; they now fall back to a shallow fetch of the specific commit (supported by GitHub via `uploadpack.allowReachableSHA1InWant`), and finally to a full clone + checkout for servers that don't allow fetching by SHA. This keeps BSP builds reproducible against vendor-validated upstream commits without tracking a moving branch.
+
+**Cage touch input rotation fix:**
+- Touch devices mapped to a rotated Cage output now have their normalized coordinates transformed with the output's wlroots transform before Cage performs surface hit-testing. This keeps touchscreen input aligned with the visible browser UI when `display.monitors[].transform` or `STRUX_OUTPUT_TRANSFORM` rotates the output, while preserving the previous coordinate path for unrotated outputs.
+
+- Fixed cached `strux build <bsp> --dev` builds not enabling dev mode in the generated image. The build now refreshes the BSP-specific `.dev-env.json` even when the client binary is cached, removes stale dev config for cached production builds, and makes `rootfs-post` depend on the dev config file so switching between dev and production rebuilds the image contents correctly.
+- Fixed BSP lifecycle scripts running before `dist/artifacts/logo.png` exists on fresh builds. Initial artifacts are now prepared before BSP hooks run, so scripts such as `before_rootfs` can safely read the copied splash logo and Plymouth files.
+- Fixed changes to `project_version` (and `name`) in `strux.yaml` not taking effect in cached builds. These fields are written into `/etc/strux/project.json` during the `rootfs-post` step but weren't tracked as cache dependencies, so editing only the version left the step cached and the image kept the stale `project.json` — causing the runtime `strux.project.Info()` value (and any UI reading it) to show the old version. The `rootfs-post` step now depends on both keys.
 
 ## v0.2.2
 

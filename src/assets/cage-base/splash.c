@@ -39,6 +39,29 @@
 #define FB_DEVICE "/dev/fb0"
 #define FB_SYS_PATH "/sys/class/graphics/fb0/virtual_size"
 
+enum splash_transform {
+	SPLASH_TRANSFORM_NORMAL,
+	SPLASH_TRANSFORM_90,
+	SPLASH_TRANSFORM_180,
+	SPLASH_TRANSFORM_270,
+};
+
+static void get_output_logical_size(struct wlr_output *output, int *width, int *height)
+{
+	wlr_output_effective_resolution(output, width, height);
+}
+
+static void center_splash_image(struct cg_splash *splash, int screen_width, int screen_height)
+{
+	if (!splash->image) {
+		return;
+	}
+
+	int offset_x = (screen_width - splash->image_width) / 2;
+	int offset_y = (screen_height - splash->image_height) / 2;
+	wlr_scene_node_set_position(&splash->image->node, offset_x, offset_y);
+}
+
 /* ===== Data Buffer Implementation ===== */
 
 struct data_buffer {
@@ -256,18 +279,58 @@ static bool show_framebuffer_splash(const char *image_path)
 	// Clear to black
 	memset(fb_mem, 0, fb_size);
 
-	// Center the image
-	int offset_x = (fb_width - img->width) / 2;
-	int offset_y = (fb_height - img->height) / 2;
+	enum splash_transform transform = SPLASH_TRANSFORM_NORMAL;
+	const char *transform_value = getenv("STRUX_OUTPUT_TRANSFORM");
+	if (transform_value && *transform_value) {
+		if (strcmp(transform_value, "90") == 0) {
+			transform = SPLASH_TRANSFORM_90;
+		} else if (strcmp(transform_value, "180") == 0) {
+			transform = SPLASH_TRANSFORM_180;
+		} else if (strcmp(transform_value, "270") == 0) {
+			transform = SPLASH_TRANSFORM_270;
+		} else if (strcmp(transform_value, "normal") != 0 && strcmp(transform_value, "0") != 0) {
+			wlr_log(WLR_ERROR, "Framebuffer splash ignores unsupported transform '%s'", transform_value);
+		}
+	}
+
+	int draw_width = img->width;
+	int draw_height = img->height;
+	if (transform == SPLASH_TRANSFORM_90 || transform == SPLASH_TRANSFORM_270) {
+		draw_width = img->height;
+		draw_height = img->width;
+	}
+
+	// Center the transformed image
+	int offset_x = (fb_width - draw_width) / 2;
+	int offset_y = (fb_height - draw_height) / 2;
 
 	// Draw image (RGBA to BGRA conversion)
 	for (int y = 0; y < img->height; y++) {
-		int fb_y = offset_y + y;
-		if (fb_y < 0 || fb_y >= fb_height) continue;
-
 		for (int x = 0; x < img->width; x++) {
-			int fb_x = offset_x + x;
+			int fb_x;
+			int fb_y;
+			switch (transform) {
+			case SPLASH_TRANSFORM_90:
+				fb_x = offset_x + img->height - 1 - y;
+				fb_y = offset_y + x;
+				break;
+			case SPLASH_TRANSFORM_180:
+				fb_x = offset_x + img->width - 1 - x;
+				fb_y = offset_y + img->height - 1 - y;
+				break;
+			case SPLASH_TRANSFORM_270:
+				fb_x = offset_x + y;
+				fb_y = offset_y + img->width - 1 - x;
+				break;
+			case SPLASH_TRANSFORM_NORMAL:
+			default:
+				fb_x = offset_x + x;
+				fb_y = offset_y + y;
+				break;
+			}
+
 			if (fb_x < 0 || fb_x >= fb_width) continue;
+			if (fb_y < 0 || fb_y >= fb_height) continue;
 
 			uint8_t *src = img->data + (y * img->width + x) * 4;
 			uint8_t *dst = fb_mem + (fb_y * fb_width + fb_x) * 4;
@@ -466,8 +529,7 @@ void splash_show_wayland(struct cg_splash *splash)
 	struct cg_output *output;
 	wl_list_for_each(output, &splash->server->outputs, link) {
 		if (output->wlr_output->enabled) {
-			screen_width = output->wlr_output->width;
-			screen_height = output->wlr_output->height;
+			get_output_logical_size(output->wlr_output, &screen_width, &screen_height);
 			break;
 		}
 	}
@@ -518,10 +580,7 @@ void splash_show_wayland(struct cg_splash *splash)
 		return;
 	}
 
-	// Center the image
-	int offset_x = (screen_width - img->width) / 2;
-	int offset_y = (screen_height - img->height) / 2;
-	wlr_scene_node_set_position(&splash->image->node, offset_x, offset_y);
+	center_splash_image(splash, screen_width, screen_height);
 
 	free_png_image(img);
 
@@ -550,11 +609,7 @@ void splash_update_geometry(struct cg_splash *splash, int screen_width, int scre
 	}
 
 	// Re-center image
-	if (splash->image) {
-		int offset_x = (screen_width - splash->image_width) / 2;
-		int offset_y = (screen_height - splash->image_height) / 2;
-		wlr_scene_node_set_position(&splash->image->node, offset_x, offset_y);
-	}
+	center_splash_image(splash, screen_width, screen_height);
 
 	// Keep on top
 	wlr_scene_node_raise_to_top(&splash->tree->node);

@@ -14,6 +14,7 @@ import { Runner } from "../../utils/run"
 import { pathExists } from "../../utils/path"
 import { mkdir } from "fs/promises"
 import { join } from "path"
+import { writeUpdateSigningKeypair } from "../update/keys"
 
 
 // Additional
@@ -100,7 +101,7 @@ export async function init() {
     await Bun.write(join(Settings.projectPath, "main.go"), templateBaseMainGo.replace("${projectName}", Settings.projectName))
 
     // Use go to create a go.mod file in the directory
-    await Runner.runCommand(`go mod init ${Settings.projectName}`, {
+    await Runner.runCommand(["go", "mod", "init", Settings.projectName], {
         message: "Creating go.mod file...",
         messageOnError: "Failed to create go.mod file. Please create it manually.",
         cwd: Settings.projectPath,
@@ -122,6 +123,10 @@ export async function init() {
         templateBaseYAML.replaceAll("${projectName}", Settings.projectName).replaceAll("${version}", Settings.struxVersion).replaceAll("${clientKey}", clientKey)
     )
 
+    // Write the update signing keypair beside strux.yaml. The private key is
+    // ignored by the generated .gitignore; the public key is built into images.
+    await writeUpdateSigningKeypair()
+
     // Generate the Strux Types by introspecting the main.go file
     // Bootstrap the project with vue or react or vanilla template
     if (Settings.template === "vue") await bootstrapProjectWithVue()
@@ -140,7 +145,7 @@ export async function init() {
 
 
 async function pinProjectGoVersion(): Promise<void> {
-    const result = await Runner.runCommand(`go mod edit -go=${BUILDER_GO_VERSION} -toolchain=none`, {
+    const result = await Runner.runCommand(["go", "mod", "edit", `-go=${BUILDER_GO_VERSION}`, "-toolchain=none"], {
         message: `Pinning Go version to builder Go ${BUILDER_GO_VERSION}...`,
         messageOnError: "Failed to pin Go version in go.mod. Retrying without toolchain cleanup...",
         exitOnError: false,
@@ -149,7 +154,7 @@ async function pinProjectGoVersion(): Promise<void> {
 
     if (result.exitCode === 0) return
 
-    await Runner.runCommand(`go mod edit -go=${BUILDER_GO_VERSION}`, {
+    await Runner.runCommand(["go", "mod", "edit", `-go=${BUILDER_GO_VERSION}`], {
         message: `Pinning Go version to builder Go ${BUILDER_GO_VERSION}...`,
         messageOnError: "Failed to pin Go version in go.mod. Please update it manually.",
         exitOnError: true,

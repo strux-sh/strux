@@ -6,17 +6,20 @@
  *
  */
 import { join } from "path"
-import { rm } from "node:fs/promises"
+import { readdir, rm, stat } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
+import { BSPYamlValidator } from "../../types/bsp-yaml"
 import { directoryExists, fileExists } from "../../utils/path"
 import { build as buildCommand } from "../build"
+import { runFlashScripts, type FlashOutputSource } from "../flash"
 import { compileApplication, compileCage, compileFrontend, compileWPE, compileScreen, buildStruxClient } from "../build/steps"
 import { forceRestoreAllArtifacts } from "../build/artifacts"
 import { Runner } from "../../utils/run"
 import { loadBuildCacheManifest, shouldRebuildStep, updateStepCache } from "../build/cache"
-import { SocketManager } from "./socket-manager"
+import { Socket, SocketManager } from "./socket-manager"
 import { QEMUManager } from "./qemu"
 import { ViteManager } from "./vite"
 import { FileWatcher } from "./watcher"
@@ -47,6 +50,12 @@ export class DevServer {
         reject: (error: Error) => void
         timeout: ReturnType<typeof setTimeout>
     }>()
+    private systemUpdateAckWaiter: {
+        resolve: () => void
+        reject: (error: Error) => void
+        timeout: ReturnType<typeof setTimeout>
+    } | null = null
+    private updateBundleRoutes = new Map<string, string>()
 
 
     static getInstance(): DevServer {
@@ -87,6 +96,9 @@ export class DevServer {
             Settings.bspName = "qemu"
 
         }
+
+
+        this.loadFlashCapability()
 
 
         // Get the client key from the config
@@ -151,6 +163,7 @@ export class DevServer {
                 },
             })
             this.ui.store.setBspName(Settings.bspName ?? "qemu")
+            this.ui.store.setCanFlash(this.activeBspHasFlashScript())
 
             Logger.setSink((entry) => {
                 if (entry.level === "spinner" || entry.level === "spinner-clear") {
@@ -179,6 +192,7 @@ export class DevServer {
 
                 if (useUi) {
                     this.ui.store.setBuildStatus("idle")
+                    this.ui.store.setCanFlash(this.activeBspHasFlashScript())
                 }
 
             }
@@ -188,6 +202,7 @@ export class DevServer {
         // Set up websocket servers
         const client = this.sockets.create<ClientMessageSendable, ClientMessageReceivable>("client", { path: "/client", aliases: ["/ws"] })
         const screen = this.sockets.create<ScreenMessageSendable, ScreenMessageReceivable>("screen", { path: "/screen", auth: false, aliases: ["/ws/screen"] })
+        this.sockets.setHTTPRouteHandler((req) => this.handleHTTPRoute(req))
 
         // Register handlers
         registerClientHandlers(client)
@@ -309,6 +324,28 @@ export class DevServer {
     }
 
 
+    private activeBspHasFlashScript(): boolean {
+
+        return Settings.bsp?.scripts?.some((script) => script.step === "flash_script") ?? false
+
+    }
+
+
+    private loadFlashCapability(): void {
+
+        if (!Settings.bspName) return
+
+        const bspYamlPath = join(Settings.projectPath, "bsp", Settings.bspName, "bsp.yaml")
+        if (!fileExists(bspYamlPath)) return
+
+        const result = BSPYamlValidator.safeValidate(bspYamlPath)
+        if (!result.success || !result.data) return
+
+        Settings.bsp = result.data.bsp
+
+    }
+
+
     async handleConfigAction(action: string): Promise<void> {
 
         this.ui.store.setConfigBusy(true)
@@ -421,6 +458,21 @@ export class DevServer {
                 Logger.success("Docker builder image rebuilt successfully")
                 this.ui.store.flashConfigSuccess("Builder image rebuilt")
 
+            } else if (action === "install-update") {
+
+                const client = this.sockets.get<ClientMessageSendable, ClientMessageReceivable>("client")
+                if (!client.hasClients()) {
+                    Logger.error("Cannot install update: No device connected")
+                    this.ui.store.setConfigBusy(false)
+                    return
+                }
+
+                const bundlePath = await this.findLatestUpdateBundle()
+                await this.sendSystemUpdateBundle(client, bundlePath)
+
+                Logger.success("System update accepted by device")
+                this.ui.store.flashConfigSuccess("System update accepted; device will reboot")
+
             } else if (action === "restart-service") {
 
                 const client = this.sockets.get("client")
@@ -447,14 +499,181 @@ export class DevServer {
                 Logger.success("Reboot command sent to device")
                 this.ui.store.flashConfigSuccess("Reboot command sent to device")
 
+            } else if (action === "flash") {
+
+                if (!this.activeBspHasFlashScript()) {
+                    throw new Error(`Not Available for this BSP: ${Settings.bspName ?? "unknown"} does not define a flash_script in bsp.yaml.`)
+                }
+
+                this.ui.store.clearLogs("flash")
+                this.ui.store.updateStatus("flash", "running")
+                this.ui.store.appendLog("flash", {
+                    level: "info",
+                    message: `Running flash scripts for BSP ${Settings.bspName ?? Settings.main?.bsp ?? "unknown"}`,
+                    timestamp: Date.now(),
+                })
+
+                const outputLevel = (source: FlashOutputSource) => source === "stderr" ? "raw" : source === "system" ? "info" : "raw"
+                await runFlashScripts({
+                    onOutput: (data, source) => {
+                        this.ui.store.appendLog("flash", {
+                            level: outputLevel(source),
+                            message: data,
+                            timestamp: Date.now(),
+                        })
+                    },
+                })
+
+                this.ui.store.updateStatus("flash", "idle")
+                this.ui.store.flashConfigSuccess("Flash completed")
+
             }
 
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error)
             Logger.error(`Config action failed: ${msg}`)
+            if (action === "flash") {
+                this.ui.store.updateStatus("flash", "error")
+                this.ui.store.appendLog("flash", {
+                    level: "error",
+                    message: msg,
+                    timestamp: Date.now(),
+                })
+            }
         } finally {
             this.ui.store.setConfigBusy(false)
         }
+
+    }
+
+
+    private isAuthorizedControlRequest(req: Request): boolean {
+
+        const url = new URL(req.url)
+        const keyFromParam = url.searchParams.get("key")
+        if (keyFromParam && keyFromParam === this.clientKey) return true
+
+        const authHeader = req.headers.get("authorization")
+        if (authHeader === `Bearer ${this.clientKey}`) return true
+
+        const legacyKey = req.headers.get("x-client-key")
+        return Boolean(legacyKey && legacyKey === this.clientKey)
+
+    }
+
+
+    private async handleHTTPRoute(req: Request): Promise<Response | null> {
+
+        const url = new URL(req.url)
+        if (url.pathname === "/__strux/dev/system-update") {
+            if (req.method !== "POST") {
+                return new Response("Method not allowed", { status: 405 })
+            }
+            if (!this.isAuthorizedControlRequest(req)) {
+                return new Response("Unauthorized", { status: 401 })
+            }
+
+            const client = this.sockets.get<ClientMessageSendable, ClientMessageReceivable>("client")
+            if (!client.hasClients()) {
+                return new Response("No connected client", { status: 409 })
+            }
+
+            let requestedPath = ""
+            if ((req.headers.get("content-type") ?? "").includes("application/json")) {
+                const payload = await req.json().catch(() => ({})) as { path?: string }
+                requestedPath = payload.path ?? ""
+            }
+
+            const bundlePath = requestedPath || await this.findLatestUpdateBundle()
+            if (!fileExists(bundlePath)) {
+                return new Response(`Update bundle not found: ${bundlePath}`, { status: 404 })
+            }
+
+            Logger.info(`CLI requested system update: ${bundlePath}`)
+
+            try {
+                await this.sendSystemUpdateBundle(client, bundlePath)
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                return new Response(message, { status: 500 })
+            }
+
+            return new Response("System update accepted by device")
+        }
+
+        const match = url.pathname.match(/^\/__strux\/updates\/([^/]+)$/)
+        if (!match) return null
+
+        const token = match[1] ?? ""
+        const bundlePath = this.updateBundleRoutes.get(token)
+        if (!bundlePath) {
+            return new Response("Update bundle not found", { status: 404 })
+        }
+
+        const file = Bun.file(bundlePath)
+        return new Response(file, {
+            headers: {
+                "content-type": "application/octet-stream",
+                "content-disposition": `attachment; filename="${bundlePath.split("/").pop() ?? "update.struxb"}"`,
+            },
+        })
+
+    }
+
+
+    private async findLatestUpdateBundle(): Promise<string> {
+
+        const bspName = Settings.bspName!
+        const outputDir = join(Settings.projectPath, "dist", "output", bspName)
+        const entries = await readdir(outputDir, { withFileTypes: true }).catch(() => [])
+        const bundles = await Promise.all(entries
+            .filter((entry) => entry.isFile() && entry.name.endsWith(".struxb"))
+            .map(async (entry) => {
+                const path = join(outputDir, entry.name)
+                const info = await stat(path)
+                return { path, mtimeMs: info.mtimeMs }
+            }))
+
+        bundles.sort((a, b) => b.mtimeMs - a.mtimeMs)
+        const latest = bundles[0]
+        if (!latest) {
+            throw new Error(`No .struxb update bundle found in ${outputDir}. Run strux update bundle first.`)
+        }
+
+        return latest.path
+
+    }
+
+
+    private registerUpdateBundleRoute(bundlePath: string): string {
+
+        const token = randomUUID()
+        this.updateBundleRoutes.set(token, bundlePath)
+
+        return `/__strux/updates/${token}`
+
+    }
+
+
+    private async sendSystemUpdateBundle(client: Socket<ClientMessageSendable, ClientMessageReceivable>, bundlePath: string): Promise<void> {
+
+        const clients = [...client.getClients()]
+        if (clients.length === 0) {
+            throw new Error("No connected client")
+        }
+        if (clients.length > 1) {
+            throw new Error("Multiple Strux clients are connected; update target selection is not implemented yet.")
+        }
+
+        const ws = clients[0]!
+        const routePath = this.registerUpdateBundleRoute(bundlePath)
+        const bundleURL = new URL(routePath, client.getClientHTTPBaseURL(ws)).toString()
+
+        Logger.info(`Sending system update URL to device: ${bundleURL}`)
+
+        const ack = this.waitForSystemUpdateAck()
+        client.send(ws, { type: "system-update", payload: { url: bundleURL } })
+        await ack
 
     }
 
@@ -526,6 +745,53 @@ export class DevServer {
 
         if (status === "error") {
             waiter.reject(new Error(message || `Component transfer failed: ${destPath}`))
+            return
+        }
+
+        waiter.resolve()
+
+    }
+
+
+    waitForSystemUpdateAck(timeoutMs = 30000): Promise<void> {
+
+        if (this.systemUpdateAckWaiter) {
+            clearTimeout(this.systemUpdateAckWaiter.timeout)
+            this.systemUpdateAckWaiter.reject(new Error("System update ack waiter replaced"))
+            this.systemUpdateAckWaiter = null
+        }
+
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.systemUpdateAckWaiter = null
+                reject(new Error("Timed out waiting for system update ack"))
+            }, timeoutMs)
+
+            this.systemUpdateAckWaiter = {
+                resolve: () => {
+                    clearTimeout(timeout)
+                    this.systemUpdateAckWaiter = null
+                    resolve()
+                },
+                reject: (error) => {
+                    clearTimeout(timeout)
+                    this.systemUpdateAckWaiter = null
+                    reject(error)
+                },
+                timeout,
+            }
+        })
+
+    }
+
+
+    handleSystemUpdateAck(status: "pending" | "error", message: string): void {
+
+        const waiter = this.systemUpdateAckWaiter
+        if (!waiter) return
+
+        if (status === "error") {
+            waiter.reject(new Error(message || "System update failed"))
             return
         }
 

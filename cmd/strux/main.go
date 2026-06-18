@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -61,27 +63,94 @@ type TypeDef struct {
 	TSType string `json:"tsType"`
 }
 
+// RuntimeExtensionDef describes a runtime API registered under a namespace.
+type RuntimeExtensionDef struct {
+	Methods []MethodDef `json:"methods"`
+}
+
+// RuntimeTypes describes Strux runtime APIs that are merged into the final d.ts.
+type RuntimeTypes struct {
+	Extensions map[string]map[string]RuntimeExtensionDef `json:"extensions"`
+	Structs    map[string]StructDef                      `json:"structs"`
+}
+
+type runtimeExtensionRef struct {
+	namespace       string
+	subNamespace    string
+	methodsTypeName string
+}
+
+type introspectOptions struct {
+	filePath        string
+	runtimeDTS      bool
+	runtimeDTSDirs  string
+	runtimeJSONPath string
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		// Default to main.go in current directory
-		if err := introspect("main.go"); err != nil {
+	opts, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if opts.runtimeDTS {
+		output, err := generateDTS(opts)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Print(output)
 		return
 	}
 
-	filePath := os.Args[1]
-	if err := introspect(filePath); err != nil {
+	if err := introspect(opts.filePath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
+func parseArgs(args []string) (introspectOptions, error) {
+	opts := introspectOptions{filePath: "main.go"}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--runtime-dts":
+			opts.runtimeDTS = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+				i++
+				opts.runtimeDTSDirs = args[i]
+			}
+		case "--runtime-json":
+			i++
+			if i >= len(args) {
+				return opts, fmt.Errorf("--runtime-json requires a file path")
+			}
+			opts.runtimeJSONPath = args[i]
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return opts, fmt.Errorf("unknown option %s", arg)
+			}
+			opts.filePath = arg
+		}
+	}
+	return opts, nil
+}
+
 func introspect(filePath string) error {
+	output, err := introspectData(filePath)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(output)
+}
+
+func introspectData(filePath string) (IntrospectionOutput, error) {
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return fmt.Errorf("%s not found", filePath)
+		return IntrospectionOutput{}, fmt.Errorf("%s not found", filePath)
 	}
 
 	// Parse all Go files in the same directory to capture methods defined in other files
@@ -89,7 +158,7 @@ func introspect(filePath string) error {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, dir, nil, parser.ParseComments)
 	if err != nil {
-		return fmt.Errorf("failed to parse directory %s: %w", dir, err)
+		return IntrospectionOutput{}, fmt.Errorf("failed to parse directory %s: %w", dir, err)
 	}
 
 	// Find the package that contains the specified file
@@ -127,7 +196,7 @@ func introspect(filePath string) error {
 	}
 
 	if len(files) == 0 {
-		return fmt.Errorf("no Go files found in %s", dir)
+		return IntrospectionOutput{}, fmt.Errorf("no Go files found in %s", dir)
 	}
 
 	// Collect all structs and their fields
@@ -353,10 +422,717 @@ func introspect(filePath string) error {
 		}
 	}
 
-	// Output JSON to stdout
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(output)
+	return output, nil
+}
+
+func generateDTS(opts introspectOptions) (string, error) {
+	app, err := introspectData(opts.filePath)
+	if err != nil {
+		return "", err
+	}
+
+	runtimeTypes := emptyRuntimeTypes()
+	if opts.runtimeJSONPath != "" {
+		builtin, err := readRuntimeTypes(opts.runtimeJSONPath)
+		if err != nil {
+			return "", err
+		}
+		mergeRuntimeTypes(&runtimeTypes, builtin)
+	}
+
+	localRuntimeTypes, err := parseRuntimeDirs(splitDirs(opts.runtimeDTSDirs))
+	if err != nil {
+		return "", err
+	}
+	mergeRuntimeTypes(&runtimeTypes, localRuntimeTypes)
+
+	return generateTypeScriptDefinitions(app, runtimeTypes), nil
+}
+
+func readRuntimeTypes(path string) (RuntimeTypes, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return RuntimeTypes{}, fmt.Errorf("failed to read runtime JSON %s: %w", path, err)
+	}
+
+	runtimeTypes := emptyRuntimeTypes()
+	if err := json.Unmarshal(data, &runtimeTypes); err != nil {
+		return RuntimeTypes{}, fmt.Errorf("failed to parse runtime JSON %s: %w", path, err)
+	}
+	ensureRuntimeMaps(&runtimeTypes)
+	return runtimeTypes, nil
+}
+
+func emptyRuntimeTypes() RuntimeTypes {
+	return RuntimeTypes{
+		Extensions: make(map[string]map[string]RuntimeExtensionDef),
+		Structs:    make(map[string]StructDef),
+	}
+}
+
+func ensureRuntimeMaps(runtimeTypes *RuntimeTypes) {
+	if runtimeTypes.Extensions == nil {
+		runtimeTypes.Extensions = make(map[string]map[string]RuntimeExtensionDef)
+	}
+	if runtimeTypes.Structs == nil {
+		runtimeTypes.Structs = make(map[string]StructDef)
+	}
+}
+
+func mergeRuntimeTypes(dst *RuntimeTypes, src RuntimeTypes) {
+	ensureRuntimeMaps(dst)
+	for name, structDef := range src.Structs {
+		dst.Structs[name] = structDef
+	}
+	for namespace, subNamespaces := range src.Extensions {
+		if dst.Extensions[namespace] == nil {
+			dst.Extensions[namespace] = make(map[string]RuntimeExtensionDef)
+		}
+		for subNamespace, extension := range subNamespaces {
+			dst.Extensions[namespace][subNamespace] = extension
+		}
+	}
+}
+
+func splitDirs(value string) []string {
+	parts := strings.Split(value, ",")
+	dirs := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			dirs = append(dirs, part)
+		}
+	}
+	return dirs
+}
+
+func parseRuntimeDirs(dirs []string) (RuntimeTypes, error) {
+	runtimeTypes := emptyRuntimeTypes()
+	if len(dirs) == 0 {
+		return runtimeTypes, nil
+	}
+
+	knownStructs := make(map[string]bool)
+	typeAliases := make(map[string]string)
+	structFields := make(map[string][]FieldDef)
+	methodsByType := make(map[string][]MethodDef)
+	var registeredExtensions []runtimeExtensionRef
+
+	for _, dir := range dirs {
+		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+			if err != nil {
+				return fmt.Errorf("failed to parse %s: %w", path, err)
+			}
+
+			ast.Inspect(file, func(n ast.Node) bool {
+				typeSpec, ok := n.(*ast.TypeSpec)
+				if !ok || !isExported(typeSpec.Name.Name) {
+					return true
+				}
+
+				if _, ok := typeSpec.Type.(*ast.StructType); ok {
+					knownStructs[typeSpec.Name.Name] = true
+				} else {
+					typeAliases[typeSpec.Name.Name] = exprToString(typeSpec.Type)
+					globalTypeAliases[typeSpec.Name.Name] = exprToString(typeSpec.Type)
+				}
+				return true
+			})
+
+			return nil
+		})
+		if err != nil {
+			return RuntimeTypes{}, err
+		}
+	}
+
+	for _, dir := range dirs {
+		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+			if err != nil {
+				return fmt.Errorf("failed to parse %s: %w", path, err)
+			}
+
+			ast.Inspect(file, func(n ast.Node) bool {
+				if typeSpec, ok := n.(*ast.TypeSpec); ok && isExported(typeSpec.Name.Name) {
+					if structType, ok := typeSpec.Type.(*ast.StructType); ok {
+						structFields[typeSpec.Name.Name] = extractRuntimeStructFields(structType, knownStructs, typeAliases)
+					}
+				}
+
+				if funcDecl, ok := n.(*ast.FuncDecl); ok {
+					if funcDecl.Name.Name == "init" && funcDecl.Body != nil {
+						registeredExtensions = append(registeredExtensions, extractRuntimeRegistrations(funcDecl.Body)...)
+					}
+					recvTypeName := receiverTypeName(funcDecl)
+					if recvTypeName != "" && isExported(funcDecl.Name.Name) {
+						methodsByType[recvTypeName] = append(methodsByType[recvTypeName], extractRuntimeMethod(funcDecl, knownStructs, typeAliases))
+					}
+				}
+
+				return true
+			})
+
+			return nil
+		})
+		if err != nil {
+			return RuntimeTypes{}, err
+		}
+	}
+
+	referencedTypes := make(map[string]bool)
+	sort.Slice(registeredExtensions, func(i, j int) bool {
+		if registeredExtensions[i].namespace != registeredExtensions[j].namespace {
+			return registeredExtensions[i].namespace < registeredExtensions[j].namespace
+		}
+		if registeredExtensions[i].subNamespace != registeredExtensions[j].subNamespace {
+			return registeredExtensions[i].subNamespace < registeredExtensions[j].subNamespace
+		}
+		return registeredExtensions[i].methodsTypeName < registeredExtensions[j].methodsTypeName
+	})
+
+	for _, ext := range registeredExtensions {
+		methods := methodsByType[ext.methodsTypeName]
+		addRuntimeExtension(runtimeTypes, ext.namespace, ext.subNamespace, methods)
+		for _, method := range methods {
+			for _, param := range method.Params {
+				collectRuntimeReferencedTypes(param.GoType, knownStructs, structFields, referencedTypes)
+			}
+			for _, returnType := range method.ReturnTypes {
+				collectRuntimeReferencedTypes(returnType.GoType, knownStructs, structFields, referencedTypes)
+			}
+		}
+	}
+
+	typeNames := make([]string, 0, len(referencedTypes))
+	for name := range referencedTypes {
+		typeNames = append(typeNames, name)
+	}
+	sort.Strings(typeNames)
+	for _, name := range typeNames {
+		if fields, ok := structFields[name]; ok {
+			runtimeTypes.Structs[name] = StructDef{Fields: fields}
+		}
+	}
+
+	return runtimeTypes, nil
+}
+
+func addRuntimeExtension(runtimeTypes RuntimeTypes, namespace string, subNamespace string, methods []MethodDef) {
+	if runtimeTypes.Extensions[namespace] == nil {
+		runtimeTypes.Extensions[namespace] = make(map[string]RuntimeExtensionDef)
+	}
+	runtimeTypes.Extensions[namespace][subNamespace] = RuntimeExtensionDef{Methods: methods}
+}
+
+func receiverTypeName(funcDecl *ast.FuncDecl) string {
+	if funcDecl.Recv == nil || len(funcDecl.Recv.List) == 0 {
+		return ""
+	}
+	switch t := funcDecl.Recv.List[0].Type.(type) {
+	case *ast.StarExpr:
+		if ident, ok := t.X.(*ast.Ident); ok {
+			return ident.Name
+		}
+	case *ast.Ident:
+		return t.Name
+	}
+	return ""
+}
+
+func extractRuntimeStructFields(structType *ast.StructType, knownStructs map[string]bool, typeAliases map[string]string) []FieldDef {
+	fields := []FieldDef{}
+	for _, field := range structType.Fields.List {
+		goType := exprToString(field.Type)
+		for _, name := range field.Names {
+			if !isExported(name.Name) {
+				continue
+			}
+			fieldName := name.Name
+			if taggedName, ok := jsonFieldName(field); ok {
+				fieldName = taggedName
+			}
+			if fieldName == "-" {
+				continue
+			}
+			fields = append(fields, FieldDef{
+				Name:   fieldName,
+				GoType: goType,
+				TSType: runtimeGoTypeToTS(goType, knownStructs, typeAliases, false),
+			})
+		}
+	}
+	return fields
+}
+
+func jsonFieldName(field *ast.Field) (string, bool) {
+	if field.Tag == nil {
+		return "", false
+	}
+
+	tagValue := strings.Trim(field.Tag.Value, "`")
+	jsonTag := reflect.StructTag(tagValue).Get("json")
+	if jsonTag == "" {
+		return "", false
+	}
+
+	name := strings.Split(jsonTag, ",")[0]
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+func extractRuntimeMethod(funcDecl *ast.FuncDecl, knownStructs map[string]bool, typeAliases map[string]string) MethodDef {
+	params := []ParamDef{}
+	if funcDecl.Type.Params != nil {
+		paramIndex := 0
+		for _, field := range funcDecl.Type.Params.List {
+			goType := exprToString(field.Type)
+			tsType := runtimeGoTypeToTS(goType, knownStructs, typeAliases, true)
+
+			if len(field.Names) == 0 {
+				params = append(params, ParamDef{
+					Name:   fmt.Sprintf("arg%d", paramIndex),
+					GoType: goType,
+					TSType: tsType,
+				})
+				paramIndex++
+				continue
+			}
+
+			for _, name := range field.Names {
+				params = append(params, ParamDef{
+					Name:   name.Name,
+					GoType: goType,
+					TSType: tsType,
+				})
+				paramIndex++
+			}
+		}
+	}
+
+	returnTypes := []TypeDef{}
+	hasError := false
+	if funcDecl.Type.Results != nil && len(funcDecl.Type.Results.List) > 0 {
+		results := funcDecl.Type.Results.List
+		if exprToString(results[len(results)-1].Type) == "error" {
+			hasError = true
+		}
+
+		for _, result := range results {
+			goType := exprToString(result.Type)
+			if goType == "error" {
+				continue
+			}
+			tsType := runtimeGoTypeToTS(goType, knownStructs, typeAliases, true)
+			if len(result.Names) > 1 {
+				for range result.Names {
+					returnTypes = append(returnTypes, TypeDef{GoType: goType, TSType: tsType})
+				}
+				continue
+			}
+			returnTypes = append(returnTypes, TypeDef{GoType: goType, TSType: tsType})
+		}
+	}
+
+	return MethodDef{
+		Name:        funcDecl.Name.Name,
+		Params:      params,
+		ReturnTypes: returnTypes,
+		HasError:    hasError,
+	}
+}
+
+func runtimeGoTypeToTS(goType string, knownStructs map[string]bool, typeAliases map[string]string, qualifyKnownStructs bool) string {
+	if underlying, ok := typeAliases[goType]; ok {
+		return runtimeGoTypeToTS(underlying, knownStructs, typeAliases, qualifyKnownStructs)
+	}
+	if strings.HasPrefix(goType, "[]") {
+		return runtimeGoTypeToTS(goType[2:], knownStructs, typeAliases, qualifyKnownStructs) + "[]"
+	}
+	if strings.HasPrefix(goType, "*") {
+		return runtimeGoTypeToTS(goType[1:], knownStructs, typeAliases, qualifyKnownStructs)
+	}
+	if strings.HasPrefix(goType, "...") {
+		return runtimeGoTypeToTS(goType[3:], knownStructs, typeAliases, qualifyKnownStructs) + "[]"
+	}
+	if strings.HasPrefix(goType, "map[") {
+		keyType, valueType := parseMapType(goType)
+		return fmt.Sprintf("Record<%s, %s>",
+			runtimeGoTypeToTS(keyType, knownStructs, typeAliases, qualifyKnownStructs),
+			runtimeGoTypeToTS(valueType, knownStructs, typeAliases, qualifyKnownStructs),
+		)
+	}
+	if strings.Contains(goType, ".") {
+		parts := strings.Split(goType, ".")
+		goType = parts[len(parts)-1]
+	}
+	if knownStructs[goType] {
+		if qualifyKnownStructs {
+			return "StruxRuntime." + goType
+		}
+		return goType
+	}
+	return goTypeToTS(goType, nil)
+}
+
+func extractRuntimeRegistrations(body *ast.BlockStmt) []runtimeExtensionRef {
+	refs := []runtimeExtensionRef{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		namespace, subNamespace, methodsTypeName, ok := extractRuntimeRegistrationCall(call)
+		if !ok || namespace == "" || subNamespace == "" || methodsTypeName == "" {
+			return true
+		}
+
+		refs = append(refs, runtimeExtensionRef{
+			namespace:       namespace,
+			subNamespace:    subNamespace,
+			methodsTypeName: methodsTypeName,
+		})
+		return true
+	})
+	return refs
+}
+
+func extractRuntimeRegistrationCall(call *ast.CallExpr) (string, string, string, bool) {
+	switch runtimeCallName(call) {
+	case "RegisterCustomExtension":
+		if len(call.Args) != 2 {
+			return "", "", "", false
+		}
+		return "strux", extractStringLiteral(call.Args[0]), extractRuntimeInstanceType(call.Args[1]), true
+	case "RegisterExtension":
+		if len(call.Args) != 3 {
+			return "", "", "", false
+		}
+		return extractStringLiteral(call.Args[0]), extractStringLiteral(call.Args[1]), extractRuntimeInstanceType(call.Args[2]), true
+	default:
+		return "", "", "", false
+	}
+}
+
+func runtimeCallName(call *ast.CallExpr) string {
+	switch fun := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		return fun.Sel.Name
+	case *ast.Ident:
+		return fun.Name
+	default:
+		return ""
+	}
+}
+
+func extractStringLiteral(expr ast.Expr) string {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return ""
+	}
+	return strings.Trim(lit.Value, `"`)
+}
+
+func extractRuntimeInstanceType(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.UnaryExpr:
+		if t.Op == token.AND {
+			return extractRuntimeInstanceType(t.X)
+		}
+	case *ast.CompositeLit:
+		return runtimeTypeName(t.Type)
+	}
+	return ""
+}
+
+func runtimeTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.StarExpr:
+		return runtimeTypeName(t.X)
+	default:
+		return ""
+	}
+}
+
+func collectRuntimeReferencedTypes(goType string, knownStructs map[string]bool, structFields map[string][]FieldDef, seen map[string]bool) {
+	for _, name := range runtimeReferencedTypeNames(goType, knownStructs) {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		for _, field := range structFields[name] {
+			collectRuntimeReferencedTypes(field.GoType, knownStructs, structFields, seen)
+		}
+	}
+}
+
+func runtimeReferencedTypeNames(goType string, knownStructs map[string]bool) []string {
+	switch {
+	case strings.HasPrefix(goType, "[]"):
+		return runtimeReferencedTypeNames(goType[2:], knownStructs)
+	case strings.HasPrefix(goType, "*"):
+		return runtimeReferencedTypeNames(goType[1:], knownStructs)
+	case strings.HasPrefix(goType, "..."):
+		return runtimeReferencedTypeNames(goType[3:], knownStructs)
+	case strings.HasPrefix(goType, "map["):
+		keyType, valueType := parseMapType(goType)
+		names := runtimeReferencedTypeNames(keyType, knownStructs)
+		names = append(names, runtimeReferencedTypeNames(valueType, knownStructs)...)
+		return names
+	case strings.Contains(goType, "."):
+		parts := strings.Split(goType, ".")
+		goType = parts[len(parts)-1]
+	}
+	if knownStructs[goType] {
+		return []string{goType}
+	}
+	return nil
+}
+
+func generateTypeScriptDefinitions(introspection IntrospectionOutput, runtimeTypes RuntimeTypes) string {
+	lines := []string{
+		"// Auto-generated Strux type definitions",
+		"// Run 'strux types' to regenerate from Go code",
+		"// This file is automatically generated. DO NOT EDIT",
+		"",
+		"declare global {",
+	}
+
+	globalLines := generateRuntimeGlobalLines(runtimeTypes)
+	if len(globalLines) > 0 {
+		for _, line := range globalLines {
+			lines = append(lines, indentLine(line))
+		}
+		lines = append(lines, "")
+	}
+
+	for _, line := range generateAppGlobalLines(introspection) {
+		lines = append(lines, indentLine(line))
+	}
+
+	lines = append(lines, "}", "", "export {};")
+	return strings.Join(lines, "\n")
+}
+
+func generateRuntimeGlobalLines(runtimeTypes RuntimeTypes) []string {
+	lines := []string{}
+
+	if len(runtimeTypes.Structs) > 0 {
+		lines = append(lines, "namespace StruxRuntime {")
+		typeNames := make([]string, 0, len(runtimeTypes.Structs))
+		for name := range runtimeTypes.Structs {
+			typeNames = append(typeNames, name)
+		}
+		sort.Strings(typeNames)
+		for typeIndex, name := range typeNames {
+			if typeIndex > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, fmt.Sprintf("  interface %s {", name))
+			for _, field := range runtimeTypes.Structs[name].Fields {
+				lines = append(lines, fmt.Sprintf("    %s: %s;", field.Name, field.TSType))
+			}
+			lines = append(lines, "  }")
+		}
+		lines = append(lines, "}", "")
+	}
+
+	namespaceNames := make([]string, 0, len(runtimeTypes.Extensions))
+	for namespace := range runtimeTypes.Extensions {
+		namespaceNames = append(namespaceNames, namespace)
+	}
+	sort.Strings(namespaceNames)
+
+	for namespaceIndex, namespace := range namespaceNames {
+		if namespaceIndex > 0 {
+			lines = append(lines, "")
+		}
+		interfaceName := strings.ToUpper(namespace[:1]) + namespace[1:]
+		lines = append(lines, fmt.Sprintf("interface %s {", interfaceName))
+
+		subNamespaceNames := make([]string, 0, len(runtimeTypes.Extensions[namespace]))
+		for subNamespace := range runtimeTypes.Extensions[namespace] {
+			subNamespaceNames = append(subNamespaceNames, subNamespace)
+		}
+		sort.Strings(subNamespaceNames)
+
+		for _, subNamespace := range subNamespaceNames {
+			extension := runtimeTypes.Extensions[namespace][subNamespace]
+			lines = append(lines, fmt.Sprintf("  %s: {", subNamespace))
+			for _, method := range extension.Methods {
+				lines = append(lines, fmt.Sprintf("    %s(%s): %s;", method.Name, formatDTSParams(method.Params), formatDTSReturnType(method)))
+			}
+			lines = append(lines, "  };")
+		}
+
+		if namespace == "strux" {
+			lines = append(lines, "  ipc: {")
+			lines = append(lines, "    on(event: string, callback: (data: any) => void): () => void;")
+			lines = append(lines, "    off(event: string, callback: (data: any) => void): void;")
+			lines = append(lines, "    send(event: string, data?: any): void;")
+			lines = append(lines, "  };")
+		}
+
+		lines = append(lines, "}")
+	}
+
+	return lines
+}
+
+func generateAppGlobalLines(introspection IntrospectionOutput) []string {
+	lines := []string{}
+	app := introspection.App
+	structs := introspection.Structs
+
+	for _, structName := range findUsedStructs(app, structs) {
+		structDef, ok := structs[structName]
+		if !ok {
+			continue
+		}
+		if len(lines) > 0 && lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
+		lines = append(lines, fmt.Sprintf("interface %s {", structName))
+		for _, field := range structDef.Fields {
+			lines = append(lines, fmt.Sprintf("  %s: %s;", field.Name, field.TSType))
+		}
+		if len(structDef.Fields) > 0 && len(structDef.Methods) > 0 {
+			lines = append(lines, "")
+		}
+		for _, method := range structDef.Methods {
+			lines = append(lines, fmt.Sprintf("  %s(%s): %s;", method.Name, formatDTSParams(method.Params), formatDTSReturnType(method)))
+		}
+		lines = append(lines, "}")
+	}
+
+	if len(lines) > 0 && lines[len(lines)-1] != "" {
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, fmt.Sprintf("interface %s {", app.Name))
+	for _, field := range app.Fields {
+		lines = append(lines, fmt.Sprintf("  %s: %s;", field.Name, field.TSType))
+	}
+	if len(app.Fields) > 0 && len(app.Methods) > 0 {
+		lines = append(lines, "")
+	}
+	for _, method := range app.Methods {
+		lines = append(lines, fmt.Sprintf("  %s(%s): %s;", method.Name, formatDTSParams(method.Params), formatDTSReturnType(method)))
+	}
+	lines = append(lines, "}", "")
+	lines = append(lines, fmt.Sprintf("const %s: %s;", app.Name, app.Name))
+	lines = append(lines, "")
+	lines = append(lines, "const strux: Strux;")
+	lines = append(lines, "interface Window {")
+	lines = append(lines, "  strux: Strux;")
+	lines = append(lines, fmt.Sprintf("  %s: %s;", app.Name, app.Name))
+	lines = append(lines, "  go: {")
+	lines = append(lines, fmt.Sprintf("    %s: {", app.PackageName))
+	lines = append(lines, fmt.Sprintf("      %s: %s;", app.Name, app.Name))
+	lines = append(lines, "    }")
+	lines = append(lines, "  }")
+	lines = append(lines, "}")
+
+	return lines
+}
+
+func indentLine(line string) string {
+	if line == "" {
+		return ""
+	}
+	return "  " + line
+}
+
+func formatDTSParams(params []ParamDef) string {
+	parts := make([]string, 0, len(params))
+	for index, param := range params {
+		name := param.Name
+		if name == "" {
+			name = fmt.Sprintf("arg%d", index)
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", name, param.TSType))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatDTSReturnType(method MethodDef) string {
+	baseType := "void"
+	if len(method.ReturnTypes) == 1 {
+		baseType = method.ReturnTypes[0].TSType
+	} else if len(method.ReturnTypes) > 1 {
+		parts := make([]string, 0, len(method.ReturnTypes))
+		for _, returnType := range method.ReturnTypes {
+			parts = append(parts, returnType.TSType)
+		}
+		baseType = "[" + strings.Join(parts, ", ") + "]"
+	}
+	if method.HasError && len(method.ReturnTypes) > 0 {
+		baseType += " | null"
+	}
+	return fmt.Sprintf("Promise<%s>", baseType)
+}
+
+func findUsedStructs(app AppInfo, structs map[string]StructDef) []string {
+	used := make(map[string]bool)
+	knownStructs := make(map[string]bool)
+	for name := range structs {
+		knownStructs[name] = true
+	}
+
+	for _, field := range app.Fields {
+		addUsedStructs(field.TSType, knownStructs, used)
+	}
+	for _, method := range app.Methods {
+		for _, param := range method.Params {
+			addUsedStructs(param.TSType, knownStructs, used)
+		}
+		for _, returnType := range method.ReturnTypes {
+			addUsedStructs(returnType.TSType, knownStructs, used)
+		}
+	}
+	for name, structDef := range structs {
+		if len(structDef.Methods) > 0 {
+			used[name] = true
+		}
+	}
+
+	names := make([]string, 0, len(used))
+	for name := range used {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func addUsedStructs(tsType string, knownStructs map[string]bool, used map[string]bool) {
+	tsType = strings.TrimSuffix(tsType, "[]")
+	if knownStructs[tsType] {
+		used[tsType] = true
+	}
 }
 
 // runtimeImportPath is the import path for the strux runtime package

@@ -28,6 +28,8 @@ var ErrBackendNotReady = errors.New("backend not ready")
 type LaunchOptions struct {
 	// CogURL is the base URL to load in Cog browser
 	CogURL string
+	// OnlyDisplayImage shows an image in Cage without launching Cog
+	OnlyDisplayImage string
 	// Resolution is the display resolution for single-monitor mode (e.g., "1920x1080")
 	Resolution string
 	// SplashImage is the path to the splash image (optional)
@@ -41,6 +43,7 @@ type LaunchOptions struct {
 // CageLauncher manages the Cage compositor process
 type CageLauncher struct {
 	process *exec.Cmd
+	done    chan error
 	logger  *Logger
 	logFile *os.File
 }
@@ -88,6 +91,26 @@ func (c *CageLauncher) WaitForBackend(timeout time.Duration) bool {
 // 3) Default route is present
 func (c *CageLauncher) WaitForNetworkReady(timeout time.Duration) bool {
 	return c.WaitForNetworkReadyWithPort(timeout, 0)
+}
+
+// WaitForPortFree waits until the specified local TCP port is not listening.
+func (c *CageLauncher) WaitForPortFree(timeout time.Duration, port int) bool {
+	deadline := time.Now().Add(timeout)
+	attempt := 0
+
+	for time.Now().Before(deadline) {
+		attempt++
+		if c.isPortFree(port) {
+			return true
+		}
+		if attempt%10 == 1 {
+			c.logger.Info("Port %d not free yet (attempt %d)", port, attempt)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	c.logger.Error("Port %d did not become free within %v", port, timeout)
+	return false
 }
 
 // WaitForNetworkReadyWithPort waits for network readiness, checking a specific port
@@ -212,19 +235,24 @@ func withLaunchToken(rawURL, token string) string {
 }
 
 // writeDisplayMap writes the output-to-URL mapping file that Cage reads via --display-map.
-// Format: one "output_name=url" per line, plus "output_name.resolution=WxH" for resolution.
+// Format: one "output_name=url" per line, plus optional output_name.* settings.
 func (c *CageLauncher) writeDisplayMap(opts LaunchOptions) error {
 	var lines []string
 	launchToken := fmt.Sprintf("%d", time.Now().UnixNano())
 
 	if opts.DisplayConfig != nil {
 		for _, monitor := range opts.DisplayConfig.Monitors {
-			cogURL := withLaunchToken(opts.CogURL+monitor.Path, launchToken)
 			for _, name := range monitor.Names {
-				c.logger.Info("Display map: %s -> %s", name, cogURL)
-				lines = append(lines, fmt.Sprintf("%s=%s", name, cogURL))
+				if opts.CogURL != "" {
+					cogURL := withLaunchToken(opts.CogURL+monitor.Path, launchToken)
+					c.logger.Info("Display map: %s -> %s", name, cogURL)
+					lines = append(lines, fmt.Sprintf("%s=%s", name, cogURL))
+				}
 				if monitor.Resolution != "" {
 					lines = append(lines, fmt.Sprintf("%s.resolution=%s", name, monitor.Resolution))
+				}
+				if monitor.Transform != "" {
+					lines = append(lines, fmt.Sprintf("%s.transform=%s", name, monitor.Transform))
 				}
 			}
 		}
@@ -242,6 +270,30 @@ func (c *CageLauncher) writeDisplayMapAndGetPath(opts LaunchOptions) string {
 		return ""
 	}
 	return "/tmp/strux-display-map"
+}
+
+func envHasKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func displayConfigDefaultTransform(config *DisplayConfig) string {
+	if config == nil {
+		return ""
+	}
+
+	for _, monitor := range config.Monitors {
+		if monitor.Transform != "" {
+			return monitor.Transform
+		}
+	}
+
+	return ""
 }
 
 // Launch starts Cage compositor with Cog browser
@@ -269,7 +321,9 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	}
 
 	// Add splash image if provided
-	if opts.SplashImage != "" {
+	if opts.OnlyDisplayImage != "" {
+		args = append(args, fmt.Sprintf("--only-display-image=%s", opts.OnlyDisplayImage))
+	} else if opts.SplashImage != "" {
 		args = append(args, fmt.Sprintf("--splash-image=%s", opts.SplashImage))
 	}
 
@@ -279,7 +333,7 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	c.process = exec.Command("cage", args...)
 
 	// Set environment variables required for Cage and WebKit
-	c.process.Env = append(os.Environ(),
+	cageEnv := append(os.Environ(),
 		"WPE_WEB_EXTENSION_PATH=/usr/lib/wpe-web-extensions",
 		"SEATD_SOCK=/run/seatd.sock",
 		"WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
@@ -293,10 +347,18 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 	)
 
 	// Load custom Cage environment variables from bsp.yaml (written by strux-build-post.sh)
-	if extra := loadCageEnv("/strux/.cage-env"); len(extra) > 0 {
-		c.logger.Info("Loaded %d custom Cage environment variables", len(extra))
-		c.process.Env = append(c.process.Env, extra...)
+	extraEnv := loadCageEnv("/strux/.cage-env")
+	if transform := displayConfigDefaultTransform(opts.DisplayConfig); transform != "" &&
+		!envHasKey(cageEnv, "STRUX_OUTPUT_TRANSFORM") &&
+		!envHasKey(extraEnv, "STRUX_OUTPUT_TRANSFORM") {
+		cageEnv = append(cageEnv, "STRUX_OUTPUT_TRANSFORM="+transform)
 	}
+
+	if len(extraEnv) > 0 {
+		c.logger.Info("Loaded %d custom Cage environment variables", len(extraEnv))
+		cageEnv = append(cageEnv, extraEnv...)
+	}
+	c.process.Env = cageEnv
 
 	// Write WebKit Inspector config for per-Cog port assignment (dev mode)
 	// Each Cog instance reads the base port and atomically increments a counter
@@ -336,16 +398,24 @@ func (c *CageLauncher) Launch(opts LaunchOptions) error {
 		return fmt.Errorf("failed to start Cage: %w", err)
 	}
 
-	c.logger.Info("Cage and Cog launched successfully (PID: %d)", c.process.Process.Pid)
+	if opts.OnlyDisplayImage != "" {
+		c.logger.Info("Cage image display launched successfully (PID: %d)", c.process.Process.Pid)
+	} else {
+		c.logger.Info("Cage and Cog launched successfully (PID: %d)", c.process.Process.Pid)
+	}
 
 	// Monitor the process in a goroutine
+	done := make(chan error, 1)
+	c.done = done
+	process := c.process
 	go func() {
-		err := c.process.Wait()
+		err := process.Wait()
 		if err != nil {
 			c.logger.Error("Cage exited with error: %v", err)
 		} else {
 			c.logger.Info("Cage exited normally")
 		}
+		done <- err
 	}()
 
 	return nil
@@ -356,7 +426,15 @@ func (c *CageLauncher) Cleanup() {
 	if c.process != nil && c.process.Process != nil {
 		c.logger.Info("Cleaning up Cage process...")
 		c.process.Process.Kill()
+		if c.done != nil {
+			select {
+			case <-c.done:
+			case <-time.After(5 * time.Second):
+				c.logger.Warn("Timed out waiting for Cage process to exit")
+			}
+		}
 		c.process = nil
+		c.done = nil
 	}
 
 	if c.logFile != nil {

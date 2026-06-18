@@ -14,19 +14,23 @@ import (
 	"strings"
 )
 
-// ExtensionInfo holds information about an extension.
-type ExtensionInfo struct {
-	Namespace    string       `json:"namespace"`
-	SubNamespace string       `json:"subNamespace"`
-	Methods      []MethodInfo `json:"methods"`
+// RuntimeExtensionDef describes a runtime API registered under a namespace.
+type RuntimeExtensionDef struct {
+	Methods []MethodDef `json:"methods"`
 }
 
-// MethodInfo holds information about a method.
-type MethodInfo struct {
-	Name       string     `json:"name"`
-	Params     []ParamDef `json:"params"`
-	ReturnType string     `json:"returnType,omitempty"`
-	HasError   bool       `json:"hasError"`
+// MethodDef describes a method.
+type MethodDef struct {
+	Name        string     `json:"name"`
+	Params      []ParamDef `json:"params"`
+	ReturnTypes []TypeDef  `json:"returnTypes"`
+	HasError    bool       `json:"hasError"`
+}
+
+// TypeDef describes a type.
+type TypeDef struct {
+	GoType string `json:"goType"`
+	TSType string `json:"tsType"`
 }
 
 // ParamDef describes a method parameter.
@@ -43,18 +47,16 @@ type FieldDef struct {
 	TSType string `json:"tsType"`
 }
 
-// TypeInfo describes a named exported type referenced by runtime extension APIs.
-type TypeInfo struct {
-	Name   string     `json:"name"`
-	Kind   string     `json:"kind"` // "struct" or "alias"
-	Fields []FieldDef `json:"fields,omitempty"`
-	TSType string     `json:"tsType,omitempty"`
+// StructDef describes a struct definition.
+type StructDef struct {
+	Fields  []FieldDef  `json:"fields"`
+	Methods []MethodDef `json:"methods,omitempty"`
 }
 
 // RuntimeTypes is the output structure.
 type RuntimeTypes struct {
-	Extensions []ExtensionInfo `json:"extensions"`
-	Types      []TypeInfo      `json:"types,omitempty"`
+	Extensions map[string]map[string]RuntimeExtensionDef `json:"extensions"`
+	Structs    map[string]StructDef                      `json:"structs"`
 }
 
 type rawTypeInfo struct {
@@ -64,12 +66,18 @@ type rawTypeInfo struct {
 	aliasType string
 }
 
+type extensionRef struct {
+	namespace       string
+	subNamespace    string
+	methodsTypeName string
+}
+
 func main() {
-	outputFormat := flag.String("format", "ts", "Output format: ts (TypeScript), json")
-	extensionDir := flag.String("dir", "pkg/runtime/extension", "Directory containing extension Go files")
+	outputFormat := flag.String("format", "ts", "Output format: ts (TypeScript const), dts (declaration body), json")
+	extensionDir := flag.String("dir", "pkg/runtime/api", "Directory containing runtime API Go files. Multiple dirs may be comma-separated.")
 	flag.Parse()
 
-	runtimeTypes, err := parseExtensions(*extensionDir)
+	runtimeTypes, err := parseExtensionDirs(splitDirs(*extensionDir))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -78,6 +86,8 @@ func main() {
 	switch *outputFormat {
 	case "json":
 		outputJSON(runtimeTypes)
+	case "dts":
+		fmt.Print(generateTypeScriptDeclarations(runtimeTypes, false))
 	case "ts":
 		fmt.Print(generateTypeScript(runtimeTypes))
 	default:
@@ -87,100 +97,141 @@ func main() {
 }
 
 func parseExtensions(dir string) (RuntimeTypes, error) {
+	return parseExtensionDirs([]string{dir})
+}
+
+func parseExtensionDirs(dirs []string) (RuntimeTypes, error) {
 	extensionMeta := make(map[string]struct {
 		namespace    string
 		subNamespace string
 	})
-	methodsTypes := make(map[string][]MethodInfo)
+	methodsByType := make(map[string][]MethodDef)
+	namespaceByServiceBase := make(map[string]string)
 	knownTypes := make(map[string]rawTypeInfo)
+	var registeredExtensions []extensionRef
 
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
 		}
-		if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+
+		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+
+			fset := token.NewFileSet()
+			node, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+			if err != nil {
+				return fmt.Errorf("failed to parse %s: %w", path, err)
+			}
+
+			ast.Inspect(node, func(n ast.Node) bool {
+				if genDecl, ok := n.(*ast.GenDecl); ok && genDecl.Tok == token.CONST {
+					for _, spec := range genDecl.Specs {
+						valueSpec, ok := spec.(*ast.ValueSpec)
+						if !ok {
+							continue
+						}
+						for i, name := range valueSpec.Names {
+							if !strings.HasSuffix(name.Name, "Namespace") || i >= len(valueSpec.Values) {
+								continue
+							}
+							namespace := extractStringLiteral(valueSpec.Values[i])
+							if namespace == "" {
+								continue
+							}
+							baseName := strings.TrimSuffix(name.Name, "Namespace")
+							namespaceByServiceBase[baseName] = namespace
+						}
+					}
+				}
+
+				if typeSpec, ok := n.(*ast.TypeSpec); ok && isExported(typeSpec.Name.Name) {
+					switch t := typeSpec.Type.(type) {
+					case *ast.StructType:
+						knownTypes[typeSpec.Name.Name] = rawTypeInfo{
+							name:   typeSpec.Name.Name,
+							kind:   "struct",
+							fields: extractStructFields(t),
+						}
+					default:
+						knownTypes[typeSpec.Name.Name] = rawTypeInfo{
+							name:      typeSpec.Name.Name,
+							kind:      "alias",
+							aliasType: exprToString(typeSpec.Type),
+						}
+					}
+				}
+
+				if funcDecl, ok := n.(*ast.FuncDecl); ok {
+					if funcDecl.Name.Name == "init" && funcDecl.Body != nil {
+						registeredExtensions = append(registeredExtensions, extractRegisteredExtensions(funcDecl.Body)...)
+					}
+					if funcDecl.Recv == nil || len(funcDecl.Recv.List) == 0 {
+						return true
+					}
+
+					recvType := funcDecl.Recv.List[0].Type
+					var recvTypeName string
+					switch t := recvType.(type) {
+					case *ast.StarExpr:
+						if ident, ok := t.X.(*ast.Ident); ok {
+							recvTypeName = ident.Name
+						}
+					case *ast.Ident:
+						recvTypeName = t.Name
+					}
+
+					if recvTypeName == "" {
+						return true
+					}
+
+					methodName := funcDecl.Name.Name
+
+					if methodName == "Namespace" && strings.HasSuffix(recvTypeName, "Extension") {
+						if retVal := extractStringReturn(funcDecl); retVal != "" {
+							meta := extensionMeta[recvTypeName]
+							meta.namespace = retVal
+							extensionMeta[recvTypeName] = meta
+						}
+						return true
+					}
+
+					if methodName == "SubNamespace" && strings.HasSuffix(recvTypeName, "Extension") {
+						if retVal := extractStringReturn(funcDecl); retVal != "" {
+							meta := extensionMeta[recvTypeName]
+							meta.subNamespace = retVal
+							extensionMeta[recvTypeName] = meta
+						}
+						return true
+					}
+
+					if isExported(methodName) {
+						method := extractMethod(funcDecl, knownTypes)
+						methodsByType[recvTypeName] = append(methodsByType[recvTypeName], method)
+					}
+
+					return true
+				}
+
+				return true
+			})
+
 			return nil
-		}
-
-		fset := token.NewFileSet()
-		node, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
-		if err != nil {
-			return fmt.Errorf("failed to parse %s: %w", path, err)
-		}
-
-		ast.Inspect(node, func(n ast.Node) bool {
-			if typeSpec, ok := n.(*ast.TypeSpec); ok && isExported(typeSpec.Name.Name) {
-				switch t := typeSpec.Type.(type) {
-				case *ast.StructType:
-					knownTypes[typeSpec.Name.Name] = rawTypeInfo{
-						name:   typeSpec.Name.Name,
-						kind:   "struct",
-						fields: extractStructFields(t),
-					}
-				default:
-					knownTypes[typeSpec.Name.Name] = rawTypeInfo{
-						name:      typeSpec.Name.Name,
-						kind:      "alias",
-						aliasType: exprToString(typeSpec.Type),
-					}
-				}
-			}
-
-			funcDecl, ok := n.(*ast.FuncDecl)
-			if !ok || funcDecl.Recv == nil || len(funcDecl.Recv.List) == 0 {
-				return true
-			}
-
-			recvType := funcDecl.Recv.List[0].Type
-			var recvTypeName string
-			switch t := recvType.(type) {
-			case *ast.StarExpr:
-				if ident, ok := t.X.(*ast.Ident); ok {
-					recvTypeName = ident.Name
-				}
-			case *ast.Ident:
-				recvTypeName = t.Name
-			}
-
-			if recvTypeName == "" {
-				return true
-			}
-
-			methodName := funcDecl.Name.Name
-
-			if methodName == "Namespace" && strings.HasSuffix(recvTypeName, "Extension") {
-				if retVal := extractStringReturn(funcDecl); retVal != "" {
-					meta := extensionMeta[recvTypeName]
-					meta.namespace = retVal
-					extensionMeta[recvTypeName] = meta
-				}
-				return true
-			}
-
-			if methodName == "SubNamespace" && strings.HasSuffix(recvTypeName, "Extension") {
-				if retVal := extractStringReturn(funcDecl); retVal != "" {
-					meta := extensionMeta[recvTypeName]
-					meta.subNamespace = retVal
-					extensionMeta[recvTypeName] = meta
-				}
-				return true
-			}
-
-			if strings.HasSuffix(recvTypeName, "Methods") && isExported(methodName) {
-				method := extractMethod(funcDecl, knownTypes)
-				methodsTypes[recvTypeName] = append(methodsTypes[recvTypeName], method)
-			}
-
-			return true
 		})
-
-		return nil
-	})
-	if err != nil {
-		return RuntimeTypes{}, err
+		if err != nil {
+			return RuntimeTypes{}, err
+		}
 	}
 
-	runtimeTypes := RuntimeTypes{}
+	runtimeTypes := RuntimeTypes{
+		Extensions: make(map[string]map[string]RuntimeExtensionDef),
+		Structs:    make(map[string]StructDef),
+	}
 
 	extNames := make([]string, 0, len(extensionMeta))
 	for extType, meta := range extensionMeta {
@@ -195,22 +246,77 @@ func parseExtensions(dir string) (RuntimeTypes, error) {
 		meta := extensionMeta[extType]
 		baseName := strings.TrimSuffix(extType, "Extension")
 		methodsTypeName := baseName + "Methods"
-		methods := methodsTypes[methodsTypeName]
+		methods := methodsByType[methodsTypeName]
 
 		for _, method := range methods {
 			for _, param := range method.Params {
 				collectReferencedTypes(param.GoType, knownTypes, referencedTypes)
 			}
-			if method.ReturnType != "" {
-				collectReferencedTypes(method.ReturnType, knownTypes, referencedTypes)
+			for _, returnType := range method.ReturnTypes {
+				collectReferencedTypes(returnType.GoType, knownTypes, referencedTypes)
 			}
 		}
 
-		runtimeTypes.Extensions = append(runtimeTypes.Extensions, ExtensionInfo{
-			Namespace:    meta.namespace,
-			SubNamespace: meta.subNamespace,
-			Methods:      methods,
-		})
+		addRuntimeExtension(runtimeTypes, meta.namespace, meta.subNamespace, methods)
+	}
+
+	serviceNames := make([]string, 0, len(namespaceByServiceBase))
+	for baseName := range namespaceByServiceBase {
+		if _, ok := methodsByType[baseName+"Service"]; ok {
+			serviceNames = append(serviceNames, baseName)
+		}
+	}
+	slices.Sort(serviceNames)
+
+	for _, baseName := range serviceNames {
+		methods := methodsByType[baseName+"Service"]
+		for _, method := range methods {
+			for _, param := range method.Params {
+				collectReferencedTypes(param.GoType, knownTypes, referencedTypes)
+			}
+			for _, returnType := range method.ReturnTypes {
+				collectReferencedTypes(returnType.GoType, knownTypes, referencedTypes)
+			}
+		}
+
+		addRuntimeExtension(runtimeTypes, "strux", namespaceByServiceBase[baseName], methods)
+	}
+
+	slices.SortFunc(registeredExtensions, func(a, b extensionRef) int {
+		if a.namespace != b.namespace {
+			return strings.Compare(a.namespace, b.namespace)
+		}
+		if a.subNamespace != b.subNamespace {
+			return strings.Compare(a.subNamespace, b.subNamespace)
+		}
+		return strings.Compare(a.methodsTypeName, b.methodsTypeName)
+	})
+
+	seenExtensions := make(map[string]bool)
+	for namespace, subNamespaces := range runtimeTypes.Extensions {
+		for subNamespace := range subNamespaces {
+			seenExtensions[namespace+"."+subNamespace] = true
+		}
+	}
+
+	for _, ext := range registeredExtensions {
+		key := ext.namespace + "." + ext.subNamespace
+		if seenExtensions[key] {
+			continue
+		}
+
+		methods := methodsByType[ext.methodsTypeName]
+		for _, method := range methods {
+			for _, param := range method.Params {
+				collectReferencedTypes(param.GoType, knownTypes, referencedTypes)
+			}
+			for _, returnType := range method.ReturnTypes {
+				collectReferencedTypes(returnType.GoType, knownTypes, referencedTypes)
+			}
+		}
+
+		addRuntimeExtension(runtimeTypes, ext.namespace, ext.subNamespace, methods)
+		seenExtensions[key] = true
 	}
 
 	typeNames := make([]string, 0, len(referencedTypes))
@@ -231,21 +337,118 @@ func parseExtensions(dir string) (RuntimeTypes, error) {
 					TSType: goTypeToTS(field.GoType, knownTypes, false),
 				})
 			}
-			runtimeTypes.Types = append(runtimeTypes.Types, TypeInfo{
-				Name:   name,
-				Kind:   "struct",
-				Fields: fields,
-			})
+			runtimeTypes.Structs[name] = StructDef{Fields: fields}
 		case "alias":
-			runtimeTypes.Types = append(runtimeTypes.Types, TypeInfo{
-				Name:   name,
-				Kind:   "alias",
-				TSType: goTypeToTS(typeInfo.aliasType, knownTypes, false),
-			})
+			// Runtime JSON uses the same struct/method shape as strux-introspect.
+			// Aliases are resolved to their underlying TypeScript type at reference sites.
 		}
 	}
 
 	return runtimeTypes, nil
+}
+
+func splitDirs(value string) []string {
+	parts := strings.Split(value, ",")
+	dirs := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			dirs = append(dirs, part)
+		}
+	}
+	return dirs
+}
+
+func addRuntimeExtension(runtimeTypes RuntimeTypes, namespace string, subNamespace string, methods []MethodDef) {
+	if runtimeTypes.Extensions[namespace] == nil {
+		runtimeTypes.Extensions[namespace] = make(map[string]RuntimeExtensionDef)
+	}
+	runtimeTypes.Extensions[namespace][subNamespace] = RuntimeExtensionDef{Methods: methods}
+}
+
+func extractRegisteredExtensions(body *ast.BlockStmt) []extensionRef {
+	var refs []extensionRef
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		namespace, subNamespace, methodsTypeName, ok := extractRegistrationCall(call)
+		if !ok {
+			return true
+		}
+		if namespace == "" || subNamespace == "" || methodsTypeName == "" {
+			return true
+		}
+
+		refs = append(refs, extensionRef{
+			namespace:       namespace,
+			subNamespace:    subNamespace,
+			methodsTypeName: methodsTypeName,
+		})
+		return true
+	})
+
+	return refs
+}
+
+func extractRegistrationCall(call *ast.CallExpr) (string, string, string, bool) {
+	name := callName(call)
+
+	switch {
+	case name == "RegisterCustomExtension" && len(call.Args) == 2:
+		return "strux", extractStringLiteral(call.Args[0]), extractInstanceType(call.Args[1]), true
+	case name == "RegisterExtension" && len(call.Args) == 3:
+		return extractStringLiteral(call.Args[0]), extractStringLiteral(call.Args[1]), extractInstanceType(call.Args[2]), true
+	default:
+		return "", "", "", false
+	}
+}
+
+func callName(call *ast.CallExpr) string {
+	switch fun := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		return fun.Sel.Name
+	case *ast.Ident:
+		return fun.Name
+	default:
+		return ""
+	}
+}
+
+func extractStringLiteral(expr ast.Expr) string {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return ""
+	}
+	return strings.Trim(lit.Value, `"`)
+}
+
+func extractInstanceType(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.UnaryExpr:
+		if t.Op == token.AND {
+			return extractInstanceType(t.X)
+		}
+	case *ast.CompositeLit:
+		return exprToTypeName(t.Type)
+	}
+	return ""
+}
+
+func exprToTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.StarExpr:
+		return exprToTypeName(t.X)
+	default:
+		return ""
+	}
 }
 
 func extractStructFields(structType *ast.StructType) []FieldDef {
@@ -310,9 +513,9 @@ func extractStringReturn(funcDecl *ast.FuncDecl) string {
 	return ""
 }
 
-func extractMethod(funcDecl *ast.FuncDecl, knownTypes map[string]rawTypeInfo) MethodInfo {
+func extractMethod(funcDecl *ast.FuncDecl, knownTypes map[string]rawTypeInfo) MethodDef {
 	methodName := funcDecl.Name.Name
-	var params []ParamDef
+	params := []ParamDef{}
 
 	if funcDecl.Type.Params != nil {
 		paramIndex := 0
@@ -341,7 +544,7 @@ func extractMethod(funcDecl *ast.FuncDecl, knownTypes map[string]rawTypeInfo) Me
 		}
 	}
 
-	var returnType string
+	returnTypes := []TypeDef{}
 	hasError := false
 
 	if funcDecl.Type.Results != nil && len(funcDecl.Type.Results.List) > 0 {
@@ -351,17 +554,32 @@ func extractMethod(funcDecl *ast.FuncDecl, knownTypes map[string]rawTypeInfo) Me
 			hasError = true
 		}
 
-		firstReturn := exprToString(results[0].Type)
-		if firstReturn != "error" {
-			returnType = goTypeToTS(firstReturn, knownTypes, true)
+		for _, result := range results {
+			goType := exprToString(result.Type)
+			if goType == "error" {
+				continue
+			}
+			if len(result.Names) > 1 {
+				for range result.Names {
+					returnTypes = append(returnTypes, TypeDef{
+						GoType: goType,
+						TSType: goTypeToTS(goType, knownTypes, true),
+					})
+				}
+				continue
+			}
+			returnTypes = append(returnTypes, TypeDef{
+				GoType: goType,
+				TSType: goTypeToTS(goType, knownTypes, true),
+			})
 		}
 	}
 
-	return MethodInfo{
-		Name:       methodName,
-		Params:     params,
-		ReturnType: returnType,
-		HasError:   hasError,
+	return MethodDef{
+		Name:        methodName,
+		Params:      params,
+		ReturnTypes: returnTypes,
+		HasError:    hasError,
 	}
 }
 
@@ -378,51 +596,60 @@ func generateTypeScript(runtimeTypes RuntimeTypes) string {
 	out.WriteString("// Generated by: go run ./cmd/gen-runtime-types\n")
 	out.WriteString("// DO NOT EDIT - regenerate with: go run ./cmd/gen-runtime-types -format=ts > src/types/strux-runtime.ts\n\n")
 
+	data, err := json.MarshalIndent(runtimeTypes, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	out.WriteString("export const STRUX_RUNTIME_TYPES = ")
+	out.Write(data)
+	out.WriteString(" as const;\n")
+	return out.String()
+}
+
+func generateTypeScriptDeclarations(runtimeTypes RuntimeTypes, includeIPC bool) string {
 	var sb strings.Builder
 	sb.WriteString("// Strux Runtime API\n")
 
-	if len(runtimeTypes.Types) > 0 {
+	if len(runtimeTypes.Structs) > 0 {
 		sb.WriteString("declare namespace StruxRuntime {\n")
-		for i, typeInfo := range runtimeTypes.Types {
+		typeNames := make([]string, 0, len(runtimeTypes.Structs))
+		for name := range runtimeTypes.Structs {
+			typeNames = append(typeNames, name)
+		}
+		slices.Sort(typeNames)
+		for i, name := range typeNames {
 			if i > 0 {
 				sb.WriteString("\n")
 			}
-			switch typeInfo.Kind {
-			case "struct":
-				sb.WriteString(fmt.Sprintf("  interface %s {\n", typeInfo.Name))
-				for _, field := range typeInfo.Fields {
-					sb.WriteString(fmt.Sprintf("    %s: %s;\n", field.Name, field.TSType))
-				}
-				sb.WriteString("  }\n")
-			case "alias":
-				sb.WriteString(fmt.Sprintf("  type %s = %s;\n", typeInfo.Name, typeInfo.TSType))
+			structDef := runtimeTypes.Structs[name]
+			sb.WriteString(fmt.Sprintf("  interface %s {\n", name))
+			for _, field := range structDef.Fields {
+				sb.WriteString(fmt.Sprintf("    %s: %s;\n", field.Name, field.TSType))
 			}
+			sb.WriteString("  }\n")
 		}
 		sb.WriteString("}\n\n")
 	}
 
-	namespaces := make(map[string][]ExtensionInfo)
-	for _, ext := range runtimeTypes.Extensions {
-		namespaces[ext.Namespace] = append(namespaces[ext.Namespace], ext)
-	}
-
-	namespaceNames := make([]string, 0, len(namespaces))
-	for namespace := range namespaces {
+	namespaceNames := make([]string, 0, len(runtimeTypes.Extensions))
+	for namespace := range runtimeTypes.Extensions {
 		namespaceNames = append(namespaceNames, namespace)
 	}
 	slices.Sort(namespaceNames)
 
 	for _, namespace := range namespaceNames {
-		exts := namespaces[namespace]
-		slices.SortFunc(exts, func(a, b ExtensionInfo) int {
-			return strings.Compare(a.SubNamespace, b.SubNamespace)
-		})
-
 		interfaceName := strings.ToUpper(namespace[:1]) + namespace[1:]
 		sb.WriteString(fmt.Sprintf("interface %s {\n", interfaceName))
 
-		for _, ext := range exts {
-			sb.WriteString(fmt.Sprintf("  %s: {\n", ext.SubNamespace))
+		subNamespaceNames := make([]string, 0, len(runtimeTypes.Extensions[namespace]))
+		for subNamespace := range runtimeTypes.Extensions[namespace] {
+			subNamespaceNames = append(subNamespaceNames, subNamespace)
+		}
+		slices.Sort(subNamespaceNames)
+
+		for _, subNamespace := range subNamespaceNames {
+			ext := runtimeTypes.Extensions[namespace][subNamespace]
+			sb.WriteString(fmt.Sprintf("  %s: {\n", subNamespace))
 			for _, method := range ext.Methods {
 				sb.WriteString(fmt.Sprintf("    %s(%s): %s;\n", method.Name, formatParams(method.Params), formatReturnType(method)))
 			}
@@ -432,7 +659,8 @@ func generateTypeScript(runtimeTypes RuntimeTypes) string {
 		sb.WriteString("}\n")
 	}
 
-	ipcTypes := `  ipc: {
+	if includeIPC {
+		ipcTypes := `  ipc: {
     /**
      * Register a listener for an event from the Go backend.
      * Returns an unsubscribe function.
@@ -449,14 +677,15 @@ func generateTypeScript(runtimeTypes RuntimeTypes) string {
   };
 `
 
-	struxInterface := sb.String()
-	closingBrace := "}\n"
-	if idx := strings.LastIndex(struxInterface, closingBrace); idx >= 0 {
-		struxInterface = struxInterface[:idx] + ipcTypes + closingBrace
+		struxInterface := sb.String()
+		closingBrace := "}\n"
+		if idx := strings.LastIndex(struxInterface, closingBrace); idx >= 0 {
+			struxInterface = struxInterface[:idx] + ipcTypes + closingBrace
+		}
+		return struxInterface
 	}
 
-	out.WriteString(fmt.Sprintf("export const STRUX_RUNTIME_TYPES = `%s`;\n", struxInterface))
-	return out.String()
+	return sb.String()
 }
 
 func formatParams(params []ParamDef) string {
@@ -467,10 +696,19 @@ func formatParams(params []ParamDef) string {
 	return strings.Join(parts, ", ")
 }
 
-func formatReturnType(method MethodInfo) string {
+func formatReturnType(method MethodDef) string {
 	baseType := "void"
-	if method.ReturnType != "" {
-		baseType = method.ReturnType
+	if len(method.ReturnTypes) == 1 {
+		baseType = method.ReturnTypes[0].TSType
+		if method.HasError {
+			baseType += " | null"
+		}
+	} else if len(method.ReturnTypes) > 1 {
+		parts := make([]string, 0, len(method.ReturnTypes))
+		for _, returnType := range method.ReturnTypes {
+			parts = append(parts, returnType.TSType)
+		}
+		baseType = "[" + strings.Join(parts, ", ") + "]"
 		if method.HasError {
 			baseType += " | null"
 		}
@@ -532,13 +770,22 @@ func goTypeToTS(goType string, knownTypes map[string]rawTypeInfo, qualifyKnownTy
 	if strings.Contains(goType, ".") {
 		parts := strings.Split(goType, ".")
 		name := parts[len(parts)-1]
-		if _, ok := knownTypes[name]; ok {
+		if typeInfo, ok := knownTypes[name]; ok {
+			if typeInfo.kind == "alias" {
+				return goTypeToTS(typeInfo.aliasType, knownTypes, qualifyKnownTypes)
+			}
+			if qualifyKnownTypes {
+				return "StruxRuntime." + name
+			}
 			return name
 		}
 		return "unknown"
 	}
 
-	if _, ok := knownTypes[goType]; ok {
+	if typeInfo, ok := knownTypes[goType]; ok {
+		if typeInfo.kind == "alias" {
+			return goTypeToTS(typeInfo.aliasType, knownTypes, qualifyKnownTypes)
+		}
 		if qualifyKnownTypes {
 			return "StruxRuntime." + goType
 		}
@@ -590,6 +837,8 @@ func collectReferencedTypes(goType string, knownTypes map[string]rawTypeInfo, se
 
 func extractReferencedTypeNames(goType string, knownTypes map[string]rawTypeInfo) []string {
 	switch {
+	case strings.HasSuffix(goType, "[]"):
+		return extractReferencedTypeNames(strings.TrimSuffix(goType, "[]"), knownTypes)
 	case strings.HasPrefix(goType, "[]"):
 		return extractReferencedTypeNames(goType[2:], knownTypes)
 	case strings.HasPrefix(goType, "*"):

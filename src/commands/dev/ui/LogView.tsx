@@ -10,6 +10,7 @@
  */
 import React, { useEffect, useRef } from "react"
 import { Box, useInput, useStdout } from "ink"
+import type { SystemUpdateProgressState } from "./store"
 export interface LogEntry {
     level: string
     message: string
@@ -21,6 +22,9 @@ export interface LogEntry {
 
 const moveCursor = (row: number, col: number) => `\x1b[${row};${col}H`
 const resetStyle = "\x1b[0m"
+const primary = "\x1b[38;2;165;165;255m"
+const accent = "\x1b[38;2;157;140;255m"
+const muted = "\x1b[90m"
 
 
 interface LogViewProps {
@@ -32,10 +36,78 @@ interface LogViewProps {
     width?: number
     rowOffset?: number
     colOffset?: number
+    updateProgress?: SystemUpdateProgressState | null
 }
 
 
-export function LogView({ logs, focused, filter, maxLines = 1000, height, width, rowOffset, colOffset }: LogViewProps) {
+function fitText(value: string, width: number): string {
+    if (width <= 0) return ""
+
+    const plain = value.replace(/\r/g, "")
+    if (plain.length <= width) return plain + " ".repeat(width - plain.length)
+    if (width <= 1) return plain.slice(0, width)
+
+    return plain.slice(0, width - 1) + "…"
+}
+
+
+function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B"
+
+    const units = ["B", "KB", "MB", "GB", "TB"]
+    let value = bytes
+    let unit = 0
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024
+        unit++
+    }
+
+    return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`
+}
+
+
+function progressBar(progress: number, width: number): string {
+    const safeWidth = Math.max(8, width)
+    const normalized = Math.max(0, Math.min(100, progress))
+    const filled = Math.max(0, Math.min(safeWidth, Math.round((normalized / 100) * safeWidth)))
+    return `${"#".repeat(filled)}${"-".repeat(safeWidth - filled)}`
+}
+
+
+function renderUpdateDialog(progress: SystemUpdateProgressState, row: number, col: number, viewHeight: number, viewWidth: number): string {
+    if (viewHeight < 5 || viewWidth < 32) return ""
+
+    const dialogWidth = Math.max(32, Math.min(72, viewWidth - 4))
+    const dialogHeight = 5
+    const left = col + Math.max(1, Math.floor((viewWidth - dialogWidth) / 2))
+    const top = row + Math.max(1, Math.floor((viewHeight - dialogHeight) / 2))
+    const innerWidth = dialogWidth - 4
+    const barWidth = Math.max(8, innerWidth - 2)
+    const detail = progress.totalBytes
+        ? `${formatBytes(progress.bytesWritten ?? 0)} / ${formatBytes(progress.totalBytes)}`
+        : (progress.message ?? "")
+    const header = [
+        "Update",
+        progress.status,
+        `${progress.progress}%`,
+        progress.slot ? `slot ${progress.slot}` : "",
+        progress.version ? `v${progress.version}` : "",
+    ].filter(Boolean)
+        .join("  ")
+    const horizontal = "─".repeat(dialogWidth - 2)
+
+    let output = ""
+    output += moveCursor(top, left) + `${primary}╭${horizontal}╮${resetStyle}`
+    output += moveCursor(top + 1, left) + `${primary}│${resetStyle} ${accent}${fitText(header, innerWidth)}${resetStyle} ${primary}│${resetStyle}`
+    output += moveCursor(top + 2, left) + `${primary}│${resetStyle} ${primary}[${progressBar(progress.progress, barWidth)}]${resetStyle} ${primary}│${resetStyle}`
+    output += moveCursor(top + 3, left) + `${primary}│${resetStyle} ${muted}${fitText(detail, innerWidth)}${resetStyle} ${primary}│${resetStyle}`
+    output += moveCursor(top + 4, left) + `${primary}╰${horizontal}╯${resetStyle}`
+
+    return output
+}
+
+
+export function LogView({ logs, focused, filter, maxLines = 1000, height, width, rowOffset, colOffset, updateProgress }: LogViewProps) {
 
     const viewHeight = height ?? 20
     const viewWidth = width ?? 80
@@ -52,9 +124,11 @@ export function LogView({ logs, focused, filter, maxLines = 1000, height, width,
     const logsRef = useRef(logs)
     const filterRef = useRef(filter)
     const focusedRef = useRef(focused)
+    const updateProgressRef = useRef(updateProgress)
     logsRef.current = logs
     filterRef.current = filter
     focusedRef.current = focused
+    updateProgressRef.current = updateProgress
 
 
     const writeToStdout = (data: string) => {
@@ -199,6 +273,10 @@ export function LogView({ logs, focused, filter, maxLines = 1000, height, width,
         const statusPad = Math.max(0, viewWidth - statusLeft.length - statusRight.length)
         output += moveCursor(row + viewHeight, col)
         output += `\x1b[90m${statusRight}${" ".repeat(statusPad)}${statusLeft}${resetStyle}`
+
+        if (updateProgressRef.current) {
+            output += renderUpdateDialog(updateProgressRef.current, row, col, viewHeight, viewWidth)
+        }
 
         writeToStdout(output)
 

@@ -17,6 +17,7 @@ import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
 import { type ScriptStep } from "../../types/bsp-yaml"
+import { type ProjectScriptStep } from "../../types/main-yaml"
 
 // Build Caching System
 import {
@@ -41,18 +42,25 @@ import {
     buildKernel,
     buildBootloader,
     postProcessRootFS,
+    bundleSystemUpdate,
+    removeDevEnvConfig,
     updateDevEnvConfig,
     writeDisplayConfig
 } from "./steps"
+import { copyAllInitialArtifacts } from "./artifacts"
 
 // BSP Script Execution
 import { runScriptsForStep } from "./bsp-scripts"
+
+// Project Script Execution
+import { runProjectScriptsForStep } from "./project-scripts"
 
 export interface BuildMetadata {
     buildMode: "dev" | "production"
     buildTime: string
     bspName: string
     struxVersion: string
+    projectVersion: string
 }
 
 export interface BuildLogger {
@@ -71,6 +79,7 @@ export interface BuildValidators {
 export interface BuildFiles {
     fileExists(path: string): boolean
     prepareBuildDirectories(): Promise<void>
+    prepareInitialArtifacts(): Promise<void>
     writeBuildMetadata(bspName: string, metadata: BuildMetadata): Promise<void>
 }
 
@@ -112,11 +121,14 @@ export interface BuildSteps {
     buildRootFS(): Promise<void>
     writeDisplayConfig(bspName: string): Promise<void>
     postProcessRootFS(): Promise<void>
+    bundleSystemUpdate(): Promise<void>
     updateDevEnvConfig(bspName: string): Promise<void>
+    removeDevEnvConfig(bspName: string): Promise<void>
 }
 
 export interface BuildScripts {
     runScriptsForStep(step: ScriptStep, manifest: BuildCacheManifest): Promise<boolean>
+    runProjectScriptsForStep(step: ProjectScriptStep, manifest: BuildCacheManifest): Promise<boolean>
 }
 
 export interface BuildRunner {
@@ -145,6 +157,7 @@ export const realBuildDeps: BuildDeps = {
     files: {
         fileExists,
         prepareBuildDirectories,
+        prepareInitialArtifacts: copyAllInitialArtifacts,
         writeBuildMetadata,
     },
     cache: {
@@ -167,10 +180,13 @@ export const realBuildDeps: BuildDeps = {
         buildRootFS,
         writeDisplayConfig,
         postProcessRootFS,
+        bundleSystemUpdate,
         updateDevEnvConfig,
+        removeDevEnvConfig,
     },
     scripts: {
         runScriptsForStep,
+        runProjectScriptsForStep,
     },
     runner: Runner,
     now: () => new Date(),
@@ -215,6 +231,7 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
     // PREPARE BUILD DIRECTORIES
     // ========================================
     await deps.files.prepareBuildDirectories()
+    await deps.files.prepareInitialArtifacts()
 
     // ========================================
     // SMART BUILD CACHING SYSTEM
@@ -281,6 +298,13 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
     // Wrapper that tracks whether any BSP script ran
     async function runBspScripts(step: ScriptStep) {
         if (await deps.scripts.runScriptsForStep(step, manifest)) {
+            anyStepRan = true
+        }
+    }
+
+    // Wrapper that tracks whether any project (strux.yaml) script ran
+    async function runProjectScripts(step: ProjectScriptStep) {
+        if (await deps.scripts.runProjectScriptsForStep(step, manifest)) {
             anyStepRan = true
         }
     }
@@ -359,6 +383,8 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
             // This ensures inspector and other dev config changes are reflected immediately
             if (isDevMode) {
                 await deps.steps.updateDevEnvConfig(bspName)
+            } else {
+                await deps.steps.removeDevEnvConfig(bspName)
             }
         }
         await runBspScripts("after_client")
@@ -440,12 +466,25 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
         }
 
         // ========================================
+        // PROJECT ROOTFS SCRIPTS
+        // ========================================
+        // Run project-defined scripts against the assembled rootfs. These edit
+        // rootfs-post.tar.gz in place, so the BSP's bundle/make_image stages
+        // below transparently pick up the changes.
+        await runProjectScripts("rootfs_post")
+
+        // ========================================
         // FINAL IMAGE BUNDLING
         // ========================================
         await runBspScripts("before_bundle")
 
         // Run BSP's make_image script(s)
         await runBspScripts("make_image")
+
+        if (Settings.main?.update?.enabled && Settings.main?.update?.auto_bundle) {
+            anyStepRan = true
+            await deps.steps.bundleSystemUpdate()
+        }
 
         // ========================================
         // BUILD LIFECYCLE: after_build
@@ -459,7 +498,8 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
             buildMode: isDevMode ? "dev" : "production",
             buildTime: deps.now().toISOString(),
             bspName,
-            struxVersion: Settings.struxVersion
+            struxVersion: Settings.struxVersion,
+            projectVersion: Settings.projectVersion
         } satisfies BuildMetadata
         await deps.files.writeBuildMetadata(bspName, buildMetadata)
 

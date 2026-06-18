@@ -30,6 +30,7 @@ type MessageTypes<TUnion> =
 interface WebSocketData {
     socketName: string
     version: string
+    httpBaseURL: string
 }
 
 
@@ -143,6 +144,14 @@ export class Socket<TSend, TReceive> {
     }
 
 
+    // Get the HTTP origin this websocket client used to reach the dev server
+    getClientHTTPBaseURL(ws: ServerWebSocket<WebSocketData>): string {
+
+        return ws.data.httpBaseURL
+
+    }
+
+
     // Check if any clients are connected
     hasClients(): boolean {
 
@@ -199,6 +208,8 @@ interface SocketConfig {
     aliases?: string[]
 }
 
+type HTTPRouteHandler = (req: Request) => Response | Promise<Response> | null | undefined
+
 export class SocketManager {
 
     private static instance: SocketManager
@@ -207,6 +218,7 @@ export class SocketManager {
     private sharedServer: ReturnType<typeof Bun.serve> | null = null
     private portServers = new Map<number, ReturnType<typeof Bun.serve>>()
     private authKey: string | null = null
+    private httpRouteHandler: HTTPRouteHandler | null = null
 
 
     static getInstance(): SocketManager {
@@ -280,6 +292,13 @@ export class SocketManager {
     }
 
 
+    setHTTPRouteHandler(handler: HTTPRouteHandler | null): void {
+
+        this.httpRouteHandler = handler
+
+    }
+
+
     // Start all servers
     listen(opts: { port: number, authKey?: string }): void {
 
@@ -316,7 +335,7 @@ export class SocketManager {
                         const url = new URL(req.url)
                         const version = url.searchParams.get("v") ?? FALLBACK_PROTOCOL_VERSION
 
-                        const upgraded = server.upgrade(req, { data: { socketName: name, version } })
+                        const upgraded = server.upgrade(req, { data: { socketName: name, version, httpBaseURL: url.origin } })
                         if (!upgraded) return new Response("WebSocket upgrade failed", { status: 400 })
 
                     },
@@ -351,13 +370,17 @@ export class SocketManager {
         // Shared server for path-based sockets
         if (pathMap.size > 0) {
 
+            const manager = this
             this.sharedServer = Bun.serve<WebSocketData>({
 
                 port: opts.port,
 
-                fetch(req, server) {
+                async fetch(req, server) {
 
                     const url = new URL(req.url)
+
+                    const routeResponse = await manager.httpRouteHandler?.(req)
+                    if (routeResponse) return routeResponse
 
                     if (!pathMap.has(url.pathname)) {
                         return new Response("Not found", { status: 404 })
@@ -368,7 +391,7 @@ export class SocketManager {
 
                     const version = url.searchParams.get("v") ?? FALLBACK_PROTOCOL_VERSION
 
-                    const upgraded = server.upgrade(req, { data: { socketName: url.pathname, version } })
+                    const upgraded = server.upgrade(req, { data: { socketName: url.pathname, version, httpBaseURL: url.origin } })
                     if (!upgraded) return new Response("WebSocket upgrade failed", { status: 400 })
 
                 },

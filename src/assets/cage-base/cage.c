@@ -257,6 +257,7 @@ usage(FILE *file, const char *cage)
 		" -s\t Allow VT switching\n"
 		" -v\t Show the version number and exit\n"
 		" --splash-image=PATH\t Show splash screen from PNG image\n"
+		" --only-display-image=PATH\t Display only a PNG image and do not launch applications\n"
 		"\n"
 		" Use -- when you want to pass arguments to APPLICATION\n",
 		cage);
@@ -267,6 +268,7 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 {
 	static struct option long_options[] = {
 		{"splash-image", required_argument, NULL, 'S'},
+		{"only-display-image", required_argument, NULL, 'O'},
 		{"input-map", required_argument, NULL, 'I'},
 		{"display-map", required_argument, NULL, 'M'},
 		{NULL, 0, NULL, 0}
@@ -300,7 +302,14 @@ parse_args(struct cg_server *server, int argc, char *argv[])
 			fprintf(stdout, "Cage version " CAGE_VERSION "\n");
 			exit(0);
 		case 'S':
+			if (!server->only_display_image) {
+				server->splash_image_path = strdup(optarg);
+			}
+			break;
+		case 'O':
+			free(server->splash_image_path);
 			server->splash_image_path = strdup(optarg);
+			server->only_display_image = true;
 			break;
 		case 'I':
 			server->input_map_path = strdup(optarg);
@@ -639,7 +648,7 @@ main(int argc, char *argv[])
 	}
 #endif
 
-	if (optind < argc && !spawn_primary_client(&server, argv + optind, &pid, &sigchld_source)) {
+	if (!server.only_display_image && optind < argc && !spawn_primary_client(&server, argv + optind, &pid, &sigchld_source)) {
 		ret = 1;
 		goto end;
 	}

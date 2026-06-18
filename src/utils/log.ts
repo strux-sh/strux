@@ -18,14 +18,20 @@ const ICONS = {
     cached: "◆",
     debug: "○",
     info: "•",
+    progress: "▰",
     spinner: "◐",
 } as const
+
+interface ProgressMarkerOptions {
+    spinner?: Spinner
+}
 
 export class Logger {
     // Styled prefix badge
     static prefix = chalk.bold.cyan("strux")
 
     private static sink: ((entry: { level: string; message: string; formatted?: string }) => void) | null = null
+    private static activeProgressBar = false
 
     public static setSink(sink: ((entry: { level: string; message: string; formatted?: string }) => void) | null): void {
         Logger.sink = sink
@@ -45,7 +51,95 @@ export class Logger {
         return `${Logger.prefix} ${iconColor(icon)} ${message}`
     }
 
+    private static finishActiveProgressBar(): void {
+        if (!Logger.activeProgressBar || Logger.sink) return
+        process.stdout.write("\n")
+        Logger.activeProgressBar = false
+    }
+
+    public static finishProgressBar(): void {
+        Logger.finishActiveProgressBar()
+    }
+
+    private static formatProgressBar(message: string, percent: number): string {
+        const clampedPercent = Math.max(0, Math.min(100, Math.round(percent)))
+        const terminalWidth = process.stdout.columns ?? 80
+        const fixedWidth = 14 + message.length + String(clampedPercent).length
+        const barWidth = Math.max(12, Math.min(36, terminalWidth - fixedWidth))
+        const filled = Math.round((clampedPercent / 100) * barWidth)
+        const empty = barWidth - filled
+        const bar = `${chalk.cyan("█".repeat(filled))}${chalk.dim("░".repeat(empty))}`
+        const percentText = clampedPercent >= 100
+            ? chalk.green(`${clampedPercent}%`)
+            : chalk.cyan(`${clampedPercent}%`)
+
+        return Logger.format(
+            ICONS.progress,
+            chalk.cyan,
+            `${message} ${chalk.dim("[")}${bar}${chalk.dim("]")} ${percentText}`
+        )
+    }
+
+    public static progressBar(message: string, percent: number): void {
+        const clampedPercent = Math.max(0, Math.min(100, Math.round(percent)))
+        const formatted = Logger.formatProgressBar(message, clampedPercent)
+        const plainMessage = `${message} (${clampedPercent}%)`
+
+        if (Logger.sink) {
+            Logger.sink({ level: "progress-bar", message: plainMessage, formatted })
+            return
+        }
+
+        const clearLine = "\x1b[2K"
+        process.stdout.write(`\r${clearLine}${formatted}`)
+        if (clampedPercent >= 100) {
+            process.stdout.write("\n")
+            Logger.activeProgressBar = false
+        } else {
+            Logger.activeProgressBar = true
+        }
+    }
+
+    public static isProgressMarkerLine(line: string): boolean {
+        return line.includes("STRUX_PROGRESS:") || line.includes("STRUX_PROGRESS_BAR:")
+    }
+
+    public static tryHandleProgressMarker(line: string, options: ProgressMarkerOptions = {}): boolean {
+        const progressBarMarker = "STRUX_PROGRESS_BAR:"
+        const progressBarIndex = line.indexOf(progressBarMarker)
+        if (progressBarIndex >= 0) {
+            const markerText = line.substring(progressBarIndex + progressBarMarker.length).trim()
+            const match = /^(.*?)\s*\((\d+(?:\.\d+)?)%?\)\s*$/.exec(markerText)
+            if (!match) return true
+
+            options.spinner?.stop()
+            const message = match[1].trim()
+            const percent = Number(match[2])
+            if (message && Number.isFinite(percent)) {
+                Logger.progressBar(message, percent)
+            }
+            return true
+        }
+
+        const progressMarker = "STRUX_PROGRESS:"
+        const progressIndex = line.indexOf(progressMarker)
+        if (progressIndex >= 0) {
+            const message = line.substring(progressIndex + progressMarker.length).trim()
+            if (message) {
+                if (options.spinner?.isActive()) {
+                    options.spinner.updateMessage(message)
+                } else {
+                    Logger.info(message)
+                }
+            }
+            return true
+        }
+
+        return false
+    }
+
     public static log(message: string) {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             Logger.sink({ level: "log", message, formatted: Logger.format(ICONS.arrow, chalk.cyan, message) })
             return
@@ -54,6 +148,7 @@ export class Logger {
     }
 
     public static success(message: string) {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             Logger.sink({ level: "success", message, formatted: Logger.format(ICONS.success, chalk.green, chalk.green(message)) })
             return
@@ -63,6 +158,7 @@ export class Logger {
 
     public static debug(message: string) {
         if (Settings.verbose) {
+            Logger.finishActiveProgressBar()
             if (Logger.sink) {
                 Logger.sink({ level: "debug", message, formatted: Logger.format(ICONS.debug, chalk.yellow, chalk.dim(message)) })
                 return
@@ -72,6 +168,7 @@ export class Logger {
     }
 
     public static error(message: string) {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             Logger.sink({ level: "error", message, formatted: Logger.format(ICONS.error, chalk.red, chalk.red(message)) })
             return
@@ -98,6 +195,7 @@ export class Logger {
     }
 
     public static cached(message: string) {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             Logger.sink({ level: "cached", message, formatted: Logger.format(ICONS.cached, chalk.magenta, `${message} ${chalk.dim("(cached)")}`) })
             return
@@ -106,6 +204,7 @@ export class Logger {
     }
 
     public static warning(message: string) {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             Logger.sink({ level: "warning", message, formatted: Logger.format(ICONS.warning, chalk.yellow, chalk.yellow(message)) })
             return
@@ -114,6 +213,7 @@ export class Logger {
     }
 
     public static info(message: string) {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             Logger.sink({ level: "info", message, formatted: Logger.format(ICONS.info, chalk.blue, message) })
             return
@@ -122,6 +222,7 @@ export class Logger {
     }
 
     public static title(msg: string): void {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             const line = chalk.dim("─".repeat(Math.min(msg.length + 4, 60)))
             Logger.sink({ level: "title", message: msg, formatted: `\n${chalk.bold.cyan(`${msg}`)}\n${line}` })
@@ -133,6 +234,7 @@ export class Logger {
     }
 
     public static blank(): void {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             Logger.sink({ level: "blank", message: "", formatted: "" })
             return
@@ -142,6 +244,7 @@ export class Logger {
 
     // For printing raw output (like error details) with proper indentation
     public static raw(message: string): void {
+        Logger.finishActiveProgressBar()
         if (Logger.sink) {
             const indent = "       " // Align with message text after prefix and icon
             const lines = message.split("\n")
@@ -170,6 +273,10 @@ export class Spinner {
 
     constructor(message: string) {
         this.message = message
+    }
+
+    isActive(): boolean {
+        return this.spinner !== null || this.interval !== null
     }
 
     private formatSpinnerText(msg: string): string {

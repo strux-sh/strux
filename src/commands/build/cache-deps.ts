@@ -96,7 +96,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
 
     application: {
         // Track the entire project folder for Go files
-        directories: ["./"],
+        directories: ["./", "bsp/{bsp}/runtime/"],
         // Exclude non-Go directories
         excludePatterns: [
             "frontend",
@@ -108,7 +108,11 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             "strux.yaml"
         ],
         yamlKeys: [
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.name" }
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.name" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.runtime.extensions" }
+        ],
+        yamlFileDependencies: [
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.runtime.extensions", mode: "file-list-in-objects", itemPath: "path" }
         ],
         internalAssets: ["@build-app-script"],
         // BSP-specific cache (architecture-dependent binary)
@@ -119,7 +123,9 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         // Cage sources are copied to dist/cage/ - track that directory
         directories: ["dist/cage/"],
         yamlKeys: [
-            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.env" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.hide_cursor" }
         ],
         // Build script is internal, cage sources come from dist/cage/
         internalAssets: ["@build-cage-script"],
@@ -161,6 +167,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         yamlKeys: [
             { file: "strux.yaml", keyPath: "dev.server" },
             { file: "strux.yaml", keyPath: "dev.inspector" },
+            { file: "strux.yaml", keyPath: "dev.usb" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" }
         ],
         // Build script is internal, but client sources come from dist/artifacts/client/
@@ -235,7 +242,10 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
     },
 
     "rootfs-post": {
-        files: ["dist/artifacts/logo.png"],
+        files: [
+            "dist/artifacts/logo.png",
+            "dist/cache/{bsp}/.dev-env.json"
+        ],
         directories: [
             // User project overlays
             "overlay/",
@@ -249,12 +259,16 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "strux.yaml", keyPath: "hostname" },
             { file: "strux.yaml", keyPath: "rootfs.overlay" },
             { file: "strux.yaml", keyPath: "boot.splash" },
+            // project.json is written in this step — invalidate when its fields change
+            { file: "strux.yaml", keyPath: "name" },
+            { file: "strux.yaml", keyPath: "project_version" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.overlay" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.hostname" },
             // Kernel-related keys — kernel installation now happens in post
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.boot.kernel.custom_kernel" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.arch" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.env" },
+            { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.cage.hide_cursor" },
             // Package keys — custom packages are now installed in post step
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.packages" },
             { file: "strux.yaml", keyPath: "rootfs.packages" },

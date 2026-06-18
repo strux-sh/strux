@@ -50,6 +50,9 @@
 	 WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED)
 
 static void
+output_state_apply_configured_transform(struct cg_output *output, struct wlr_output_state *state);
+
+static void
 update_output_manager_config(struct cg_server *server)
 {
 	struct wlr_output_configuration_v1 *config = wlr_output_configuration_v1_create();
@@ -111,6 +114,7 @@ output_enable(struct cg_output *output)
 
 	struct wlr_output_state state = {0};
 	wlr_output_state_set_enabled(&state, true);
+	output_state_apply_configured_transform(output, &state);
 
 	if (wlr_output_commit_state(wlr_output, &state)) {
 		output_layout_add_auto(output);
@@ -255,6 +259,84 @@ display_map_lookup(const char *map_path, const char *key)
 
 	fclose(f);
 	return NULL;
+}
+
+static bool
+parse_output_transform(const char *value, enum wl_output_transform *transform)
+{
+	if (!value || !*value) {
+		return false;
+	}
+
+	/* Strux transform values describe the physical display rotation. wlroots
+	 * applies the transform to client buffers, so 90/270 are inverted here. */
+	if (strcmp(value, "normal") == 0 || strcmp(value, "0") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_NORMAL;
+	} else if (strcmp(value, "90") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_270;
+	} else if (strcmp(value, "180") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_180;
+	} else if (strcmp(value, "270") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_90;
+	} else if (strcmp(value, "flipped") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_FLIPPED;
+	} else if (strcmp(value, "flipped-90") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_FLIPPED_270;
+	} else if (strcmp(value, "flipped-180") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_FLIPPED_180;
+	} else if (strcmp(value, "flipped-270") == 0) {
+		*transform = WL_OUTPUT_TRANSFORM_FLIPPED_90;
+	} else {
+		return false;
+	}
+
+	return true;
+}
+
+static char *
+lookup_output_transform_value(struct cg_output *output)
+{
+	struct cg_server *server = output->server;
+
+	if (server->display_map_path) {
+		char transform_key[128];
+		snprintf(transform_key, sizeof(transform_key), "%s.transform", output->wlr_output->name);
+		char *value = display_map_lookup(server->display_map_path, transform_key);
+		if (value) {
+			return value;
+		}
+
+		value = display_map_lookup(server->display_map_path, "transform");
+		if (value) {
+			return value;
+		}
+	}
+
+	const char *env_value = getenv("STRUX_OUTPUT_TRANSFORM");
+	if (env_value && *env_value) {
+		return strdup(env_value);
+	}
+
+	return NULL;
+}
+
+static void
+output_state_apply_configured_transform(struct cg_output *output, struct wlr_output_state *state)
+{
+	char *value = lookup_output_transform_value(output);
+	if (!value) {
+		return;
+	}
+
+	enum wl_output_transform transform;
+	if (parse_output_transform(value, &transform)) {
+		wlr_log(WLR_INFO, "Applying output transform %s to %s", value, output->wlr_output->name);
+		wlr_output_state_set_transform(state, transform);
+	} else {
+		wlr_log(WLR_ERROR, "Ignoring invalid output transform '%s' for %s", value, output->wlr_output->name);
+	}
+
+	free(value);
 }
 
 #define COG_NOT_CONFIGURED_URL "file:///strux/.not-configured.html"
@@ -439,6 +521,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 
 	struct wlr_output_state state = {0};
 	wlr_output_state_set_enabled(&state, true);
+	output_state_apply_configured_transform(output, &state);
 	if (!wl_list_empty(&wlr_output->modes)) {
 		struct wlr_output_mode *preferred_mode = wlr_output_preferred_mode(wlr_output);
 		if (preferred_mode) {
@@ -486,8 +569,11 @@ handle_new_output(struct wl_listener *listener, void *data)
 	/* Notify the primary client that a new output is available */
 	server_notify_output_event(output->server, "CONNECTED", wlr_output->name);
 
-	/* In per-view mode with a display map, spawn a Cog for this output */
-	if (server->output_mode == CAGE_MULTI_OUTPUT_MODE_PER_VIEW && server->display_map_path) {
+	/* In per-view mode with a display map, spawn a Cog for this output unless
+	 * Cage is being used as an image-only status display. */
+	if (!server->only_display_image &&
+	    server->output_mode == CAGE_MULTI_OUTPUT_MODE_PER_VIEW &&
+	    server->display_map_path) {
 		output->cog_pid = spawn_cog_for_output(server, output);
 	}
 }

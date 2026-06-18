@@ -44,7 +44,7 @@ function configureBuildSettings(): void {
     Settings.noChown = false
     Settings.clean = false
     Settings.main = {
-        strux_version: "test-version",
+        project_version: "0.0.1",
         name: "test-project",
         bsp: "qemu",
         build: {
@@ -158,8 +158,12 @@ function createDeps(options: HarnessOptions = {}): { deps: BuildDeps; events: st
             events.push(`step:display:${bspName}`)
         },
         postProcessRootFS: step("rootfs-post"),
+        bundleSystemUpdate: step("bundle-update"),
         updateDevEnvConfig: async (bspName: string) => {
             events.push(`step:dev-env:${bspName}`)
+        },
+        removeDevEnvConfig: async (bspName: string) => {
+            events.push(`step:remove-dev-env:${bspName}`)
         },
     }
 
@@ -181,6 +185,9 @@ function createDeps(options: HarnessOptions = {}): { deps: BuildDeps; events: st
             fileExists: () => true,
             prepareBuildDirectories: async () => {
                 events.push("files:prepare")
+            },
+            prepareInitialArtifacts: async () => {
+                events.push("files:artifacts")
             },
             writeBuildMetadata: async (_bspName: string, metadata: BuildMetadata) => {
                 events.push(`files:metadata:${metadata.buildMode}:${metadata.buildTime}`)
@@ -214,6 +221,10 @@ function createDeps(options: HarnessOptions = {}): { deps: BuildDeps; events: st
             runScriptsForStep: async (scriptStep: ScriptStep) => {
                 events.push(`script:${scriptStep}`)
                 return scriptRuns.has(scriptStep)
+            },
+            runProjectScriptsForStep: async (scriptStep: string) => {
+                events.push(`project-script:${scriptStep}`)
+                return scriptRuns.has(`project:${scriptStep}`)
             },
         },
         runner: {
@@ -266,6 +277,20 @@ test("runs uncached build steps through the build orchestration", async () => {
     expect(deps.runner.skipChown).toBe(false)
 })
 
+test("prepares initial artifacts before BSP build hooks", async () => {
+    configureBuildSettings()
+
+    const { deps, events } = createDeps()
+
+    await buildWithDeps(deps)
+
+    expectEventsInOrder(events, [
+        "files:prepare",
+        "files:artifacts",
+        "script:before_build",
+    ])
+})
+
 test("refreshes cached dev client config without treating it as a rebuild", async () => {
     configureBuildSettings()
     Settings.isDevMode = true
@@ -297,6 +322,23 @@ test("copies cached client binary and writes dev config inside the client hook w
         "cache:check:client",
         "step:copy-client:qemu",
         "step:dev-env:qemu",
+        "script:after_client",
+    ])
+})
+
+test("removes stale dev config when production client step is cached", async () => {
+    configureBuildSettings()
+    Settings.isDevMode = false
+
+    const { deps, events } = createDeps()
+
+    await buildWithDeps(deps)
+
+    expectEventsInOrder(events, [
+        "script:before_client",
+        "cache:check:client",
+        "step:copy-client:qemu",
+        "step:remove-dev-env:qemu",
         "script:after_client",
     ])
 })
@@ -367,6 +409,29 @@ test("writes display config even when rootfs-post is cached", async () => {
         "cache:check:rootfs-post",
     ])
     expect(events).not.toContain("step:rootfs-post")
+})
+
+test("generates update bundle after image creation when enabled", async () => {
+    configureBuildSettings()
+    Settings.main = {
+        ...Settings.main,
+        update: {
+            enabled: true,
+            auto_bundle: true,
+        },
+    } as any
+
+    const { deps, events } = createDeps({
+        scriptRuns: ["make_image"],
+    })
+
+    await buildWithDeps(deps)
+
+    expectEventsInOrder(events, [
+        "script:make_image",
+        "step:bundle-update",
+    ])
+    expect(events).toContain("runner:chown")
 })
 
 test("resets skipChown after a build step failure", async () => {

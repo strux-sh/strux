@@ -232,7 +232,8 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     dbus \
     seatd \
     plymouth \
-    plymouth-themes"
+    plymouth-themes \
+    e2fsprogs" 
 
 
 # Install graphics stack

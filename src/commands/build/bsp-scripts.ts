@@ -229,7 +229,10 @@ export async function runScriptsForStep(
             HOST_ARCH: Settings.arch!,
             TARGET_ARCH: Settings.targetArch!,
             STEP: step,
-            STRUX_VERSION: Settings.struxVersion!
+            STRUX_VERSION: Settings.struxVersion!,
+            PROJECT_NAME: Settings.projectName,
+            PROJECT_VERSION: Settings.projectVersion,
+            STRUX_UPDATE_ENABLED: Settings.main?.update?.enabled ? "true" : "false"
         }
 
         // Add splash/logo configuration if available

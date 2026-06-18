@@ -73,6 +73,7 @@ struct cg_server {
 	// Strux splash screen
 	struct cg_splash *splash;
 	char *splash_image_path;
+	bool only_display_image;
 
 	// Input device to output mapping file path
 	char *input_map_path;

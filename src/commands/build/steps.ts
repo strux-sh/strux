@@ -13,8 +13,10 @@ import { Settings } from "../../settings"
 import { Runner } from "../../utils/run"
 import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
-import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles, copyPatches } from "./artifacts"
+import { copyClientBaseFiles, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles, copyPatches } from "./artifacts"
 import { generateTypes } from "../types"
+import { getLocalBSPRuntimeExtensionDirs, writeBSPRuntimeExtensionImports } from "../../utils/bsp-runtime"
+import { bundleUpdate } from "../update"
 
 // Build Scripts
 // @ts-ignore
@@ -43,6 +45,10 @@ function bspBuildEnv(bspName: string, extra: Record<string, string> = {}): Recor
         PRESELECTED_BSP: bspName,
         HOST_ARCH: Settings.arch,
         TARGET_ARCH: Settings.targetArch,
+        PROJECT_NAME: Settings.projectName,
+        PROJECT_VERSION: Settings.projectVersion,
+        STRUX_VERSION: Settings.struxVersion,
+        STRUX_UPDATE_ENABLED: Settings.main?.update?.enabled ? "true" : "false",
         ...extra
     }
 }
@@ -52,12 +58,15 @@ function bspBuildEnv(bspName: string, extra: Record<string, string> = {}): Recor
  * Also regenerates TypeScript types before compilation.
  */
 export async function compileFrontend(): Promise<void> {
+    await writeBSPRuntimeExtensionImports()
+
     // Generate types directly instead of shelling out to `strux types`,
     // so we use the local strux-introspect binary if available
     const mainGoPath = join(Settings.projectPath, "main.go")
     const result = await generateTypes({
         mainGoPath,
         outputDir: join(Settings.projectPath, "frontend", "src"),
+        runtimeExtensionDirs: getLocalBSPRuntimeExtensionDirs(),
     })
     if (!result.success) {
         Logger.error(result.error ?? "Failed to generate TypeScript types. Please generate them manually.")
@@ -78,6 +87,8 @@ export async function compileFrontend(): Promise<void> {
  * which injects a go.mod replace directive inside the container (never touches host files).
  */
 export async function compileApplication(): Promise<void> {
+    await writeBSPRuntimeExtensionImports()
+
     const bspName = Settings.bspName!
     const env = bspBuildEnv(bspName)
 
@@ -197,6 +208,7 @@ export async function writeDisplayConfig(bspName: string): Promise<void> {
             monitors: display.monitors.map(m => ({
                 path: m.path,
                 ...(m.resolution ? { resolution: m.resolution } : {}),
+                ...(m.transform ? { transform: m.transform } : {}),
                 ...(m.names && m.names.length > 0 ? { names: m.names } : {}),
             }))
         }
@@ -239,6 +251,7 @@ export async function writeDisplayConfig(bspName: string): Promise<void> {
 export async function updateDevEnvConfig(bspName: string): Promise<void> {
     const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
     const devEnvPath = join(bspCacheDir, ".dev-env.json")
+    const usb = Settings.main?.dev?.usb
 
     const devEnvJSON = {
         clientKey: Settings.main?.dev?.server?.client_key ?? "",
@@ -249,8 +262,23 @@ export async function updateDevEnvConfig(bspName: string): Promise<void> {
             enabled: Settings.main?.dev?.inspector?.enabled ?? false,
             port: Settings.main?.dev?.inspector?.port ?? 9223,
         },
+        usb: {
+            enabled: usb?.enabled ?? true,
+            subnet: usb?.subnet ?? "192.168.7.0/24",
+        },
     }
     await Bun.write(devEnvPath, JSON.stringify(devEnvJSON, null, 2))
+}
+
+/**
+ * Removes the dev client configuration so production builds cannot inherit a
+ * previous dev image's mode marker when the client compile step is cached.
+ */
+export async function removeDevEnvConfig(bspName: string): Promise<void> {
+    const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
+    const devEnvPath = join(bspCacheDir, ".dev-env.json")
+
+    if (fileExists(devEnvPath)) await Bun.file(devEnvPath).delete()
 }
 
 /**
@@ -263,12 +291,6 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
     // This is a folder - contains the Go source files
     const clientSrcPath = join(Settings.projectPath, "dist", "artifacts", "client")
 
-    // BSP-specific cache directory
-    const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
-
-    // This is a file (dev environment config) - now in BSP-specific cache
-    const devEnvPath = join(bspCacheDir, ".dev-env.json")
-
     // If it doesn't exist, create the client folder
     if (!directoryExists(clientSrcPath)) await mkdir(clientSrcPath, { recursive: true })
 
@@ -279,8 +301,7 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
     if (addDevMode) {
         await updateDevEnvConfig(bspName)
     } else {
-        // Remove the dev environment config file if it exists
-        if (fileExists(devEnvPath)) await Bun.file(devEnvPath).delete()
+        await removeDevEnvConfig(bspName)
     }
 
     // Compile the client
@@ -288,9 +309,7 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
         message: "Compiling Strux Client...",
         messageOnError: "Failed to compile Strux Client. Please check the build logs for more information.",
         exitOnError: true,
-        env: bspBuildEnv(bspName, {
-            STRUX_VERSION: Settings.struxVersion!
-        })
+        env: bspBuildEnv(bspName)
     })
 
     Logger.success("Strux Client built successfully")
@@ -356,13 +375,10 @@ export async function buildBootloader(): Promise<void> {
 
 /**
  * Post-processes the root filesystem.
- * Copies init scripts, systemd services, plymouth theme, and runs the post-processing script.
+ * Runs the post-processing script using the prepared artifacts.
  */
 export async function postProcessRootFS(): Promise<void> {
     const bspName = Settings.bspName!
-
-    // Copy all initial artifacts (init scripts, systemd, plymouth, logo)
-    await copyAllInitialArtifacts()
 
     // Run post process script
     await Runner.runScriptInDocker(scriptBuildPost, {
@@ -373,4 +389,23 @@ export async function postProcessRootFS(): Promise<void> {
     })
 
     Logger.success("RootFS post processing completed successfully")
+}
+
+/**
+ * Generates the default signed Strux rootfs update bundle from rootfs.ext4.
+ */
+export async function bundleSystemUpdate(): Promise<void> {
+    if (!Settings.main?.update?.enabled) {
+        Logger.debug("Skipping update bundle generation: update.enabled is false")
+        return
+    }
+    if (!Settings.main?.update?.auto_bundle) {
+        Logger.debug("Skipping update bundle generation: update.auto_bundle is false")
+        return
+    }
+
+    await bundleUpdate(undefined, {
+        bsp: Settings.bspName ?? undefined,
+        version: Settings.projectVersion,
+    })
 }

@@ -10,6 +10,21 @@
 
 A framework for building kiosk-style operating systems. Strux enables developers to create customized, minimal Linux distributions optimized for single-purpose applications like digital signage, point-of-sale systems, embedded displays, and more.
 
+## 📚 Documentation
+
+<p>
+  <a href="https://strux-sh.github.io/strux/"><img alt="Read the Docs" src="https://img.shields.io/badge/Read_the_Docs-strux--sh.github.io%2Fstrux-5B5BD6?style=for-the-badge&logo=readthedocs&logoColor=white" /></a>
+</p>
+
+**👉 [strux-sh.github.io/strux](https://strux-sh.github.io/strux/)** — the full documentation, organized into:
+
+| Section | Description | |
+|---------|-------------|---|
+| 🚀 **[Guide](https://strux-sh.github.io/strux/guide/introduction)** | Step-by-step from install to flashing your first image | [Get Started →](https://strux-sh.github.io/strux/guide/getting-started) |
+| 🧠 **[Concepts](https://strux-sh.github.io/strux/concepts/overview)** | How the build pipeline, caching, and display stack work | [Learn More →](https://strux-sh.github.io/strux/concepts/build-pipeline) |
+| 🔧 **[BSP Development](https://strux-sh.github.io/strux/bsp/guide/introduction)** | Write Board Support Packages for custom hardware | [Build a BSP →](https://strux-sh.github.io/strux/bsp/guide/writing-a-bsp) |
+| 📖 **[Reference](https://strux-sh.github.io/strux/reference/cli)** | CLI, `strux.yaml`, Go runtime, and frontend API specs | [Browse →](https://strux-sh.github.io/strux/reference/strux-yaml) |
+
 ## Features
 
 - **Kiosk-Focused**: Build minimal, purpose-built Linux images for embedded displays
@@ -274,6 +289,18 @@ strux run
 strux run --debug  # Show debug output
 ```
 
+### `strux flash [bsp]`
+
+Run the selected BSP's host-side flashing scripts. If `[bsp]` is omitted, Strux uses the BSP from `strux.yaml`.
+
+`flash_script_tool` scripts run first, followed by `flash_script` scripts. Both run outside of Docker with `dist/flash/{bsp}/` as their working directory.
+
+**Example:**
+```bash
+strux flash
+strux flash rpi4
+```
+
 ### `strux dev`
 
 Start Strux OS in development mode with hot-reload capabilities. This command:
@@ -522,7 +549,10 @@ Scripts can run at various lifecycle stages:
 | `before_rootfs` / `after_rootfs` | Around rootfs creation |
 | `before_bundle` | After post-processing, before final image |
 | `make_image` | Creates the final disk image |
+| `flash_script_tool` | Host-side setup script for flashing tools, run before flashing |
 | `flash_script` | Flash script (used by `strux flash`) |
+
+`flash_script_tool` and `flash_script` run on the host, outside of the Docker builder. Their working directory is `dist/flash/{bsp}/`, which is intended for BSP-scoped flashing tools, downloads, and generated host-side files.
 
 #### Script Environment Variables
 
@@ -535,6 +565,8 @@ Scripts have access to these environment variables:
 | `PROJECT_DIST_FOLDER` | `dist/` directory |
 | `PROJECT_DIST_CACHE_FOLDER` | BSP cache: `dist/cache/{bsp}/` |
 | `PROJECT_DIST_OUTPUT_FOLDER` | BSP output: `dist/output/{bsp}/` |
+| `PROJECT_DIST_FLASH_FOLDER` | BSP flash workspace: `dist/flash/{bsp}/` |
+| `FLASH_DIR` | Alias for `PROJECT_DIST_FLASH_FOLDER` |
 | `PROJECT_DIST_ARTIFACTS_FOLDER` | Shared artifacts: `dist/artifacts/` |
 | `SHARED_CACHE_DIR` | Shared cache: `dist/cache/` |
 | `BSP_CACHE_DIR` | Alias for cache folder |

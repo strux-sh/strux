@@ -28,6 +28,7 @@ export type ResourceName =
     | "qemu"
     | "watcher"
     | "screen"
+    | "flash"
 
 // Focus can be on the resource list, detail panel, SSH terminal, or config
 type FocusPane = "resources" | "detail" | "ssh" | "config"
@@ -121,7 +122,14 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
 
     // Build the resource list from store
     const resources: Resource[] = [
-        { name: "device",         label: "Device",      status: store.statuses.device, detail: store.deviceIP },
+        {
+            name: "device",
+            label: "Device",
+            status: store.statuses.device,
+            detail: store.systemUpdateProgress
+                ? `update ${store.systemUpdateProgress.progress}%`
+                : store.deviceIP
+        },
         { name: "device:app",     label: "App",         status: store.statuses["device:app"],    indent: 1 },
         { name: "device:cage",    label: "Cage",        status: store.statuses["device:cage"],   indent: 1 },
         { name: "device:system",  label: "System Logs", status: store.statuses["device:system"], indent: 1 },
@@ -132,6 +140,7 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
         { name: "qemu",           label: "QEMU",        status: store.statuses.qemu },
         { name: "watcher",        label: "Watcher",     status: store.statuses.watcher },
         { name: "screen",         label: "Screen",      status: store.statuses.screen },
+        ...(store.canFlash ? [{ name: "flash" as const, label: "Flash", status: store.statuses.flash }] : []),
     ]
 
     const selectedResource = resources[selectedIndex]
@@ -351,7 +360,15 @@ export function App({ store, onExit, onSSHStart, onSSHDetach, onSSHAttach, onSSH
                         focused={true}
                         busy={store.configBusy}
                         successMessage={store.configSuccessMessage || undefined}
-                        onAction={onConfigAction}
+                        canFlash={store.canFlash}
+                        onAction={(action) => {
+                            if (action === "flash") {
+                                const flashIndex = resources.findIndex((resource) => resource.name === "flash")
+                                if (flashIndex >= 0) setSelectedIndex(flashIndex)
+                                setFocusPane("detail")
+                            }
+                            onConfigAction(action)
+                        }}
                         onClose={() => setFocusPane("resources")}
                         height={termHeight - 8}
                         width={termWidth - 36}

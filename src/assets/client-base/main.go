@@ -10,6 +10,7 @@
 package main
 
 import (
+	_ "embed"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,9 +22,16 @@ import (
 // Version is set at build time via -ldflags
 var Version = "unknown"
 
+//go:embed assets/dev-connect.png
+var devConnectImage []byte
+
+const devConnectImagePath = "/tmp/strux-dev-connect.png"
+
 func main() {
 	logger := NewLogger("Main")
 	logger.Info("Starting Strux Client (v%s)...", Version)
+
+	markCurrentBootGood(logger)
 
 	// Check if dev mode config file exists
 	if !fileExists("/strux/.dev-env.json") {
@@ -48,6 +56,41 @@ func main() {
 		return
 	}
 
+	cage := CageLauncherInstance
+	displayConfig, _ := loadDisplaySettings()
+	devStatusCageStarted := false
+
+	if err := writeDevConnectImage(); err != nil {
+		logger.Warn("Failed to write dev connection image: %v", err)
+	} else if err := launchDevConnectionStatus(displayConfig); err != nil {
+		logger.Warn("Failed to launch dev connection status display: %v", err)
+	} else {
+		devStatusCageStarted = true
+	}
+
+	usbDevEnabled := false
+	usbManager := NewUSBNetManager()
+	var usbNetConfig usbNetConfig
+	defer func() {
+		if usbDevEnabled {
+			usbManager.Cleanup(usbNetConfig)
+		}
+	}()
+	if config.USB.IsEnabled() {
+		logger.Info("Configuring USB debug Ethernet...")
+		var err error
+		usbNetConfig, err = usbManager.Setup(config.USB)
+		if err != nil {
+			logger.Warn("USB debug Ethernet setup failed: %v", err)
+			logger.Warn("Continuing with non-USB dev discovery")
+		} else {
+			usbDevEnabled = true
+			preferUSBDevHost(config, usbNetConfig)
+		}
+	} else {
+		logger.Info("USB debug Ethernet disabled by config")
+	}
+
 	// Discover hosts
 	logger.Info("Discovering dev server hosts...")
 	hosts := DiscoverHosts(config)
@@ -55,6 +98,9 @@ func main() {
 	if len(hosts) == 0 {
 		logger.Error("No hosts found")
 		logger.Warn("Falling back to production mode")
+		if devStatusCageStarted {
+			cage.Cleanup()
+		}
 		launchProduction()
 		waitForShutdown()
 		return
@@ -78,6 +124,9 @@ func main() {
 	if !connected {
 		logger.Error("Failed to connect to any dev server")
 		logger.Warn("Falling back to production mode")
+		if devStatusCageStarted {
+			cage.Cleanup()
+		}
 		launchProduction()
 		waitForShutdown()
 		return
@@ -89,37 +138,56 @@ func main() {
 	cogURL := "http://" + connectedHost.Host + ":5173"
 	logger.Info("Using dev server URL: %s", cogURL)
 
-	cage := CageLauncherInstance
-
 	// Try to connect to dev server immediately (with short timeout)
 	// If it fails, then wait for network readiness and retry
 	logger.Info("Attempting to connect to dev server immediately...")
 	devServerReady := cage.WaitForDevServer(cogURL, 30*time.Second)
 
 	if !devServerReady {
-		// Dev server not immediately reachable - wait for network interface to be ready
-		// Cog needs network to load the URL, and WebKit Inspector needs it to bind to 0.0.0.0
-		logger.Info("Dev server not immediately reachable, waiting for network interface to be ready...")
-		if !cage.WaitForNetworkReady(30 * time.Second) {
-			logger.Error("Network interface not ready, falling back to production mode")
-			socket.Disconnect()
-			launchProduction()
-			waitForShutdown()
-			return
-		}
+		if usbDevEnabled {
+			logger.Info("USB dev server not immediately reachable, retrying without requiring a default route...")
+			time.Sleep(1 * time.Second)
+			if !waitForUSBDevServer(cage, cogURL, 30*time.Second) {
+				logger.Error("USB dev server not reachable, falling back to production mode")
+				socket.Disconnect()
+				if devStatusCageStarted {
+					cage.Cleanup()
+				}
+				launchProduction()
+				waitForShutdown()
+				return
+			}
+		} else {
+			// Dev server not immediately reachable - wait for network interface to be ready
+			// Cog needs network to load the URL, and WebKit Inspector needs it to bind to 0.0.0.0
+			logger.Info("Dev server not immediately reachable, waiting for network interface to be ready...")
+			if !cage.WaitForNetworkReady(30 * time.Second) {
+				logger.Error("Network interface not ready, falling back to production mode")
+				socket.Disconnect()
+				if devStatusCageStarted {
+					cage.Cleanup()
+				}
+				launchProduction()
+				waitForShutdown()
+				return
+			}
 
-		// Give network a moment to stabilize
-		logger.Info("Network ready, waiting for network to stabilize...")
-		time.Sleep(1 * time.Second)
+			// Give network a moment to stabilize
+			logger.Info("Network ready, waiting for network to stabilize...")
+			time.Sleep(1 * time.Second)
 
-		// Now retry connecting to dev server
-		logger.Info("Retrying connection to dev server...")
-		if !cage.WaitForDevServer(cogURL, 30*time.Second) {
-			logger.Error("Dev server not reachable after network ready, falling back to production mode")
-			socket.Disconnect()
-			launchProduction()
-			waitForShutdown()
-			return
+			// Now retry connecting to dev server
+			logger.Info("Retrying connection to dev server...")
+			if !cage.WaitForDevServer(cogURL, 30*time.Second) {
+				logger.Error("Dev server not reachable after network ready, falling back to production mode")
+				socket.Disconnect()
+				if devStatusCageStarted {
+					cage.Cleanup()
+				}
+				launchProduction()
+				waitForShutdown()
+				return
+			}
 		}
 	}
 
@@ -127,7 +195,11 @@ func main() {
 	// This is critical for binding to 0.0.0.0
 	if config.Inspector.Enabled {
 		logger.Info("WebKit Inspector enabled - ensuring network interface is ready...")
-		if !cage.WaitForNetworkReadyWithPort(10*time.Second, config.Inspector.Port) {
+		if usbDevEnabled {
+			if !cage.WaitForPortFree(10*time.Second, config.Inspector.Port) {
+				logger.Warn("Inspector port check failed, but continuing anyway...")
+			}
+		} else if !cage.WaitForNetworkReadyWithPort(10*time.Second, config.Inspector.Port) {
 			logger.Warn("Network interface check failed for base port, but continuing anyway...")
 		}
 	}
@@ -136,8 +208,9 @@ func main() {
 	logger.Info("All checks complete, waiting 2 seconds before launching Cage...")
 	time.Sleep(2 * time.Second)
 
-	// Load display config to compute inspector ports
-	displayConfig, _ := loadDisplaySettings()
+	if devStatusCageStarted {
+		cage.Cleanup()
+	}
 
 	// Launch Cage and Cog with inspector if enabled
 	if err := launchDevMode(cogURL, &config.Inspector); err != nil {
@@ -166,6 +239,20 @@ func main() {
 	CageLauncherInstance.Cleanup()
 }
 
+func writeDevConnectImage() error {
+	return os.WriteFile(devConnectImagePath, devConnectImage, 0644)
+}
+
+func launchDevConnectionStatus(displayConfig *DisplayConfig) error {
+	logger := NewLogger("DevMode")
+	logger.Info("Launching dev connection status display")
+
+	return CageLauncherInstance.Launch(LaunchOptions{
+		OnlyDisplayImage: devConnectImagePath,
+		DisplayConfig:    displayConfig,
+	})
+}
+
 // loadDisplaySettings loads display configuration and resolution.
 // Returns the display config (may be nil) and the fallback resolution string.
 func loadDisplaySettings() (*DisplayConfig, string) {
@@ -189,6 +276,17 @@ func loadDisplaySettings() (*DisplayConfig, string) {
 	}
 
 	return displayConfig, resolution
+}
+
+func markCurrentBootGood(logger *Logger) {
+	if err := migrateBootDataFiles(); err != nil {
+		logger.Warn("Failed to migrate Strux boot data files: %v", err)
+	}
+	if err := markPendingUpdateGood(); err != nil {
+		logger.Warn("Failed to mark pending update good: %v", err)
+	} else {
+		logger.Info("Strux update state is good for this boot")
+	}
 }
 
 // launchProduction launches Cage with production settings

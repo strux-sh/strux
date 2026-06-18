@@ -11,7 +11,7 @@ import { Box, useInput, useStdout } from "ink"
 import { theme } from "./theme"
 
 
-export type ConfigAction = "restore" | "rebuild-transfer" | "rebuild-builder" | "restart-service" | "reboot"
+export type ConfigAction = "restore" | "rebuild-transfer" | "rebuild-builder" | "install-update" | "restart-service" | "reboot" | "flash"
 
 
 interface ConfigSection {
@@ -27,18 +27,25 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             { label: "Restore Strux Artifacts to Built-in Version", action: "restore" },
             { label: "Rebuild Strux Components and Transfer To Device", action: "rebuild-transfer" },
             { label: "Rebuild Strux-Builder Docker Image", action: "rebuild-builder" },
+            { label: "Install Latest System Update Bundle", action: "install-update" },
         ],
     },
     {
         title: "System Tools",
         items: [
+            { label: "Flash Device", action: "flash" },
             { label: "Restart Strux Service", action: "restart-service" },
             { label: "Reboot System", action: "reboot" },
         ],
     },
 ]
 
-const CONFIG_MENU_ITEMS = CONFIG_SECTIONS.flatMap((s) => s.items)
+function getConfigSections(canFlash: boolean): ConfigSection[] {
+    return CONFIG_SECTIONS.map((section) => ({
+        ...section,
+        items: section.items.filter((item) => canFlash || item.action !== "flash"),
+    })).filter((section) => section.items.length > 0)
+}
 
 
 const moveCursor = (row: number, col: number) => `\x1b[${row};${col}H`
@@ -49,6 +56,7 @@ interface ConfigPanelProps {
     focused: boolean
     busy: boolean
     successMessage?: string
+    canFlash: boolean
     onAction: (action: ConfigAction) => void
     onClose: () => void
     height?: number
@@ -58,7 +66,7 @@ interface ConfigPanelProps {
 }
 
 
-export function ConfigPanel({ focused, busy, successMessage, onAction, onClose, height, width, rowOffset, colOffset }: ConfigPanelProps) {
+export function ConfigPanel({ focused, busy, successMessage, canFlash, onAction, onClose, height, width, rowOffset, colOffset }: ConfigPanelProps) {
 
     const viewHeight = height ?? 20
     const viewWidth = width ?? 80
@@ -69,10 +77,12 @@ export function ConfigPanel({ focused, busy, successMessage, onAction, onClose, 
     const mountedRef = useRef(true)
     const busyRef = useRef(busy)
     const successRef = useRef(successMessage)
+    const canFlashRef = useRef(canFlash)
     const { stdout } = useStdout()
 
     busyRef.current = busy
     successRef.current = successMessage
+    canFlashRef.current = canFlash
 
 
     const writeToStdout = (data: string) => {
@@ -90,13 +100,15 @@ export function ConfigPanel({ focused, busy, successMessage, onAction, onClose, 
             return
         }
 
+        const menuItems = getConfigSections(canFlashRef.current).flatMap((s) => s.items)
+
         if (key.downArrow || input === "j") {
-            selectedIndexRef.current = Math.min(CONFIG_MENU_ITEMS.length - 1, selectedIndexRef.current + 1)
+            selectedIndexRef.current = Math.min(menuItems.length - 1, selectedIndexRef.current + 1)
             return
         }
 
         if (key.return) {
-            const item = CONFIG_MENU_ITEMS[selectedIndexRef.current]
+            const item = menuItems[selectedIndexRef.current]
             if (item) onAction(item.action)
             return
         }
@@ -108,6 +120,9 @@ export function ConfigPanel({ focused, busy, successMessage, onAction, onClose, 
 
         if (!mountedRef.current) return
 
+        const sections = getConfigSections(canFlashRef.current)
+        const menuItems = sections.flatMap((s) => s.items)
+        selectedIndexRef.current = Math.min(selectedIndexRef.current, Math.max(0, menuItems.length - 1))
         const selected = selectedIndexRef.current
         let output = "\x1b[?25l"
         let y = 0
@@ -129,7 +144,7 @@ export function ConfigPanel({ focused, busy, successMessage, onAction, onClose, 
 
         let globalIndex = 0
 
-        for (const section of CONFIG_SECTIONS) {
+        for (const section of sections) {
 
             // Section title
             writeLine(section.title, "\x1b[1;90m") // bold gray
