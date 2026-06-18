@@ -1,0 +1,8 @@
+export { default as SButton } from './SButton.vue'
+export { default as SInput } from './SInput.vue'
+export { default as SBadge } from './SBadge.vue'
+export { default as SPanel } from './SPanel.vue'
+export { default as SSelect } from './SSelect.vue'
+export { default as SToggle } from './SToggle.vue'
+export { default as SStatusDot } from './SStatusDot.vue'
+export { default as SKbd } from './SKbd.vue'

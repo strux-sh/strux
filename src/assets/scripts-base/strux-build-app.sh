@@ -9,8 +9,8 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
-CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 
 # Delete the old app directory contents if it exists (this will later be mounted [in dev mode] or copied (in build mode))
 rm -rf "$CACHE_DIR/app"/*
@@ -18,7 +18,7 @@ rm -rf "$CACHE_DIR/app"/*
 # Create the app directory if it doesn't exist
 mkdir -p "$CACHE_DIR/app"
 
-cd /project
+cd "$PROJECT_DIR"
 
 # ============================================================================
 # CONFIGURATION READING FROM YAML FILES
@@ -28,8 +28,7 @@ cd /project
 
 progress "Reading configuration from YAML files..."
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+# Project directory is provided by the Strux runner.
 
 # Get the active BSP name - check environment variable first, then fall back to strux.yaml
 if [ -n "$PRESELECTED_BSP" ]; then
@@ -61,6 +60,15 @@ ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
 fi
 
 # ============================================================================
@@ -132,6 +140,7 @@ fi
 GO_PRIVATE_ENV="${GO_PRIVATE_ENV:-}"
 
 # Build the Go application with cross-compilation
+GOTOOLCHAIN=local \
 CGO_ENABLED=1 \
 GOOS=linux \
 GOARCH="$GO_ARCH" \
@@ -141,4 +150,3 @@ ${GO_PRIVATE_ENV}go build -buildvcs=false -o "$CACHE_DIR/app/main" .
 
 
 progress "Go application built successfully"
-

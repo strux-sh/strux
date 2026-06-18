@@ -38,8 +38,10 @@ if [ -f /tmp/strux-inspector-base-port ]; then
 fi
 
 # Launch Cog browser
+# --autoplay-policy=allow: permit unmuted media autoplay without user gesture
 exec cog \
   --web-extensions-dir=/usr/lib/wpe-web-extensions \
   --platform=wl \
   --enable-developer-extras=1 \
+  --autoplay-policy=allow \
   "$URL"

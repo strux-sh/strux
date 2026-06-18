@@ -16,11 +16,9 @@ progress() {
 
 progress "Preparing Base Root Filesystem"
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
-PROJECT_DIST_DIR="/project/dist"
-# Use BSP_CACHE_DIR if provided, otherwise fallback to default
-PROJECT_CACHE_DIR="${BSP_CACHE_DIR:-/project/dist/cache}"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+PROJECT_DIST_DIR="${PROJECT_DIST_DIR:-$PROJECT_DIR/dist}"
+PROJECT_CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIST_DIR/cache}"
 
 mkdir -p "$PROJECT_CACHE_DIR"
 
@@ -65,6 +63,15 @@ ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
 fi
 
 # ============================================================================
@@ -263,6 +270,8 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     shared-mime-info
 
 # Install cog from Forky (v0.18.5 fixes issues present in Trixie's version)
+# The patched cog binary (with --autoplay-policy support) is built in
+# strux-build-wpe.sh and copied over this in strux-build-post.sh.
 progress "Installing cog 0.18.5 from Debian Forky..."
 run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y -t forky cog"
 
@@ -274,6 +283,8 @@ run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-re
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-vaapi \
     gstreamer1.0-gl"
 
 

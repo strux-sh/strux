@@ -11,15 +11,14 @@ progress() {
 
 progress "Post-processing Root Filesystem..."
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
-PROJECT_DIST_DIR="/project/dist"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+PROJECT_DIST_DIR="${PROJECT_DIST_DIR:-$PROJECT_DIR/dist}"
 ROOTFS_DIR="/tmp/rootfs"
 
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default
-BSP_CACHE="${BSP_CACHE_DIR:-/project/dist/cache}"
+BSP_CACHE="${BSP_CACHE_DIR:-$PROJECT_DIST_DIR/cache}"
 # Shared cache for architecture-agnostic artifacts like frontend
-SHARED_CACHE="${SHARED_CACHE_DIR:-/project/dist/cache}"
+SHARED_CACHE="${SHARED_CACHE_DIR:-$PROJECT_DIST_DIR/cache}"
 
 # Function to run commands in chroot
 run_in_chroot() {
@@ -97,8 +96,8 @@ fi
 # - .deb files: Copied to chroot and installed via dpkg
 #
 # Path resolution rules:
-# - Global packages: relative to project root (/project)
-# - BSP packages starting with ./: relative to BSP folder (/project/bsp/{bsp_name})
+# - Global packages: relative to project root
+# - BSP packages starting with ./: relative to BSP folder
 # - BSP packages without ./: relative to project root
 # ============================================================================
 
@@ -332,13 +331,34 @@ chmod +x "$ROOTFS_DIR/usr/bin/cage"
 # Copy the Frontend (from shared cache - architecture-agnostic)
 cp -r "$SHARED_CACHE/frontend" "$ROOTFS_DIR/strux/frontend"
 
+# Backward compatibility for apps built with older runtimes.
+# Those runtimes serve ./frontend while strux.sh starts the app from /,
+# so they resolve the frontend bundle as /frontend.
+if [ ! -e "$ROOTFS_DIR/frontend" ] && [ ! -L "$ROOTFS_DIR/frontend" ]; then
+    ln -s /strux/frontend "$ROOTFS_DIR/frontend"
+fi
+
 # Copy Strux Client (Handles a bunch of system services) - from BSP-specific cache
 cp "$BSP_CACHE/client" "$ROOTFS_DIR/strux/client"
 chmod +x "$ROOTFS_DIR/strux/client"
 
+# Copy Screen Capture Daemon - from BSP-specific cache
+if [ -f "$BSP_CACHE/screen" ]; then
+    cp "$BSP_CACHE/screen" "$ROOTFS_DIR/usr/bin/strux-screen"
+    chmod +x "$ROOTFS_DIR/usr/bin/strux-screen"
+    progress "Installed strux-screen daemon"
+fi
+
 # Copy WPE WebKit Extension (provides JS bridge for strux.* API) - from BSP-specific cache
 mkdir -p "$ROOTFS_DIR/usr/lib/wpe-web-extensions"
 cp "$BSP_CACHE/libstrux-extension.so" "$ROOTFS_DIR/usr/lib/wpe-web-extensions/libstrux-extension.so"
+
+# Copy patched Cog binary (with --autoplay-policy support) over the Debian package version
+if [ -f "$BSP_CACHE/cog" ]; then
+    cp "$BSP_CACHE/cog" "$ROOTFS_DIR/usr/bin/cog"
+    chmod +x "$ROOTFS_DIR/usr/bin/cog"
+    progress "Installed patched Cog binary"
+fi
 
 # If the .dev-env.json file exists, copy it to the rootfs (from BSP-specific cache)
 if [ -f "$BSP_CACHE/.dev-env.json" ]; then
@@ -363,11 +383,11 @@ chmod +x "$ROOTFS_DIR/strux/strux-run-cog.sh"
 # Copy "not configured" HTML page for unconfigured monitor outputs
 cp "$PROJECT_DIR/dist/artifacts/not-configured.html" "$ROOTFS_DIR/strux/.not-configured.html" 2>/dev/null || true
 
-# Read custom Cage environment variables from bsp.yaml
-CAGE_ENV_COUNT=$(yq -r '.bsp.cage.env // [] | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
-if [ "$CAGE_ENV_COUNT" -gt 0 ]; then
-    progress "Writing custom Cage environment variables..."
-    yq -r '.bsp.cage.env[]' "$BSP_CONFIG" > "$ROOTFS_DIR/strux/.cage-env"
+# Copy pre-built Cage environment file from cache (generated during cage build step)
+CAGE_ENV_SRC="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}/.cage-env"
+if [ -f "$CAGE_ENV_SRC" ]; then
+    progress "Copying Cage environment file..."
+    cp "$CAGE_ENV_SRC" "$ROOTFS_DIR/strux/.cage-env"
 fi
 
 
@@ -404,6 +424,15 @@ ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
 fi
 
 # Map Strux arch to Debian arch

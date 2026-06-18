@@ -3,11 +3,43 @@
 // DO NOT EDIT - regenerate with: go run ./cmd/gen-runtime-types -format=ts > src/types/strux-runtime.ts
 
 export const STRUX_RUNTIME_TYPES = `// Strux Runtime API
+declare namespace StruxRuntime {
+  interface DevConfig {
+    clientKey: string;
+    useMDNS: boolean;
+    fallbackHosts: DevHost[];
+    inspector: DevInspectorConfig;
+  }
+
+  interface DevHost {
+    host: string;
+    port: number;
+  }
+
+  interface DevInspectorConfig {
+    enabled: boolean;
+    port: number;
+  }
+
+  interface DevState {
+    enabled: boolean;
+    config: DevConfig;
+  }
+}
+
 interface Strux {
   boot: {
     HideSplash(): Promise<void>;
     Reboot(): Promise<void>;
     Shutdown(): Promise<void>;
+  };
+  dev: {
+    GetConfig(): Promise<StruxRuntime.DevState | null>;
+    SetConfig(config: StruxRuntime.DevConfig): Promise<void>;
+    SetEnabled(enabled: boolean): Promise<void>;
+    Apply(config: StruxRuntime.DevConfig, enabled: boolean): Promise<void>;
+    RestartService(): Promise<void>;
+    ApplyAndRestart(config: StruxRuntime.DevConfig, enabled: boolean): Promise<void>;
   };
   ipc: {
     /**

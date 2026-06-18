@@ -1,0 +1,18 @@
+dist/
+*.img
+
+# Dependencies
+node_modules/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+
+# Logs
+*.log

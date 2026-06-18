@@ -36,14 +36,16 @@ import templateBaseBSPMakeImage from "../../assets/template-base/make-image.sh" 
 
 import { generateTypes } from "../types"
 
+const BUILDER_GO_VERSION = "1.24.2"
+
 
 export async function init() {
 
     // Validate Project Name
-    if (Settings.projectName === "") return Logger.error("Please specify a project name")
+    if (Settings.projectName === "") return Logger.errorWithExit("Please specify a project name")
 
     // Check if the project directory already exists
-    if (pathExists(Settings.projectName)) return Logger.error(`Project directory already exists: ${Settings.projectName}`)
+    if (pathExists(Settings.projectName)) return Logger.errorWithExit(`Project directory already exists: ${Settings.projectName}`)
 
 
     // Check if NPM is installed
@@ -113,6 +115,8 @@ export async function init() {
         cwd: Settings.projectPath
     })
 
+    await pinProjectGoVersion()
+
     // Write the Strux.yaml file in the directory
     await Bun.write(join(Settings.projectPath, "strux.yaml"),
         templateBaseYAML.replaceAll("${projectName}", Settings.projectName).replaceAll("${version}", Settings.struxVersion).replaceAll("${clientKey}", clientKey)
@@ -132,6 +136,25 @@ export async function init() {
     const logoPath = Bun.file(templateBaseLogoPNG)
     await Bun.write(join(Settings.projectPath, "assets", "logo.png"), logoPath)
 
+}
+
+
+async function pinProjectGoVersion(): Promise<void> {
+    const result = await Runner.runCommand(`go mod edit -go=${BUILDER_GO_VERSION} -toolchain=none`, {
+        message: `Pinning Go version to builder Go ${BUILDER_GO_VERSION}...`,
+        messageOnError: "Failed to pin Go version in go.mod. Retrying without toolchain cleanup...",
+        exitOnError: false,
+        cwd: Settings.projectPath
+    })
+
+    if (result.exitCode === 0) return
+
+    await Runner.runCommand(`go mod edit -go=${BUILDER_GO_VERSION}`, {
+        message: `Pinning Go version to builder Go ${BUILDER_GO_VERSION}...`,
+        messageOnError: "Failed to pin Go version in go.mod. Please update it manually.",
+        exitOnError: true,
+        cwd: Settings.projectPath
+    })
 }
 
 

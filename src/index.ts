@@ -6,7 +6,7 @@
 
 import { Command } from "commander"
 import { join, resolve } from "path"
-import { Settings, type ArchType, type TemplateType } from "./settings"
+import { normalizeBuilderTag, Settings, type ArchType, type TemplateType } from "./settings"
 import { STRUX_VERSION } from "./version"
 import { Logger } from "./utils/log"
 import { fileExists } from "./utils/path"
@@ -27,17 +27,23 @@ program
     .description("A Framework for Building Kiosk-Style Operating Systems")
     .version(STRUX_VERSION)
     .option("--verbose", "Enable verbose output")
+    .option("--local-builder", "Build Docker image locally instead of pulling from GHCR")
+    .option("--remote-builder <branch-or-tag>", "Pull a branch-scoped builder image from GHCR, e.g. feature/v0.3.0 -> feature-v0.3.0")
     .hook("preAction", (command: Command) => {
 
-        const options = command.opts()
+        const options = command.optsWithGlobals()
 
         if (options.verbose) {
-
-            // We enable verbose output
             Settings.verbose = true
-
         }
 
+        if (options.localBuilder) {
+            Settings.localBuilder = true
+        }
+
+        if (options.remoteBuilder) {
+            Settings.remoteBuilderTag = normalizeBuilderTag(options.remoteBuilder)
+        }
 
     })
 
@@ -46,7 +52,7 @@ program.command("init")
     .description("Initialize a new Strux project")
     .argument("<project-name>", "The name of the project to create")
     .option("-t, --template <template>", "Frontend Template (vanilla, react, or vue)", "vanilla")
-    .option("-a, --arch <arch>", "Target Architecture (arm64, x86_64, or armhf)", "arm64")
+    .option("-a, --arch <arch>", "Target Architecture (host, arm64, x86_64, or armhf)", "host")
     .action(async (projectName: string, options: {template?: string, arch?: string}) => {
         try {
             Settings.template = (options.template ?? "vanilla") as TemplateType
@@ -60,8 +66,8 @@ program.command("init")
             }
 
             // Validate arch
-            if (!["arm64", "x86_64", "armhf"].includes(Settings.arch)) {
-                Logger.error(`Invalid architecture: ${Settings.arch}. Must be one of: arm64, x86_64, armhf`)
+            if (!["host", "arm64", "x86_64", "armhf"].includes(Settings.arch)) {
+                Logger.error(`Invalid architecture: ${Settings.arch}. Must be one of: host, arm64, x86_64, armhf`)
                 process.exit(1)
             }
 
@@ -94,6 +100,7 @@ program.command("types")
 
 
 program.command("build")
+    .description("Build a complete OS image for a BSP")
     .argument("<bsp>", "The board support package to build for")
     .option("--clean", "Clean the build cache before building")
     .option("--dev", "Build a development image")
@@ -119,13 +126,15 @@ program.command("build")
 
 program.command("run")
     .option("--debug", "Show console output and systemd messages")
+    .option("--headless", "Run QEMU without opening a host display window")
     .description("Run the Strux OS Image in QEMU")
-    .action(async (options: {debug?: boolean}) => {
+    .action(async (options: {debug?: boolean, headless?: boolean}) => {
 
         try {
 
             Logger.title("Running Strux OS Image in QEMU")
             Settings.qemuSystemDebug = options.debug ?? false
+            Settings.qemuHeadless = options.headless ?? false
             await run()
 
         } catch (err) {

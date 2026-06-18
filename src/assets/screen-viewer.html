@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strux Remote Display</title>
+<script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #111;
+    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+#toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+}
+#toolbar h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #aaa;
+}
+#status {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #333;
+}
+#status.connected { background: #1a3a1a; color: #4ade80; }
+#status.disconnected { background: #3a1a1a; color: #f87171; }
+#status.connecting { background: #3a3a1a; color: #facc15; }
+.toolbar-spacer { flex: 1; }
+button {
+    background: #2a2a2a;
+    color: #ccc;
+    border: 1px solid #444;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+button:hover { background: #3a3a3a; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+#content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Output picker */
+#output-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 40px 16px;
+    flex: 1;
+}
+#output-picker.hidden { display: none; }
+.output-card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 24px 32px;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.15s, background 0.15s;
+    min-width: 200px;
+}
+.output-card:hover {
+    border-color: #4ade80;
+    background: #1a2a1a;
+}
+.output-card.streaming {
+    border-color: #4ade80;
+    background: #1a2a1a;
+}
+.output-card .output-name {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+.output-card .output-status {
+    font-size: 11px;
+    color: #666;
+}
+.output-card.streaming .output-status {
+    color: #4ade80;
+}
+#waiting-msg {
+    color: #555;
+    font-size: 14px;
+    text-align: center;
+}
+
+/* Display area */
+#displays {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 16px;
+}
+#displays.hidden { display: none; }
+.display {
+    position: relative;
+    background: #000;
+    border: 1px solid #333;
+    border-radius: 4px;
+    overflow: hidden;
+    max-width: 100%;
+}
+.display video {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 120px);
+}
+.display-label {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    font-size: 11px;
+    background: rgba(0,0,0,0.7);
+    padding: 2px 8px;
+    border-radius: 3px;
+    color: #aaa;
+}
+.display-status {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    font-size: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #666;
+}
+.display-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 14px;
+    background: rgba(0,0,0,0.7);
+    color: #888;
+    border: none;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.display-close:hover { color: #f87171; }
+
+/* Screenshot overlay */
+#screenshot-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+#screenshot-overlay.visible { display: flex; }
+#screenshot-overlay img {
+    max-width: 90vw;
+    max-height: 90vh;
+    border: 1px solid #333;
+}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+    <h1>Strux Remote Display</h1>
+    <span id="status" class="connecting">Connecting...</span>
+    <div class="toolbar-spacer"></div>
+    <button id="back-btn" class="hidden" style="display:none;">Back to Outputs</button>
+    <button id="screenshot-btn" disabled>Screenshot</button>
+</div>
+
+<div id="content">
+    <div id="output-picker">
+        <div id="waiting-msg">Waiting for device connection...</div>
+    </div>
+    <div id="displays" class="hidden"></div>
+</div>
+
+<div id="screenshot-overlay" onclick="this.classList.remove('visible')">
+    <img id="screenshot-img" src="">
+</div>
+
+<script>
+(function() {
+    var statusEl = document.getElementById('status');
+    var outputPicker = document.getElementById('output-picker');
+    var waitingMsg = document.getElementById('waiting-msg');
+    var displaysEl = document.getElementById('displays');
+    var backBtn = document.getElementById('back-btn');
+    var screenshotBtn = document.getElementById('screenshot-btn');
+    var screenshotOverlay = document.getElementById('screenshot-overlay');
+    var screenshotImg = document.getElementById('screenshot-img');
+
+    // State
+    var streams = new Map();       // outputName -> { video, jmuxer, container, statusEl, index }
+    var availableOutputs = [];     // [{name: "HDMI-A-1"}, ...]
+    var outputCards = new Map();   // outputName -> card element
+    var ws = null;
+    var reconnectTimer = null;
+    var streamIndexCounter = 0;
+
+    // --- WebSocket ---
+
+    function connect() {
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var url = proto + '//' + location.host + '/screen/ws';
+
+        statusEl.textContent = 'Connecting...';
+        statusEl.className = 'connecting';
+
+        ws = new WebSocket(url);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = function() {
+            statusEl.textContent = 'Connected';
+            statusEl.className = 'connected';
+            screenshotBtn.disabled = false;
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            // Re-request active streams
+            for (var [name] of streams) {
+                send('start-stream', { outputName: name });
+            }
+        };
+
+        ws.onclose = function() {
+            statusEl.textContent = 'Disconnected';
+            statusEl.className = 'disconnected';
+            screenshotBtn.disabled = true;
+            ws = null;
+            reconnectTimer = setTimeout(connect, 2000);
+        };
+
+        ws.onerror = function() {};
+
+        ws.onmessage = function(event) {
+            if (event.data instanceof ArrayBuffer) {
+                handleBinaryFrame(event.data);
+            } else {
+                handleJsonMessage(event.data);
+            }
+        };
+    }
+
+    function send(type, payload) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: type, payload: payload }));
+        }
+    }
+
+    // --- JSON message handling ---
+
+    function handleJsonMessage(data) {
+        try {
+            var msg = JSON.parse(data);
+            switch (msg.type) {
+                case 'outputs-available':
+                    handleOutputsAvailable(msg.payload);
+                    break;
+                case 'screen-ready':
+                    handleScreenReady(msg.payload);
+                    break;
+                case 'screen-stopped':
+                    handleScreenStopped(msg.payload);
+                    break;
+                case 'screen-error':
+                    handleScreenError(msg.payload);
+                    break;
+                case 'screen-screenshot-result':
+                    handleScreenshot(msg.payload);
+                    break;
+                case 'device-disconnected':
+                    handleDeviceDisconnected();
+                    break;
+            }
+        } catch (e) {
+            console.error('Failed to parse message:', e);
+        }
+    }
+
+    // --- Binary frame handling via jMuxer ---
+
+    function handleBinaryFrame(buffer) {
+        var view = new DataView(buffer);
+        if (buffer.byteLength < 10) return;
+
+        var outputIndex = view.getUint8(0);
+        var h264Data = new Uint8Array(buffer, 10);
+
+        for (var [name, stream] of streams) {
+            if (stream.index === outputIndex && stream.jmuxer) {
+                stream.jmuxer.feed({ video: h264Data });
+                break;
+            }
+        }
+    }
+
+    // --- Output picker ---
+
+    function handleOutputsAvailable(payload) {
+        if (!payload || !payload.outputs) return;
+        availableOutputs = payload.outputs;
+        renderOutputPicker();
+    }
+
+    function renderOutputPicker() {
+        // Clear existing cards but keep waiting msg
+        var existing = outputPicker.querySelectorAll('.output-card');
+        for (var i = 0; i < existing.length; i++) {
+            existing[i].remove();
+        }
+        outputCards.clear();
+
+        if (availableOutputs.length === 0) {
+            waitingMsg.style.display = '';
+            waitingMsg.textContent = 'No outputs detected on device';
+            return;
+        }
+
+        waitingMsg.style.display = 'none';
+
+        for (var j = 0; j < availableOutputs.length; j++) {
+            var name = availableOutputs[j].name;
+            var card = document.createElement('div');
+            card.className = 'output-card';
+            if (streams.has(name)) {
+                card.className += ' streaming';
+            }
+
+            var nameEl = document.createElement('div');
+            nameEl.className = 'output-name';
+            nameEl.textContent = name;
+
+            var statusEl2 = document.createElement('div');
+            statusEl2.className = 'output-status';
+            statusEl2.textContent = streams.has(name) ? 'Streaming' : 'Click to connect';
+
+            card.appendChild(nameEl);
+            card.appendChild(statusEl2);
+            card.setAttribute('data-output', name);
+
+            card.addEventListener('click', (function(outputName) {
+                return function() {
+                    startStreamForOutput(outputName);
+                };
+            })(name));
+
+            outputPicker.appendChild(card);
+            outputCards.set(name, { card: card, statusEl: statusEl2 });
+        }
+    }
+
+    function startStreamForOutput(name) {
+        if (streams.has(name)) {
+            // Already streaming — switch to display view
+            showDisplays();
+            return;
+        }
+
+        // Update card state
+        var cardInfo = outputCards.get(name);
+        if (cardInfo) {
+            cardInfo.card.className = 'output-card streaming';
+            cardInfo.statusEl.textContent = 'Starting...';
+        }
+
+        send('start-stream', { outputName: name });
+    }
+
+    function stopStreamForOutput(name) {
+        send('stop-stream', { outputName: name });
+
+        var stream = streams.get(name);
+        if (stream) {
+            if (stream.jmuxer) {
+                try { stream.jmuxer.destroy(); } catch(e) {}
+            }
+            if (stream.container && stream.container.parentNode) {
+                stream.container.parentNode.removeChild(stream.container);
+            }
+            streams.delete(name);
+        }
+
+        // Update card
+        var cardInfo = outputCards.get(name);
+        if (cardInfo) {
+            cardInfo.card.className = 'output-card';
+            cardInfo.statusEl.textContent = 'Click to connect';
+        }
+
+        // If no more streams, go back to picker
+        if (streams.size === 0) {
+            showPicker();
+        }
+    }
+
+    // --- View switching ---
+
+    function showDisplays() {
+        outputPicker.className = 'hidden';
+        displaysEl.className = '';
+        backBtn.style.display = '';
+    }
+
+    function showPicker() {
+        outputPicker.className = '';
+        displaysEl.className = 'hidden';
+        backBtn.style.display = 'none';
+        renderOutputPicker();
+    }
+
+    backBtn.addEventListener('click', function() {
+        showPicker();
+    });
+
+    // --- Stream events ---
+
+    function handleScreenReady(payload) {
+        var name = payload.outputName;
+
+        // Update card
+        var cardInfo = outputCards.get(name);
+        if (cardInfo) {
+            cardInfo.card.className = 'output-card streaming';
+            cardInfo.statusEl.textContent = 'Streaming';
+        }
+
+        if (streams.has(name)) {
+            // Reconnecting — destroy old jMuxer and create fresh
+            var existing = streams.get(name);
+            if (existing.jmuxer) {
+                try { existing.jmuxer.destroy(); } catch(e) {}
+            }
+            try {
+                existing.jmuxer = new JMuxer({
+                    node: existing.video,
+                    mode: 'video',
+                    flushingTime: 0,
+                    fps: payload.fps || 30,
+                    debug: false
+                });
+            } catch(e) {
+                console.error('Failed to recreate jMuxer:', e);
+            }
+            updateDisplayStatus(name,
+                payload.width + 'x' + payload.height + ' ' +
+                payload.encoder + ' @' + payload.fps + 'fps');
+            return;
+        }
+
+        // Create new display
+        var container = document.createElement('div');
+        container.className = 'display';
+        container.id = 'display-' + name;
+
+        var video = document.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+
+        var label = document.createElement('div');
+        label.className = 'display-label';
+        label.textContent = name;
+
+        var status = document.createElement('div');
+        status.className = 'display-status';
+        status.textContent = payload.width + 'x' + payload.height + ' ' +
+            payload.encoder + ' @' + payload.fps + 'fps';
+
+        var closeBtn = document.createElement('button');
+        closeBtn.className = 'display-close';
+        closeBtn.textContent = 'x';
+        closeBtn.addEventListener('click', (function(outputName) {
+            return function(e) {
+                e.stopPropagation();
+                stopStreamForOutput(outputName);
+            };
+        })(name));
+
+        container.appendChild(video);
+        container.appendChild(label);
+        container.appendChild(status);
+        container.appendChild(closeBtn);
+        displaysEl.appendChild(container);
+
+        var idx = streamIndexCounter++;
+        var stream = {
+            name: name,
+            index: idx,
+            video: video,
+            container: container,
+            statusEl: status,
+            jmuxer: null
+        };
+
+        try {
+            stream.jmuxer = new JMuxer({
+                node: video,
+                mode: 'video',
+                flushingTime: 0,
+                fps: payload.fps || 30,
+                debug: false,
+                onReady: function() {
+                    console.log('jMuxer ready for', name);
+                },
+                onError: function(e) {
+                    console.error('jMuxer error for', name, e);
+                    updateDisplayStatus(name, 'Playback error');
+                }
+            });
+        } catch (e) {
+            console.error('Failed to create jMuxer:', e);
+            updateDisplayStatus(name, 'jMuxer init failed');
+        }
+
+        streams.set(name, stream);
+
+        // Switch to display view
+        showDisplays();
+    }
+
+    function handleScreenStopped(payload) {
+        updateDisplayStatus(payload.outputName, 'Stopped');
+        var cardInfo = outputCards.get(payload.outputName);
+        if (cardInfo) {
+            cardInfo.card.className = 'output-card';
+            cardInfo.statusEl.textContent = 'Click to connect';
+        }
+    }
+
+    function handleScreenError(payload) {
+        console.error('Screen error:', payload.outputName, payload.error);
+        updateDisplayStatus(payload.outputName, 'Error: ' + payload.error);
+        var cardInfo = outputCards.get(payload.outputName);
+        if (cardInfo) {
+            cardInfo.statusEl.textContent = 'Error: ' + payload.error;
+        }
+    }
+
+    function handleDeviceDisconnected() {
+        availableOutputs = [];
+        for (var [name, stream] of streams) {
+            updateDisplayStatus(name, 'Device disconnected');
+        }
+        // Reset picker
+        renderOutputPicker();
+        waitingMsg.style.display = '';
+        waitingMsg.textContent = 'Device disconnected — waiting for reconnect...';
+    }
+
+    function handleScreenshot(payload) {
+        screenshotImg.src = 'data:image/jpeg;base64,' + payload.data;
+        screenshotOverlay.classList.add('visible');
+    }
+
+    function updateDisplayStatus(name, text) {
+        var stream = streams.get(name);
+        if (stream && stream.statusEl) {
+            stream.statusEl.textContent = text;
+        }
+    }
+
+    // --- Screenshot button ---
+
+    screenshotBtn.addEventListener('click', function() {
+        var firstOutput = streams.keys().next().value;
+        if (firstOutput) {
+            send('screenshot', { outputName: firstOutput });
+        }
+    });
+
+    // --- Init ---
+
+    connect();
+
+})();
+</script>
+</body>
+</html>

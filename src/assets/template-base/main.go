@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/strux-dev/strux/pkg/runtime"
@@ -39,6 +40,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer rt.Stop()
+
+	// Do not remove this line during testing
+	fmt.Println("Welcome to Strux!")
 
 	// Listen for events from the frontend
 	rt.On("hello", func(data interface{}) {

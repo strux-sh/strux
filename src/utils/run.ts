@@ -32,7 +32,7 @@ export interface RunnerOptions {
 
 export class RunnerClass {
 
-    private dockerImageBuilt = false
+    private dockerImageReady = false
 
     /**
      * When true, runScriptInDocker skips the per-script chown.
@@ -193,41 +193,148 @@ export class RunnerClass {
     public lastDockerImageRebuilt = false
 
     /**
-     * Prepares the Docker Image and Folder.
-     * Returns information about whether the image was rebuilt.
+     * Checks if a Docker image exists locally by name/tag.
      */
-    public async prepareDockerImage(cachedDockerHash?: string): Promise<{ imageHash: string; rebuilt: boolean }> {
-        const currentHash = getDockerfileHash()
-
-        // Check if Docker image already exists
-        let imageExists = false
+    private async checkImageExists(imageName: string): Promise<boolean> {
         try {
-            const checkProc = Bun.spawn(["docker", "images", "-q", "strux-builder"], {
+            const proc = Bun.spawn(["docker", "images", "-q", imageName], {
                 stdout: "pipe",
                 stderr: "pipe",
             })
-            const checkOutput = await new Response(checkProc.stdout).text()
-            await checkProc.exited
-            imageExists = checkOutput.trim() !== ""
+            const output = await new Response(proc.stdout).text()
+            await proc.exited
+            return output.trim() !== ""
         } catch {
-            // If check fails, proceed to build
+            return false
         }
+    }
 
-        // Determine if we need to rebuild
-        const hashChanged = cachedDockerHash !== undefined && cachedDockerHash !== currentHash
-        const needsRebuild = !imageExists || hashChanged
+    /**
+     * Prepares the Docker Image and Folder.
+     * Returns information about whether the image was rebuilt.
+     *
+     * Strategy:
+     * - If running inside the builder container (STRUX_IN_CONTAINER=1), skip Docker entirely
+     * - If --local-builder flag is set, build from the embedded Dockerfile (original behavior)
+     * - Otherwise, try to pull the versioned image from GHCR, fall back to local build on failure
+     */
+    public async prepareDockerImage(cachedDockerHash?: string, force?: boolean): Promise<{ imageHash: string; rebuilt: boolean }> {
+        const currentHash = getDockerfileHash()
 
-        if (!needsRebuild) {
-            // Image exists and hash hasn't changed
-            this.dockerImageBuilt = true
+        // If we're already inside the builder container, no Docker image needed
+        if (Settings.inContainer) {
+            this.dockerImageReady = true
             this.lastDockerImageHash = currentHash
             this.lastDockerImageRebuilt = false
             return { imageHash: currentHash, rebuilt: false }
         }
 
-        // If hash changed, remove old image first
-        if (imageExists && hashChanged) {
-            Logger.log("Dockerfile changed, rebuilding Docker image...")
+        // If --local-builder flag is set or force rebuild requested, use local build logic
+        if (Settings.localBuilder || force) {
+            return this.buildDockerImageLocally(currentHash, cachedDockerHash, force)
+        }
+
+        // Default: try to pull the versioned image from GHCR
+        const imageExists = await this.checkImageExists("strux-builder")
+        const hashChanged = cachedDockerHash !== undefined && cachedDockerHash !== currentHash
+
+        // If we already have the image and hash hasn't changed, use it
+        if (imageExists && !hashChanged) {
+            this.dockerImageReady = true
+            this.lastDockerImageHash = currentHash
+            this.lastDockerImageRebuilt = false
+            return { imageHash: currentHash, rebuilt: false }
+        }
+
+        // Try pulling from GHCR
+        const remoteImage = Settings.builderImage
+        Logger.log(`Pulling builder image: ${remoteImage}`)
+
+        try {
+            const pullResult = await this.runCommand(`docker pull ${remoteImage}`, {
+                message: "Pulling builder image from registry...",
+                exitOnError: false,
+            })
+
+            if (pullResult.exitCode === 0) {
+                // Tag the pulled image as strux-builder for downstream compatibility
+                await Bun.spawn(["docker", "tag", remoteImage, "strux-builder"], {
+                    stdout: "pipe",
+                    stderr: "pipe",
+                }).exited
+
+                this.dockerImageReady = true
+                this.lastDockerImageHash = currentHash
+                this.lastDockerImageRebuilt = false
+                return { imageHash: currentHash, rebuilt: false }
+            }
+        } catch {
+            // Pull failed, fall through to local build
+        }
+
+        // Fallback: build locally
+        Logger.warning("Failed to pull builder image, falling back to local build...")
+        return this.buildDockerImageLocally(currentHash, cachedDockerHash)
+    }
+
+    /**
+     * Builds the Docker image locally from the embedded Dockerfile.
+     */
+    /**
+     * Gets the Dockerfile hash label from the existing strux-builder Docker image.
+     * Returns null if the image doesn't exist or has no label.
+     */
+    private async getImageDockerfileHash(): Promise<string | null> {
+        try {
+            const proc = Bun.spawn(
+                ["docker", "inspect", "--format", "{{index .Config.Labels \"strux.dockerfile.hash\"}}", "strux-builder"],
+                { stdout: "pipe", stderr: "pipe" }
+            )
+            const exitCode = await proc.exited
+            if (exitCode !== 0) return null
+            const output = await new Response(proc.stdout).text()
+            const hash = output.trim()
+            return hash && hash !== "<no value>" ? hash : null
+        } catch {
+            return null
+        }
+    }
+
+    private async buildDockerImageLocally(currentHash: string, cachedDockerHash?: string, force?: boolean): Promise<{ imageHash: string; rebuilt: boolean }> {
+        const imageExists = await this.checkImageExists("strux-builder")
+
+        // Determine if rebuild is needed by comparing hashes.
+        // Priority: explicit cached hash > image label > session hash
+        let compareHash = cachedDockerHash ?? this.lastDockerImageHash
+        if (compareHash === undefined && imageExists) {
+            // No cached or session hash — check the image label to see if it
+            // was built from this Dockerfile version
+            const labelHash = await this.getImageDockerfileHash()
+            if (labelHash !== null) {
+                compareHash = labelHash
+            } else {
+                // Image exists but has no hash label — it came from GHCR or an
+                // old local build. Force rebuild so we get a properly labeled image.
+                Logger.log("Existing image has no Dockerfile hash label, rebuilding...")
+            }
+        }
+        const hashChanged = compareHash !== undefined && compareHash !== currentHash
+        // Rebuild if: no image, hash mismatch, forced, or image has no label (unlabeled GHCR image)
+        const noLabel = imageExists && compareHash === undefined && cachedDockerHash === undefined && this.lastDockerImageHash === undefined
+        const needsRebuild = !imageExists || hashChanged || force || noLabel
+
+        Logger.log(`Local builder: imageExists=${imageExists}, compareHash=${compareHash}, currentHash=${currentHash}, needsRebuild=${needsRebuild}`)
+
+        if (!needsRebuild) {
+            this.dockerImageReady = true
+            this.lastDockerImageHash = currentHash
+            this.lastDockerImageRebuilt = false
+            return { imageHash: currentHash, rebuilt: false }
+        }
+
+        // Remove old image if it exists
+        if (imageExists) {
+            Logger.log("Rebuilding Docker image...")
             try {
                 await Bun.spawn(["docker", "rmi", "-f", "strux-builder"], {
                     stdout: "pipe",
@@ -251,7 +358,6 @@ export class RunnerClass {
             if (error instanceof Error) {
                 Logger.error(error.message)
             }
-            // If we have a UI sink, throw an error to let the UI handle it gracefully
             if (Logger.hasSink()) {
                 const exitError = new Error(errorMessage)
                 exitError.name = "StruxExitError"
@@ -263,15 +369,14 @@ export class RunnerClass {
         // Copy the dockerfile into dist/artifacts folder in the project directory
         await Bun.write(join(Settings.projectPath, "dist", "artifacts", "Dockerfile"), scriptsBaseDockerfile)
 
-        // Build Docker image using the Dockerfile
-        await this.runCommand("docker build -t strux-builder -f dist/artifacts/Dockerfile .", {
-            message: "Building Docker image...",
+        // Build Docker image using the Dockerfile, labeling with the hash for future comparison
+        await this.runCommand(`docker build -t strux-builder --label "strux.dockerfile.hash=${currentHash}" -f dist/artifacts/Dockerfile .`, {
+            message: "Building Docker image locally...",
             exitOnError: true,
             cwd: Settings.projectPath
         })
 
-        // Mark as built after successful build
-        this.dockerImageBuilt = true
+        this.dockerImageReady = true
         this.lastDockerImageHash = currentHash
         this.lastDockerImageRebuilt = true
 
@@ -288,15 +393,40 @@ export class RunnerClass {
         return `(UIDGID="${userInfo.uid}:${userInfo.gid}"; find /project -path "/project/dist/cache/*/kernel-source" -prune -o -path "*/.git" -prune -o -exec chown -h "$UIDGID" {} +)`
     }
 
+    private getScriptPathEnv(): Record<string, string> {
+        const projectDir = Settings.inContainer ? Settings.projectPath : "/project"
+        const projectDistDir = `${projectDir}/dist`
+        const env: Record<string, string> = {
+            PROJECT_DIR: projectDir,
+            PROJECT_FOLDER: projectDir,
+            PROJECT_DIST_DIR: projectDistDir,
+            PROJECT_DIST_FOLDER: projectDistDir,
+            PROJECT_DIST_ARTIFACTS_FOLDER: `${projectDistDir}/artifacts`,
+            SHARED_CACHE_DIR: `${projectDistDir}/cache`
+        }
+
+        if (Settings.bspName) {
+            env.BSP_CACHE_DIR = `${projectDistDir}/cache/${Settings.bspName}`
+            env.PROJECT_DIST_CACHE_FOLDER = env.BSP_CACHE_DIR
+            env.PROJECT_DIST_OUTPUT_FOLDER = `${projectDistDir}/output/${Settings.bspName}`
+            env.BSP_FOLDER = `${projectDir}/bsp/${Settings.bspName}`
+        }
+
+        return env
+    }
+
     /**
      * Runs a standalone chown on the project directory inside Docker.
      * Use this at the end of a build pipeline instead of chowning after every step.
      */
     public async chownProjectFiles(): Promise<void> {
+        // No UID mismatch when running directly inside the container
+        if (Settings.inContainer) return
+
         const chownCmd = this.getChownCommand()
         if (!chownCmd) return
 
-        if (!this.dockerImageBuilt) await this.prepareDockerImage(undefined)
+        if (!this.dockerImageReady) await this.prepareDockerImage(undefined)
 
         const args: string[] = [
             "docker", "run", "--rm", "-i", "--privileged",
@@ -332,8 +462,141 @@ export class RunnerClass {
         }
     }
 
+    /**
+     * Runs a build script directly (no Docker wrapping).
+     * Used when strux is already running inside the builder container.
+     */
+    private async runScriptDirect(script: string, options: Omit<RunnerOptions, "cwd">) {
+        const spinner = new Spinner(options.message)
+        if (!Settings.verbose) {
+            spinner.start()
+        } else {
+            Logger.log(options.message)
+        }
+
+        const finalScript = script.trimEnd()
+        const args = ["/bin/bash", "-c", finalScript]
+        let stdout = ""
+        let stderr = ""
+
+        // In verbose mode without UI, use inherit stdio
+        if (Settings.verbose && !Logger.hasSink()) {
+            const proc = Bun.spawn(args, {
+                stdout: "inherit",
+                stderr: "inherit",
+                env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
+                cwd: Settings.projectPath,
+            })
+
+            const exitCode = await proc.exited
+
+            if (exitCode === 0) {
+                Logger.success(options.messageOnSuccess ?? options.message)
+            } else {
+                Logger.error(options.messageOnError ?? `Command failed with exit code ${exitCode}`)
+                if (options.exitOnError) {
+                    process.exit(exitCode)
+                }
+            }
+
+            return { exitCode, stdout: "", stderr: "" }
+        }
+
+        // Capture output for spinner, error display, and verbose output to UI
+        const proc = Bun.spawn(args, {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
+            cwd: Settings.projectPath,
+        })
+
+        const verboseWithUi = Settings.verbose && Logger.hasSink()
+
+        const stdoutPromise = (async () => {
+            const decoder = new TextDecoder()
+            for await (const chunk of proc.stdout) {
+                const text = decoder.decode(chunk, { stream: true })
+                stdout += text
+
+                if (verboseWithUi) {
+                    Logger.raw(text)
+                }
+
+                const lines = text.split("\n")
+                for (const line of lines) {
+                    const marker = "STRUX_PROGRESS:"
+                    const idx = line.indexOf(marker)
+                    if (idx >= 0) {
+                        const msg = line.substring(idx + marker.length).trim()
+                        if (msg && !verboseWithUi) {
+                            spinner.updateMessage(msg)
+                        }
+                    }
+                }
+            }
+        })()
+
+        const stderrPromise = (async () => {
+            const decoder = new TextDecoder()
+            for await (const chunk of proc.stderr) {
+                const text = decoder.decode(chunk, { stream: true })
+                stderr += text
+                if (verboseWithUi) {
+                    Logger.raw(text)
+                }
+            }
+        })()
+
+        await Promise.all([stdoutPromise, stderrPromise])
+        const exitCode = await proc.exited
+
+        if (exitCode === 0) {
+            const successMessage = options.messageOnSuccess ?? options.message
+            if (verboseWithUi) {
+                Logger.success(successMessage)
+            } else {
+                spinner.stopWithSuccess(successMessage)
+            }
+        } else {
+            const errorMessage = options.messageOnError ?? `Command failed with exit code ${exitCode}`
+            if (!verboseWithUi) {
+                spinner.stop()
+            }
+            Logger.error(errorMessage)
+            if (!verboseWithUi) {
+                if (stderr?.trim()) {
+                    Logger.raw(stderr)
+                }
+                if (stdout?.trim()) {
+                    const filteredStdout = stdout
+                        .split("\n")
+                        .filter(line => !line.includes("STRUX_PROGRESS:"))
+                        .join("\n")
+                    if (filteredStdout.trim()) {
+                        Logger.raw(filteredStdout)
+                    }
+                }
+            }
+            if (options.exitOnError) {
+                if (Logger.hasSink()) {
+                    const exitError = new Error(errorMessage)
+                    exitError.name = "StruxExitError"
+                    throw exitError
+                }
+                process.exit(exitCode)
+            }
+        }
+
+        return { exitCode, stdout, stderr }
+    }
+
     public async runScriptInDocker(script: string, options: Omit<RunnerOptions, "cwd">) {
-        if (!this.dockerImageBuilt) await this.prepareDockerImage(undefined)
+        // When running inside the builder container, execute scripts directly
+        if (Settings.inContainer) {
+            return this.runScriptDirect(script, options)
+        }
+
+        if (!this.dockerImageReady) await this.prepareDockerImage(undefined)
 
         const spinner = new Spinner(options.message)
         // If verbose mode is enabled, don't use spinner (it interferes with output)
@@ -365,11 +628,11 @@ export class RunnerClass {
             "--privileged"  // Required for debootstrap, mount, and chroot operations
         ]
 
+        const scriptEnv = { ...options.env, ...this.getScriptPathEnv() }
+
         // Add environment variable flags
-        if (options.env) {
-            for (const [key, value] of Object.entries(options.env)) {
-                args.push("-e", `${key}=${value}`)
-            }
+        for (const [key, value] of Object.entries(scriptEnv)) {
+            args.push("-e", `${key}=${value}`)
         }
 
         // Add volume mount
@@ -521,7 +784,33 @@ export class RunnerClass {
      * This is used for commands that require user interaction (e.g., menuconfig).
      */
     public async runInteractiveScriptInDocker(script: string, options: Omit<RunnerOptions, "cwd">) {
-        if (!this.dockerImageBuilt) await this.prepareDockerImage(undefined)
+        // When running inside the builder container, execute directly
+        if (Settings.inContainer) {
+            Logger.log(options.message)
+
+            const proc = Bun.spawn(["/bin/bash", "-c", script.trimEnd()], {
+                stdout: "inherit",
+                stderr: "inherit",
+                stdin: "inherit",
+                env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
+                cwd: Settings.projectPath,
+            })
+
+            const exitCode = await proc.exited
+
+            if (exitCode === 0) {
+                Logger.success(options.messageOnSuccess ?? options.message)
+            } else {
+                Logger.error(options.messageOnError ?? `Command failed with exit code ${exitCode}`)
+                if (options.exitOnError) {
+                    process.exit(exitCode)
+                }
+            }
+
+            return { exitCode, stdout: "", stderr: "" }
+        }
+
+        if (!this.dockerImageReady) await this.prepareDockerImage(undefined)
 
         Logger.log(options.message)
 
@@ -542,11 +831,11 @@ export class RunnerClass {
             "--privileged"
         ]
 
+        const scriptEnv = { ...options.env, ...this.getScriptPathEnv() }
+
         // Add environment variable flags
-        if (options.env) {
-            for (const [key, value] of Object.entries(options.env)) {
-                args.push("-e", `${key}=${value}`)
-            }
+        for (const [key, value] of Object.entries(scriptEnv)) {
+            args.push("-e", `${key}=${value}`)
         }
 
         // Add volume mount

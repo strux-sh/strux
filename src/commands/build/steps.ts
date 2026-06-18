@@ -13,7 +13,7 @@ import { Settings } from "../../settings"
 import { Runner } from "../../utils/run"
 import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
-import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles } from "./artifacts"
+import { copyClientBaseFiles, copyAllInitialArtifacts, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles, copyPatches } from "./artifacts"
 import { generateTypes } from "../types"
 
 // Build Scripts
@@ -30,11 +30,22 @@ import scriptBuildBase from "../../assets/scripts-base/strux-build-base.sh" with
 // @ts-ignore
 import scriptBuildPost from "../../assets/scripts-base/strux-build-post.sh" with { type: "text" }
 // @ts-ignore
+import scriptBuildScreen from "../../assets/scripts-base/strux-build-screen.sh" with { type: "text" }
+// @ts-ignore
 import scriptBuildClient from "../../assets/scripts-base/strux-build-client.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildKernel from "../../assets/scripts-base/strux-build-kernel.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildBootloader from "../../assets/scripts-base/strux-build-bootloader.sh" with { type: "text" }
+
+function bspBuildEnv(bspName: string, extra: Record<string, string> = {}): Record<string, string> {
+    return {
+        PRESELECTED_BSP: bspName,
+        HOST_ARCH: Settings.arch,
+        TARGET_ARCH: Settings.targetArch,
+        ...extra
+    }
+}
 
 /**
  * Compiles the frontend application (Vue/React/vanilla JS).
@@ -57,11 +68,7 @@ export async function compileFrontend(): Promise<void> {
     await Runner.runScriptInDocker(scriptBuildFrontend, {
         message: "Compiling Frontend...",
         messageOnError: "Failed to compile Frontend. Please check the build logs for more information.",
-        exitOnError: true,
-        env: {
-            // Frontend uses shared cache (architecture-agnostic)
-            SHARED_CACHE_DIR: "/project/dist/cache"
-        }
+        exitOnError: true
     })
 }
 
@@ -72,10 +79,7 @@ export async function compileFrontend(): Promise<void> {
  */
 export async function compileApplication(): Promise<void> {
     const bspName = Settings.bspName!
-    const env: Record<string, string> = {
-        PRESELECTED_BSP: bspName,
-        BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
-    }
+    const env = bspBuildEnv(bspName)
 
     if (Settings.localRuntime) {
         env.USE_LOCAL_RUNTIME = "1"
@@ -109,15 +113,12 @@ export async function compileCage(): Promise<void> {
         message: "Compiling Cage...",
         messageOnError: "Failed to compile Cage. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
-        }
+        env: bspBuildEnv(bspName)
     })
 }
 
 /**
- * Compiles the WPE WebKit extension for the target architecture.
+ * Compiles the WPE WebKit extension and patched Cog browser for the target architecture.
  */
 export async function compileWPE(): Promise<void> {
     const bspName = Settings.bspName!
@@ -130,15 +131,36 @@ export async function compileWPE(): Promise<void> {
 
     // Copy WPE extension source files if they don't exist (first build)
     await copyWPEExtensionSourceFiles(wpeExtSrcPath)
+    await copyPatches()
 
     await Runner.runScriptInDocker(scriptBuildWPE, {
-        message: "Compiling WPE Extension...",
-        messageOnError: "Failed to compile WPE Extension. Please check the build logs for more information.",
+        message: "Compiling WPE Extension and Cog...",
+        messageOnError: "Failed to compile WPE Extension and Cog. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
-        }
+        env: bspBuildEnv(bspName)
+    })
+}
+
+/**
+ * Compiles the screen capture daemon (strux-screen) for the target architecture.
+ */
+export async function compileScreen(): Promise<void> {
+    const bspName = Settings.bspName!
+
+    // Screen daemon source directory in artifacts
+    const screenSrcPath = join(Settings.projectPath, "dist", "artifacts", "screen")
+
+    // Create directory if it doesn't exist
+    if (!directoryExists(screenSrcPath)) await mkdir(screenSrcPath, { recursive: true })
+
+    // Copy screen source files if they don't exist (first build)
+    await copyScreenSourceFiles(screenSrcPath)
+
+    await Runner.runScriptInDocker(scriptBuildScreen, {
+        message: "Compiling screen capture daemon...",
+        messageOnError: "Failed to compile screen daemon. Please check the build logs for more information.",
+        exitOnError: true,
+        env: bspBuildEnv(bspName)
     })
 }
 
@@ -154,10 +176,7 @@ export async function buildRootFS(): Promise<void> {
         message: "Building root filesystem...",
         messageOnError: "Failed to build root filesystem. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
-        }
+        env: bspBuildEnv(bspName)
     })
 
     Logger.success("Root filesystem built successfully")
@@ -269,10 +288,9 @@ export async function buildStruxClient(addDevMode = false): Promise<void> {
         message: "Compiling Strux Client...",
         messageOnError: "Failed to compile Strux Client. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
-        }
+        env: bspBuildEnv(bspName, {
+            STRUX_VERSION: Settings.struxVersion!
+        })
     })
 
     Logger.success("Strux Client built successfully")
@@ -291,11 +309,9 @@ export async function extractKernel(): Promise<void> {
         message: "Fetching and patching kernel source...",
         messageOnError: "Failed to fetch/patch kernel source. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+        env: bspBuildEnv(bspName, {
             KERNEL_PHASE: "extract"
-        }
+        })
     })
 
     Logger.success("Kernel source extracted and patched")
@@ -313,11 +329,9 @@ export async function buildKernel(): Promise<void> {
         message: "Building Linux Kernel...",
         messageOnError: "Failed to build Linux Kernel. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
+        env: bspBuildEnv(bspName, {
             KERNEL_PHASE: "build"
-        }
+        })
     })
 
     Logger.success("Linux Kernel built successfully")
@@ -334,10 +348,7 @@ export async function buildBootloader(): Promise<void> {
         message: "Building Bootloader...",
         messageOnError: "Failed to build Bootloader. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`
-        }
+        env: bspBuildEnv(bspName)
     })
 
     Logger.success("Bootloader built successfully")
@@ -358,13 +369,8 @@ export async function postProcessRootFS(): Promise<void> {
         message: "Post processing rootfs...",
         messageOnError: "Failed to post process rootfs. Please check the build logs for more information.",
         exitOnError: true,
-        env: {
-            PRESELECTED_BSP: bspName,
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
-            SHARED_CACHE_DIR: "/project/dist/cache"
-        }
+        env: bspBuildEnv(bspName)
     })
 
     Logger.success("RootFS post processing completed successfully")
 }
-

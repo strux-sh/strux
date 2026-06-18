@@ -127,8 +127,10 @@ update_capabilities(struct cg_seat *seat)
 	}
 	wlr_seat_set_capabilities(seat->seat, caps);
 
-	/* Hide cursor if the seat doesn't have pointer capability. */
-	if ((caps & WL_SEAT_CAPABILITY_POINTER) == 0) {
+	/* Hide cursor if the seat doesn't have pointer capability,
+	 * or if STRUX_HIDE_CURSOR is set (for touch-only kiosk displays). */
+	const char *hide_cursor = getenv("STRUX_HIDE_CURSOR");
+	if ((caps & WL_SEAT_CAPABILITY_POINTER) == 0 || (hide_cursor && strcmp(hide_cursor, "1") == 0)) {
 		wlr_cursor_unset_image(seat->cursor);
 	} else {
 		wlr_cursor_set_xcursor(seat->cursor, seat->xcursor_manager, DEFAULT_XCURSOR);
@@ -548,6 +550,10 @@ handle_request_set_cursor(struct wl_listener *listener, void *data)
 
 	/* This can be sent by any client, so we check to make sure
 	 * this one actually has pointer focus first. */
+	const char *hide = getenv("STRUX_HIDE_CURSOR");
+	if (hide && strcmp(hide, "1") == 0) {
+		return;
+	}
 	if (focused_client == event->seat_client->client) {
 		wlr_cursor_set_surface(seat->cursor, event->surface, event->hotspot_x, event->hotspot_y);
 	}

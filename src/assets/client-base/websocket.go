@@ -53,9 +53,10 @@ type WSClient struct {
 	logger   *Logger
 
 	// Connection state
-	connected bool
-	url       string
-	headers   http.Header
+	connected   bool
+	url         string
+	headers     http.Header
+	queryParams map[string]string
 
 	// Callbacks for connection lifecycle
 	onConnect    func()
@@ -136,6 +137,16 @@ func (w *WSClient) SetHeader(key, value string) {
 	w.headers.Set(key, value)
 }
 
+// SetQueryParam sets a query parameter to be appended to the WebSocket URL
+func (w *WSClient) SetQueryParam(key, value string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.queryParams == nil {
+		w.queryParams = make(map[string]string)
+	}
+	w.queryParams[key] = value
+}
+
 // Connect establishes a WebSocket connection to the specified URL
 func (w *WSClient) Connect(wsURL string) error {
 	w.connMu.Lock()
@@ -158,6 +169,17 @@ func (w *WSClient) Connect(wsURL string) error {
 			u.Scheme = "ws"
 		}
 	}
+
+	// Append query params
+	w.mu.RLock()
+	if len(w.queryParams) > 0 {
+		q := u.Query()
+		for k, v := range w.queryParams {
+			q.Set(k, v)
+		}
+		u.RawQuery = q.Encode()
+	}
+	w.mu.RUnlock()
 
 	w.url = u.String()
 	w.logger.Info("Connecting to %s...", w.url)

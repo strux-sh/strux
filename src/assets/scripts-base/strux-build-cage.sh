@@ -9,8 +9,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 # Cage source is bundled with the CLI and copied to dist/artifacts/cage
 CAGE_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/cage"
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default
@@ -55,6 +54,15 @@ ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
 fi
 
 # ============================================================================
@@ -320,7 +328,7 @@ if [ "$NEED_CROSS_COMPILE" = true ]; then
         cat /tmp/pkg-config-debug.log 2>/dev/null || echo "No debug log"
         echo ""
         echo "Meson log (last 50 lines):"
-        tail -50 /project/dist/artifacts/cage/build/meson-logs/meson-log.txt 2>/dev/null || echo "No meson log"
+        tail -50 "$PROJECT_DIR/dist/artifacts/cage/build/meson-logs/meson-log.txt" 2>/dev/null || echo "No meson log"
         exit 1
     }
 else
@@ -357,5 +365,32 @@ cp build/cage "$CAGE_BINARY" || {
 
 # Make the binary executable
 chmod +x "$CAGE_BINARY"
+
+# ============================================================================
+# GENERATE CAGE ENVIRONMENT FILE
+# ============================================================================
+# Build the .cage-env file from bsp.yaml cage configuration
+# ============================================================================
+
+CAGE_ENV_FILE="$CACHE_DIR/.cage-env"
+
+progress "Generating Cage environment file..."
+
+# Start with custom env vars from bsp.yaml
+CAGE_ENV_COUNT=$(yq -r '.bsp.cage.env // [] | length' "$BSP_CONFIG" 2>/dev/null || echo "0")
+if [ "$CAGE_ENV_COUNT" -gt 0 ]; then
+    yq -r '.bsp.cage.env[]' "$BSP_CONFIG" > "$CAGE_ENV_FILE"
+else
+    > "$CAGE_ENV_FILE"
+fi
+
+# Append STRUX_HIDE_CURSOR if hide_cursor is set
+HIDE_CURSOR=$(yq -r '.bsp.cage.hide_cursor // false' "$BSP_CONFIG" 2>/dev/null || echo "false")
+if [ "$HIDE_CURSOR" = "true" ]; then
+    progress "Enabling cursor hiding..."
+    echo "STRUX_HIDE_CURSOR=1" >> "$CAGE_ENV_FILE"
+fi
+
+progress "Cage environment file written to $CAGE_ENV_FILE"
 
 progress "Cage compiled successfully"

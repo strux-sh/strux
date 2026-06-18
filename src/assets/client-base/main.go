@@ -11,15 +11,19 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 )
 
+// Version is set at build time via -ldflags
+var Version = "unknown"
+
 func main() {
 	logger := NewLogger("Main")
-	logger.Info("Starting Strux Client...")
+	logger.Info("Starting Strux Client (v%s)...", Version)
 
 	// Check if dev mode config file exists
 	if !fileExists("/strux/.dev-env.json") {
@@ -144,8 +148,15 @@ func main() {
 
 	logger.Info("Dev client connected and ready")
 
-	// Report device info (IP + inspector ports) to the dev server
+	// Report device info (IP + inspector ports + outputs) to the dev server
 	sendDeviceInfo(socket, &config.Inspector, displayConfig)
+
+	// Re-send device info on reconnect and when server explicitly requests it
+	resendInfo := func() {
+		sendDeviceInfo(socket, &config.Inspector, displayConfig)
+	}
+	socket.onReconnect = resendInfo
+	socket.onDeviceInfoReq = resendInfo
 
 	// Wait for shutdown signal
 	waitForShutdown()
@@ -269,7 +280,40 @@ func sendDeviceInfo(socket *SocketClient, inspector *InspectorConfig, displayCon
 		}
 	}
 
-	socket.SendDeviceInfo(ip, ports)
+	// Discover connected outputs via wlr-randr
+	outputs := discoverOutputs()
+
+	socket.SendDeviceInfo(ip, ports, outputs)
+}
+
+// discoverOutputs runs wlr-randr and parses connected output names
+func discoverOutputs() []OutputInfo {
+	logger := NewLogger("Display")
+
+	cmd := exec.Command("wlr-randr")
+	out, err := cmd.Output()
+	if err != nil {
+		logger.Warn("Failed to run wlr-randr: %v", err)
+		return nil
+	}
+
+	var outputs []OutputInfo
+	for _, line := range strings.Split(string(out), "\n") {
+		// wlr-randr output lines start with the output name (no leading whitespace)
+		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			parts := strings.Fields(line)
+			if len(parts) > 0 {
+				outputs = append(outputs, OutputInfo{Name: parts[0]})
+			}
+		}
+	}
+
+	logger.Info("Discovered %d outputs", len(outputs))
+	for _, o := range outputs {
+		logger.Info("  Output: %s", o.Name)
+	}
+
+	return outputs
 }
 
 // waitForShutdown blocks until SIGINT or SIGTERM is received

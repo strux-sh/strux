@@ -1,5 +1,78 @@
 # Changelog
 
+## v0.3.0
+
+### New: Revamped Dev TUI
+
+The `strux dev` terminal interface has been rebuilt from the ground up. The old single-file `ui.tsx` has been replaced with a modular component tree under `src/commands/dev/ui/` (`App`, `ResourceList`, `DetailPanel`, `ConfigPanel`, `StatusBar`, `CommandBar`, `LogView`, `TerminalView`, `FileTreeView`) backed by a dedicated `store.ts` for reactive state.
+
+**Improved SSH Console:**
+- The remote terminal is now a full terminal emulator powered by `@xterm/headless`. It renders directly to stdout via ANSI cursor positioning, bypassing Ink's renderer entirely so ncurses apps like `htop`, `vim`, and `less` render cleanly without flicker.
+- Sessions can be detached with `Ctrl-\` and reattached later with `s`. Raw PTY output is buffered to a 512 KB capped scrollback per session so reattaching replays missed output.
+- Sessions survive TUI navigation — you can detach from SSH, browse logs, open the config panel, and reattach to the same shell without losing state.
+- Host-terminal resizes are forwarded to the remote PTY so full-screen apps reflow correctly.
+
+**Better Navigation:**
+- The resource list now includes nested device log streams (App, Cage, System Logs, Early Logs, Screen Logs, Client) alongside Vite, QEMU, Watcher, and Screen.
+- New filter mode (`/`) for log views, pause/resume watcher (`p`), and context-sensitive keybinds shown in the bottom command bar.
+- Config panel is accessible from any pane via `c`, with `Esc` to return.
+
+### New: Dev Protocol Refactor
+
+`strux dev` underwent a complete refactor of its device communication layer. The old monolithic `server.ts` has been split into focused modules: `socket-manager.ts` (typed WebSocket handling), `protocol.ts` (wire ↔ canonical translation), `handlers/` (client, screen, update), `ssh.ts`, `vite.ts`, `qemu.ts`, `watcher.ts`, and `mdns.ts`.
+
+**Versioned Protocol with Backwards Compatibility:**
+- Clients now declare their protocol version via a `v` query param on connect. The dev server looks up a `ProtocolMapping` for that version and translates every incoming message from wire format to a canonical v0.3.0 shape, and every outgoing message from canonical back to wire..
+- v0.2.0 clients are fully supported as a first-class protocol entry — the mapping translates old names like `new-binary` ↔ `binary-new`, `exec-start` ↔ `ssh-start`, `new-component` ↔ `component`, `reboot` ↔ `system-restart`, and `screen-screenshot` ↔ `screen-picture`, along with payload shape differences (e.g., `sessionId` ↔ `sessionID`, the v0.2.0 `binary-ack` `message` field ↔ canonical `binary` field). Clients that connect without a version string fall back to the v0.2.0 protocol automatically.
+- This means existing devices flashed with v0.2.x images continue to work against a v0.3.0 dev server without reflashing, and adding a new protocol version is just a new entry in the `PROTOCOLS` map.
+- A typed `Socket<TSend, TReceive>` wrapper enforces message type safety at the handler layer, making it impossible to send or dispatch a message that isn't in the protocol union.
+
+### New: Runtime Dev Mode Control
+
+The built-in runtime API now exposes `strux.dev`, allowing a running production image to inspect and control its dev-mode configuration without rebuilding or reflashing first.
+
+**Runtime API:**
+- `strux.dev.GetConfig()` returns whether dev mode is currently enabled and the stored dev configuration.
+- `strux.dev.SetConfig(config)` writes the dev server configuration without changing the enabled state.
+- `strux.dev.SetEnabled(enabled)` toggles whether the stored dev configuration is active.
+- `strux.dev.RestartService()` restarts the Strux systemd service so the new mode takes effect.
+- `strux.dev.Apply(config, enabled)` and `strux.dev.ApplyAndRestart(config, enabled)` provide one-call helpers for writing config, toggling dev mode, and optionally restarting.
+
+This enables production UIs to offer controlled developer access, for example a settings screen that enables dev mode on a deployed device and reconnects it to a local `strux dev` session.
+
+**Security warning:**
+- Dev mode is powerful and should be treated as a privileged maintenance feature. Once enabled, a connected dev server can replace application binaries, transfer Strux components, reboot the device, and perform workflows that can effectively reflash or take over the device.
+- Do not expose `strux.dev` controls to untrusted users or unauthenticated production screens. Gate this behind your own authentication, physical access requirements, signed/admin-only flows, or device-management policy.
+- Be especially careful on public kiosks, customer-owned hardware, or remotely accessible networks. Leaving dev mode available without a lock can turn a production device into a writable development target.
+
+### New: Pre-built Docker Builder Image
+
+The build system now pulls a pre-built `strux-builder` Docker image from GHCR (`ghcr.io/strux-sh/strux-builder:<version>`) instead of building it locally from a Dockerfile on every machine. This dramatically speeds up first-time setup and CLI upgrades — a `docker pull` replaces what was previously a full image build with cross-compilers, WebKit dev libraries, and dozens of packages.
+
+The published image also includes the `strux` CLI and `strux-introspect` binaries, enabling direct use as a CI runner image. In CI environments like GitLab CI, you can build Strux OS images without Docker-in-Docker:
+
+```yaml
+build:
+  image: ghcr.io/strux-sh/strux-builder:0.3.0
+  script:
+    - strux build qemu
+```
+
+**How it works:**
+- When `strux build` runs, it first tries to pull `ghcr.io/strux-sh/strux-builder:<version>` and tags it locally as `strux-builder`
+- If the pull fails (offline, registry down, pre-release version), it falls back to building from the embedded Dockerfile — so offline development always works
+- When strux detects it's running inside the builder container (via `STRUX_IN_CONTAINER=1`), it runs build scripts directly instead of spawning nested Docker containers
+- Verbose output is auto-enabled in container/CI environments when no TTY is detected
+
+**New CLI flag:**
+- `--local-builder` — Forces a local Dockerfile build instead of pulling from GHCR. Useful for offline work, custom Dockerfile modifications, or development on strux itself
+
+### Minor Changes
+
+- Added `host` as a BSP architecture option. When `arch: host` is set in `bsp.yaml`, the build targets the host machine's native architecture instead of a hardcoded value. New projects created with `strux init` now default to `arch: host` instead of baking in the specific host architecture at init time.
+- Local builds (`bun run build`) now read the version from `package.json` instead of falling back to `0.0.1`. CI builds are unaffected — the `--define` flag still takes precedence.
+- Cog browser is now compiled from source during the build process. The Debian-packaged Cog 0.18.5 lacks support for configuring the WebKit autoplay policy, which was added in Cog 0.19.1 (not available in any Debian repository). The build now clones Cog 0.18.5 from source, applies a backported patch that adds the `--autoplay-policy` CLI flag, and cross-compiles it alongside the WPE extension. The patched binary is installed over the Debian package version. The Cog launch script (`strux-run-cog.sh`) now passes `--autoplay-policy=allow`, permitting unmuted media autoplay without requiring a user gesture.
+
 ## v0.2.2
 
 ### Minor Changes

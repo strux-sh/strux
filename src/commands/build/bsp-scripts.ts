@@ -226,16 +226,6 @@ export async function runScriptsForStep(
         const env: Record<string, string> = {
             BSP_NAME: bspName,
             PRESELECTED_BSP: bspName,
-            PROJECT_FOLDER: "/project",
-            PROJECT_DIST_FOLDER: "/project/dist",
-            // BSP-specific cache and output directories
-            PROJECT_DIST_CACHE_FOLDER: `/project/dist/cache/${bspName}`,
-            PROJECT_DIST_OUTPUT_FOLDER: `/project/dist/output/${bspName}`,
-            PROJECT_DIST_ARTIFACTS_FOLDER: "/project/dist/artifacts",
-            // Also provide shared cache dir for cross-BSP artifacts like frontend
-            SHARED_CACHE_DIR: "/project/dist/cache",
-            BSP_CACHE_DIR: `/project/dist/cache/${bspName}`,
-            BSP_FOLDER: `/project/bsp/${bspName}`,
             HOST_ARCH: Settings.arch!,
             TARGET_ARCH: Settings.targetArch!,
             STEP: step,
@@ -273,4 +263,3 @@ export async function runScriptsForStep(
     }
     return didRun
 }
-

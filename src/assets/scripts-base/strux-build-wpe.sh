@@ -10,8 +10,7 @@ progress() {
     echo "STRUX_PROGRESS: $1"
 }
 
-# Project directory (mounted at /project in Docker container)
-PROJECT_DIR="/project"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
 # WPE extension source is bundled with the CLI and copied to dist/artifacts/wpe-extension
 EXTENSION_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/wpe-extension"
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default
@@ -57,6 +56,15 @@ ARCH=$(yq '.bsp.arch' "$BSP_CONFIG" 2>/dev/null | xargs || echo "")
 if [ -z "$ARCH" ]; then
     echo "Error: Could not read architecture from $BSP_CONFIG"
     exit 1
+fi
+
+if [ "$ARCH" = "host" ]; then
+    ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo "")}"
+    if [ -z "$ARCH" ] || [ "$ARCH" = "host" ]; then
+        echo "Error: Could not resolve host architecture"
+        exit 1
+    fi
+    progress "Resolved host architecture to $ARCH"
 fi
 
 # ============================================================================
@@ -245,5 +253,105 @@ cp libstrux-extension.so "$EXTENSION_BINARY" || {
     exit 1
 }
 
-progress "WPE Extension compiled successfully"
+progress "WPE Extension compiled successfully, building Cog..."
 
+
+# ============================================================================
+# BUILD COG WITH AUTOPLAY-POLICY PATCH
+# ============================================================================
+# Cog 0.18.5 doesn't support --autoplay-policy (added in 0.19.1).
+# We clone the source, apply a backport patch, and cross-compile the cog
+# binary. Only the launcher binary is needed — runtime libs come from the
+# Debian package already installed in the rootfs.
+# ============================================================================
+
+COG_SOURCE_DIR="/tmp/cog-0.18.5"
+COG_PATCH="$PROJECT_DIR/dist/artifacts/patches/cog-autoplay-policy.patch"
+COG_BINARY="$CACHE_DIR/cog"
+
+progress "Building patched Cog (autoplay-policy backport)..."
+
+# Clone Cog 0.18.5 source
+if [ -d "$COG_SOURCE_DIR" ]; then
+    rm -rf "$COG_SOURCE_DIR"
+fi
+
+git clone --depth 1 --branch 0.18.5 https://github.com/Igalia/cog.git "$COG_SOURCE_DIR" || {
+    echo "Error: Failed to clone Cog 0.18.5 source"
+    exit 1
+}
+
+# Apply the autoplay-policy patch
+cd "$COG_SOURCE_DIR"
+patch -p1 < "$COG_PATCH" || {
+    echo "Error: Failed to apply autoplay-policy patch to Cog"
+    exit 1
+}
+
+# Set up meson cross file if cross-compiling
+COG_BUILD_DIR="$COG_SOURCE_DIR/_build"
+
+if [ "$NEED_CROSS_COMPILE" = true ]; then
+    progress "Cross-compiling Cog for $ARCH_LABEL..."
+
+    MESON_CROSS_FILE="/tmp/cog-cross-${TARGET_ARCH}.ini"
+
+    cat > "$MESON_CROSS_FILE" <<EOF
+[binaries]
+c = '${CROSS_CC}'
+cpp = '${CROSS_CXX}'
+strip = '${CROSS_STRIP}'
+pkgconfig = 'pkg-config'
+
+[built-in options]
+c_args = []
+c_link_args = []
+
+[host_machine]
+system = 'linux'
+cpu_family = '${CMAKE_SYSTEM_PROCESSOR}'
+cpu = '${CMAKE_SYSTEM_PROCESSOR}'
+endian = 'little'
+EOF
+
+    meson setup "$COG_BUILD_DIR" \
+        --cross-file "$MESON_CROSS_FILE" \
+        --prefix=/usr \
+        --buildtype=release \
+        -Dplatforms=wayland \
+        -Ddocumentation=false \
+        -Dmanpages=false \
+        -Dlibmanette=disabled || {
+        echo "Error: Failed to configure Cog with meson (cross)"
+        exit 1
+    }
+else
+    progress "Building Cog natively for $ARCH_LABEL..."
+
+    meson setup "$COG_BUILD_DIR" \
+        --prefix=/usr \
+        --buildtype=release \
+        -Dplatforms=wayland \
+        -Ddocumentation=false \
+        -Dmanpages=false \
+        -Dlibmanette=disabled || {
+        echo "Error: Failed to configure Cog with meson (native)"
+        exit 1
+    }
+fi
+
+ninja -C "$COG_BUILD_DIR" || {
+    echo "Error: Failed to compile Cog"
+    exit 1
+}
+
+# Copy the cog binary to cache
+cp "$COG_BUILD_DIR/launcher/cog" "$COG_BINARY" || {
+    echo "Error: Failed to copy patched cog binary"
+    exit 1
+}
+
+# Clean up
+rm -rf "$COG_SOURCE_DIR"
+
+progress "Patched Cog compiled successfully"
