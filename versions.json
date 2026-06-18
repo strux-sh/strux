@@ -1,6 +1,11 @@
 {
-  "latest": null,
-  "releases": [],
+  "latest": "0.3.0",
+  "releases": [
+    {
+      "version": "0.3.0",
+      "path": "/strux/v0.3.0/"
+    }
+  ],
   "previews": [
     {
       "branch": "feature/v0.3.0",
