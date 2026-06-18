@@ -60,6 +60,27 @@ rootfs:
     - curl
     - wget
 
+# --- Project Build Scripts ---
+# --- Run against the assembled rootfs during post-processing, before the image is bundled. ---
+# --- Use these for project-specific image customization that doesn't belong in the BSP, ---
+# --- e.g. installing a tool whose Debian package lags upstream. ---
+# ---
+# --- Each script runs with $ROOTFS_DIR (the extracted rootfs) plus these helpers: ---
+# ---   run_in_chroot "cmd" / strux_chroot "cmd"      run a command inside the image ---
+# ---   strux_install_file <src> <abs-dest> [mode]    copy a host file into the image ---
+# ---   strux_progress "msg" / strux_progress_bar "msg" <pct>   drive the CLI progress display ---
+# --- ...and the full build environment (TARGET_ARCH, PROJECT_NAME, STRUX_VERSION, etc.). ---
+# --- The rootfs is repacked in place after a successful run, so scripts must be idempotent. ---
+# scripts:
+#   - location: ./scripts/install-yt-dlp.sh
+#     # --- rootfs_post is the only step today (runs after post-processing, before bundling) ---
+#     step: rootfs_post
+#     description: "Install latest yt-dlp from GitHub releases"
+#     # --- Omit cached_generated_artifacts to run every build (e.g. "always fetch latest"). ---
+#     # --- Declare them (and optionally depends_on) to cache/skip the script when unchanged. ---
+#     # depends_on:
+#     #   - ./scripts/install-yt-dlp.sh
+
 # --- QEMU Specific Configuration ---
 qemu:
 

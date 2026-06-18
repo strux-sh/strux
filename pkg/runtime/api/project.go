@@ -34,9 +34,19 @@ func (p *ProjectService) Info() (ProjectInfo, error) {
 		path = defaultProjectInfoPath
 	}
 
-	data, err := os.ReadFile(path)
+	info, err := readProjectInfo(path)
 	if err != nil {
 		return ProjectInfo{}, fmt.Errorf("failed to read project info: %w", err)
+	}
+
+	return info, nil
+}
+
+// readProjectInfo loads and parses the project metadata file written at build time.
+func readProjectInfo(path string) (ProjectInfo, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ProjectInfo{}, err
 	}
 
 	var info ProjectInfo

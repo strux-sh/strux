@@ -222,6 +222,10 @@ function createDeps(options: HarnessOptions = {}): { deps: BuildDeps; events: st
                 events.push(`script:${scriptStep}`)
                 return scriptRuns.has(scriptStep)
             },
+            runProjectScriptsForStep: async (scriptStep: string) => {
+                events.push(`project-script:${scriptStep}`)
+                return scriptRuns.has(`project:${scriptStep}`)
+            },
         },
         runner: {
             skipChown: false,

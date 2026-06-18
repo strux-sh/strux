@@ -259,6 +259,9 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "strux.yaml", keyPath: "hostname" },
             { file: "strux.yaml", keyPath: "rootfs.overlay" },
             { file: "strux.yaml", keyPath: "boot.splash" },
+            // project.json is written in this step — invalidate when its fields change
+            { file: "strux.yaml", keyPath: "name" },
+            { file: "strux.yaml", keyPath: "project_version" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.rootfs.overlay" },
             { file: "bsp/{bsp}/bsp.yaml", keyPath: "bsp.hostname" },
             // Kernel-related keys — kernel installation now happens in post

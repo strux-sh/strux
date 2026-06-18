@@ -480,6 +480,54 @@ export const STRUX_RUNTIME_TYPES = {
           }
         ]
       },
+      "system": {
+        "methods": [
+          {
+            "name": "BSP",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "Arch",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "Model",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "Hostname",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "hasError": true
+          }
+        ]
+      },
       "update": {
         "methods": [
           {

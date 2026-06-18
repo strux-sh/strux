@@ -32,6 +32,11 @@ func (rt *Runtime) Project() *api.ProjectService {
 	return &api.ProjectService{}
 }
 
+// System returns Strux-owned device and system information APIs.
+func (rt *Runtime) System() *api.SystemService {
+	return &api.SystemService{}
+}
+
 // Update returns Strux-owned system update state APIs.
 func (rt *Runtime) Update() *api.UpdateService {
 	return &api.UpdateService{}
@@ -75,6 +80,7 @@ func (rt *Runtime) registerBuiltinExtensions() {
 	rt.registerStruxAPI(api.DisplayNamespace, rt.Display())
 	rt.registerStruxAPI(api.NetworkNamespace, rt.Network())
 	rt.registerStruxAPI(api.ProjectNamespace, rt.Project())
+	rt.registerStruxAPI(api.SystemNamespace, rt.System())
 	rt.registerStruxAPI(api.UpdateNamespace, rt.Update())
 	rt.registerStruxAPI(api.WiFiNamespace, rt.WiFi())
 	rt.registerStruxAPI(api.CapabilitiesNamespace, rt.Capabilities())

@@ -98,6 +98,36 @@ dev:
 - The default BSP template now documents the required kernel fragment options:
   `CONFIG_USB_GADGET`, `CONFIG_USB_LIBCOMPOSITE`, `CONFIG_USB_CONFIGFS`, `CONFIG_USB_CONFIGFS_ECM`, `CONFIG_USB_CONFIGFS_NCM`, and `CONFIG_USB_CONFIGFS_RNDIS`.
 
+### New: Project Build Scripts
+
+Projects can now run their own build scripts against the assembled root filesystem, without modifying the shared BSP. This is the home for app-specific image customization — installing a tool that isn't packaged, dropping in a binary, or running a one-off `chroot` step — that doesn't belong in a board support package shared across projects.
+
+Scripts are declared in `strux.yaml` and run at the new `rootfs_post` step, after the built-in rootfs post-processing and before image bundling:
+
+```yaml
+scripts:
+  - location: ./scripts/install-yt-dlp.sh
+    step: rootfs_post
+    description: "Install latest yt-dlp from GitHub releases"
+    # Optional caching, same rules as BSP scripts:
+    # depends_on: [./scripts/install-yt-dlp.sh]
+    # cached_generated_artifacts: [...]   # omit to always run
+```
+
+**Managed rootfs context:**
+- The harness extracts `rootfs-post.tar.gz`, mounts it for `chroot` (including the cross-arch QEMU static binary), runs the script, then repacks `rootfs-post.tar.gz` **in place** — so the BSP's `before_bundle`/`make_image` stages and the image transparently pick up the changes with no BSP edits.
+- The repack only happens on success: a failing project script aborts the build and leaves the rootfs untouched.
+- Because the repack is in-place, `rootfs_post` scripts must be **idempotent** (overwrite, don't append) — when the `rootfs-post` cache is warm the script may run against a rootfs that already contains its own previous output.
+
+**Helpers and environment:**
+- Scripts get the full build environment (`TARGET_ARCH`, `HOST_ARCH`, `BSP_NAME`, `PROJECT_NAME`, `PROJECT_VERSION`, `STRUX_VERSION`, splash/display vars) plus path variables (`PROJECT_DIR`, `BSP_CACHE_DIR`, …).
+- `$ROOTFS_DIR` points at the extracted rootfs, and these helper functions are provided: `run_in_chroot` / `strux_chroot` (run a command inside the image), `strux_install_file <src> <abs-dest> [mode]` (copy a host file into the image, creating parent dirs), and `strux_progress` / `strux_progress_bar` (drive the CLI progress display, with `progress` kept as an alias).
+
+**Caching:**
+- Project scripts reuse the existing hash-based script cache. Declaring `cached_generated_artifacts` lets a script be skipped when its outputs exist and inputs are unchanged; omitting it (the default) runs the script every build — ideal for "always fetch the latest" steps.
+
+`rootfs_post` is the only step available today. More project lifecycle steps will be added in future releases.
+
 ### Minor Changes
 
 - Added `host` as a BSP architecture option. When `arch: host` is set in `bsp.yaml`, the build targets the host machine's native architecture instead of a hardcoded value. New projects created with `strux init` now default to `arch: host` instead of baking in the specific host architecture at init time.
@@ -113,6 +143,7 @@ dev:
 
 - Fixed cached `strux build <bsp> --dev` builds not enabling dev mode in the generated image. The build now refreshes the BSP-specific `.dev-env.json` even when the client binary is cached, removes stale dev config for cached production builds, and makes `rootfs-post` depend on the dev config file so switching between dev and production rebuilds the image contents correctly.
 - Fixed BSP lifecycle scripts running before `dist/artifacts/logo.png` exists on fresh builds. Initial artifacts are now prepared before BSP hooks run, so scripts such as `before_rootfs` can safely read the copied splash logo and Plymouth files.
+- Fixed changes to `project_version` (and `name`) in `strux.yaml` not taking effect in cached builds. These fields are written into `/etc/strux/project.json` during the `rootfs-post` step but weren't tracked as cache dependencies, so editing only the version left the step cached and the image kept the stale `project.json` — causing the runtime `strux.project.Info()` value (and any UI reading it) to show the old version. The `rootfs-post` step now depends on both keys.
 
 ## v0.2.2
 

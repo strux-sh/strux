@@ -20,6 +20,7 @@ Many string values feed into build scripts, so the schema rejects characters tha
 | `update` | object | — | System update configuration. See [update](#update). |
 | `display` | object | — | Monitor layout and routing. See [display.monitors](#display-monitors). |
 | `rootfs` | object | — | Root filesystem overlay and packages. See [rootfs](#rootfs). |
+| `scripts` | object[] | — | Project build scripts run against the assembled rootfs. See [scripts](#scripts). |
 | `qemu` | object | — | QEMU settings for local testing. See [qemu](#qemu). |
 | `build` | object | — | Build environment and cache settings. See [build](#build). |
 | `dev` | object | — | Dev mode settings. See [dev](#dev). |
@@ -63,6 +64,20 @@ Customizes the root filesystem — the Linux filesystem your image boots from. S
 | --- | --- | --- | --- |
 | `rootfs.overlay` | shell-safe relative path | — | Folder copied verbatim onto the root filesystem, e.g. `./overlay`. |
 | `rootfs.packages` | shell-safe string[] | — | Debian packages to install into the image (package names or locations of `.deb` files). |
+
+## scripts
+
+Project build scripts run against the fully assembled root filesystem. Use these for app-specific image customization that doesn't belong in a shared BSP — installing a tool that isn't packaged, dropping in a binary, or running a one-off `chroot` step. See [Customizing the OS](/guide/customizing-the-os.html#build-scripts).
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `scripts[].location` | shell-safe relative path | — | **Required.** Path to the script, relative to the project root, e.g. `./scripts/install-yt-dlp.sh`. |
+| `scripts[].step` | string | `rootfs_post` | Lifecycle step to run at. `rootfs_post` (the only step today) runs after rootfs post-processing and before image bundling. |
+| `scripts[].description` | string | — | Human-readable label shown in build logs. |
+| `scripts[].depends_on` | string[] | — | Files that invalidate the script's cache when changed. Project-relative when prefixed with `./`, otherwise resolved like generated artifacts (under `dist/`). |
+| `scripts[].cached_generated_artifacts` | string[] | — | Files (relative to `dist/`) the script produces. If all exist and no dependency changed, the script is skipped. **Omit to run every build** — ideal for "always fetch the latest" steps. |
+
+A `rootfs_post` script runs with `$ROOTFS_DIR` pointing at the extracted rootfs, the full [build environment](/bsp/reference/environment-variables.html) (`TARGET_ARCH`, `BSP_NAME`, `PROJECT_NAME`, …), and these helper functions: `run_in_chroot` / `strux_chroot`, `strux_install_file <src> <abs-dest> [mode]`, and `strux_progress` / `strux_progress_bar`. The harness repacks the rootfs in place after a successful run, so downstream bundling picks up the changes automatically; a failing script aborts the build. Scripts must be idempotent (overwrite, don't append).
 
 ## qemu
 
@@ -174,6 +189,13 @@ rootfs:
     - wget
     - openssh-server
     - ffmpeg
+
+# Project build scripts run against the assembled rootfs
+scripts:
+  - location: ./scripts/install-yt-dlp.sh
+    step: rootfs_post          # the only step today
+    description: "Install latest yt-dlp from GitHub releases"
+    # No cached_generated_artifacts → runs every build (always fetches latest)
 
 # QEMU settings for local testing
 qemu:

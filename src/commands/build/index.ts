@@ -17,6 +17,7 @@ import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
 import { type ScriptStep } from "../../types/bsp-yaml"
+import { type ProjectScriptStep } from "../../types/main-yaml"
 
 // Build Caching System
 import {
@@ -50,6 +51,9 @@ import { copyAllInitialArtifacts } from "./artifacts"
 
 // BSP Script Execution
 import { runScriptsForStep } from "./bsp-scripts"
+
+// Project Script Execution
+import { runProjectScriptsForStep } from "./project-scripts"
 
 export interface BuildMetadata {
     buildMode: "dev" | "production"
@@ -124,6 +128,7 @@ export interface BuildSteps {
 
 export interface BuildScripts {
     runScriptsForStep(step: ScriptStep, manifest: BuildCacheManifest): Promise<boolean>
+    runProjectScriptsForStep(step: ProjectScriptStep, manifest: BuildCacheManifest): Promise<boolean>
 }
 
 export interface BuildRunner {
@@ -181,6 +186,7 @@ export const realBuildDeps: BuildDeps = {
     },
     scripts: {
         runScriptsForStep,
+        runProjectScriptsForStep,
     },
     runner: Runner,
     now: () => new Date(),
@@ -292,6 +298,13 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
     // Wrapper that tracks whether any BSP script ran
     async function runBspScripts(step: ScriptStep) {
         if (await deps.scripts.runScriptsForStep(step, manifest)) {
+            anyStepRan = true
+        }
+    }
+
+    // Wrapper that tracks whether any project (strux.yaml) script ran
+    async function runProjectScripts(step: ProjectScriptStep) {
+        if (await deps.scripts.runProjectScriptsForStep(step, manifest)) {
             anyStepRan = true
         }
     }
@@ -451,6 +464,14 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
             await deps.steps.postProcessRootFS()
             await cacheStep("rootfs-post")
         }
+
+        // ========================================
+        // PROJECT ROOTFS SCRIPTS
+        // ========================================
+        // Run project-defined scripts against the assembled rootfs. These edit
+        // rootfs-post.tar.gz in place, so the BSP's bundle/make_image stages
+        // below transparently pick up the changes.
+        await runProjectScripts("rootfs_post")
 
         // ========================================
         // FINAL IMAGE BUNDLING

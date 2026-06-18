@@ -76,6 +76,74 @@ A missing `.deb` file produces a warning and is skipped, so check the build outp
 Board-specific packages (firmware, hardware tools) belong in the BSP's `bsp.yaml`, not here — they're merged with your project list at build time. See the [bsp.yaml reference](/bsp/reference/bsp-yaml.html).
 :::
 
+## Build scripts
+
+The overlay copies files in, and `packages` installs from Debian. But sometimes you need to *run a command* while the image is being built — most often to install a tool that Debian ships too old. A build script lets you do that.
+
+If you've used a `Dockerfile`, this is the same idea as a `RUN` line: a command that runs while the image is being put together, and whatever it leaves behind is baked into the final image. (Never written a Dockerfile? Think of an npm `postinstall` script — a small command that runs automatically during a build — except this one runs against the whole operating system.)
+
+You point at a script file from `strux.yaml`:
+
+```yaml
+scripts:
+  - location: ./scripts/install-yt-dlp.sh
+    step: rootfs_post
+    description: "Install latest yt-dlp from GitHub releases"
+```
+
+Your script runs after Strux has finished assembling the device's filesystem (the overlay and packages are already in place), and just before it packs everything into the final image file. That moment is called `rootfs_post`, and it's the only `step` available today.
+
+### What your script can use
+
+Right before your script runs, Strux unpacks the device's filesystem into a folder on your build machine, then hands your script a few tools to work with:
+
+- **`$ROOTFS_DIR`** — the path to that folder. Everything inside it *is* the device's filesystem, so `$ROOTFS_DIR/usr/local/bin/` becomes `/usr/local/bin/` on the device. **To add a file to the image, write it somewhere under `$ROOTFS_DIR`.**
+
+- **`run_in_chroot "command"`** — run a command *as if it were running on the device itself*. Use it for device-side setup, like installing something with `apt-get` or enabling a service.
+
+  ::: tip What's a "chroot"?
+  Normally a command sees your build machine's filesystem. `chroot` (short for "change root") runs a command with a folder you choose treated as the entire filesystem `/`. So `run_in_chroot "apt-get install -y cowsay"` installs into the *image* you're building, not onto your laptop. `strux_chroot` is an alias for the same thing if you prefer that name.
+  :::
+
+- **`strux_install_file <source> <destination> [mode]`** — copy a file from your project into the image, creating any missing folders along the way. For example, `strux_install_file ./assets/config.json /etc/myapp/config.json 0644` puts the file at `/etc/myapp/config.json` on the device. (The `mode` is the file's Unix permissions and defaults to `0644` — readable by everyone, writable by the owner.)
+
+- **`strux_progress "message"`** and **`strux_progress_bar "message" 50`** — print a status line or progress bar so your script's work shows up in the build output like every other step.
+
+Your script also gets the build's environment variables. The handy one is **`$TARGET_ARCH`** — the device's CPU type, like `arm64` — which lets you download the right file for the hardware. There are [more environment variables](/bsp/reference/environment-variables.html) available too.
+
+### A real example
+
+Say you want the newest `yt-dlp` (a video downloader that updates constantly, so the Debian package is almost always out of date). This script downloads the build that matches the device's CPU and drops it into the image:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# Pick the download that matches the device's CPU.
+case "$TARGET_ARCH" in
+    arm64)  ASSET="yt-dlp_linux_aarch64" ;;
+    x86_64) ASSET="yt-dlp_linux" ;;
+esac
+
+strux_progress "Downloading the latest yt-dlp..."
+curl -fsSL -o "$ROOTFS_DIR/usr/local/bin/yt-dlp" \
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ASSET}"
+chmod 0755 "$ROOTFS_DIR/usr/local/bin/yt-dlp"
+
+# Run it inside the image to confirm the download actually works.
+run_in_chroot "/usr/local/bin/yt-dlp --version"
+```
+
+The `curl` writes straight into `$ROOTFS_DIR`, so the binary ends up at `/usr/local/bin/yt-dlp` on the device. The last line is a safety check: if the download was broken, `yt-dlp --version` fails — and when a script fails, Strux stops the whole build, so you catch the problem now instead of shipping a broken image.
+
+### How often it runs
+
+By default, your script runs on **every build** — which is exactly what you want for "always grab the latest." If instead your script does something slow that rarely changes, you can let Strux skip it when nothing relevant has changed: list the files your script creates under `cached_generated_artifacts` (and, optionally, files it depends on under `depends_on`). See [caching](/concepts/caching.html) for the details.
+
+::: warning Write your script so it's safe to run twice
+Sometimes Strux runs your script against an image that already contains the result of a previous run (this happens when the build reuses a cached filesystem). So **overwrite instead of adding to**: copying a file into place again is harmless, but a line like `echo "..." >> /etc/some.conf` would add the line a second time. If your script only writes or replaces files — like the example above — you're already safe.
+:::
+
 ## Hostname
 
 ```yaml
