@@ -1,6 +1,6 @@
 # Build Pipeline
 
-When you run `strux build`, the CLI executes a fixed sequence of steps, each one a shell script running inside the strux-builder Docker container. This page walks through every step: what it consumes, what it produces, and when it's skipped. For the caching logic that decides whether a step runs at all, see [Caching](/concepts/caching.html).
+When you run `strux build`, the CLI executes a fixed sequence of steps, each one a shell script running inside the strux-builder Docker container. This page walks through every step: what it consumes, what it produces, and when it's skipped. For the caching logic that decides whether a step runs at all, see [Caching](/concepts/caching.md).
 
 ## The step order
 
@@ -21,9 +21,9 @@ before_build (BSP hook)
 after_build (BSP hook)
 ```
 
-Around almost every step, the BSP can register **lifecycle scripts** — `before_frontend`, `after_kernel`, and so on — that run at that exact point in the sequence. That's how board-specific work (installing vendor drivers, building a vendor bootloader, packing a Rockchip image) plugs into the generic pipeline without modifying it. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) for the full hook list.
+Around almost every step, the BSP can register **lifecycle scripts** — `before_frontend`, `after_kernel`, and so on — that run at that exact point in the sequence. That's how board-specific work (installing vendor drivers, building a vendor bootloader, packing a Rockchip image) plugs into the generic pipeline without modifying it. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) for the full hook list.
 
-Before any step runs, the CLI validates `strux.yaml` and the selected `bsp.yaml`, prepares the `dist/` directory structure, copies embedded assets to `dist/artifacts/` (see [Artifacts](/concepts/artifacts.html)), and makes sure the strux-builder Docker image is up to date. If the Docker image had to be rebuilt, every cached step is invalidated.
+Before any step runs, the CLI validates `strux.yaml` and the selected `bsp.yaml`, prepares the `dist/` directory structure, copies embedded assets to `dist/artifacts/` (see [Artifacts](/concepts/artifacts.md)), and makes sure the strux-builder Docker image is up to date. If the Docker image had to be rebuilt, every cached step is invalidated.
 
 ## 1. Frontend
 
@@ -33,11 +33,11 @@ This is the only step whose output goes in the *shared* cache rather than the pe
 
 ## 2. Application
 
-Compiles your `main.go` (and the rest of your Go module) for the target architecture into `dist/cache/{bsp}/app/main`. If the BSP declares [runtime extensions](/bsp/guide/runtime-extensions.html) under `bsp.runtime.extensions`, their Go packages are compiled in too — that's why this step is per-BSP even though your code doesn't change between boards.
+Compiles your `main.go` (and the rest of your Go module) for the target architecture into `dist/cache/{bsp}/app/main`. If the BSP declares [runtime extensions](/bsp/guide/runtime-extensions.md) under `bsp.runtime.extensions`, their Go packages are compiled in too — that's why this step is per-BSP even though your code doesn't change between boards.
 
 ## 3. Cage
 
-Compiles the Cage Wayland compositor from the sources in `dist/artifacts/cage/` (Strux's modified fork — splash rendering, multi-monitor, input mapping; see [Display Stack](/concepts/display-stack.html)) using Meson, producing `dist/cache/{bsp}/cage`. The build also writes a `.cage-env` file from the BSP's `bsp.cage.env` and `bsp.cage.hide_cursor` settings, which later ends up on the device as `/strux/.cage-env`.
+Compiles the Cage Wayland compositor from the sources in `dist/artifacts/cage/` (Strux's modified fork — splash rendering, multi-monitor, input mapping; see [Display Stack](/concepts/display-stack.md)) using Meson, producing `dist/cache/{bsp}/cage`. The build also writes a `.cage-env` file from the BSP's `bsp.cage.env` and `bsp.cage.hide_cursor` settings, which later ends up on the device as `/strux/.cage-env`.
 
 ## 4. WPE
 
@@ -114,12 +114,12 @@ Creating the actual bootable image is **always the BSP's job** — partition lay
 
 ## 12. Update bundle — only if auto-bundle is on
 
-If `strux.yaml` has both `update.enabled: true` and `update.auto_bundle: true`, the build ends by producing a signed `.struxb` update bundle — a tarball containing the rootfs image, a manifest, and an RSA signature — ready to ship to devices over the air. See [Updates](/guide/updates.html).
+If `strux.yaml` has both `update.enabled: true` and `update.auto_bundle: true`, the build ends by producing a signed `.struxb` update bundle — a tarball containing the rootfs image, a manifest, and an RSA signature — ready to ship to devices over the air. See [Updates](/guide/updates.md).
 
 Finally, the `after_build` hook runs and the CLI writes `dist/output/{bsp}/.build-info.json` with the build mode, timestamp, BSP name, and versions.
 
 ## Where to go next
 
-- [Caching](/concepts/caching.html) — how steps get skipped on incremental builds.
-- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) — hooking BSP scripts into the pipeline.
-- [Building](/guide/building.html) — running builds day to day.
+- [Caching](/concepts/caching.md) — how steps get skipped on incremental builds.
+- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) — hooking BSP scripts into the pipeline.
+- [Building](/guide/building.md) — running builds day to day.

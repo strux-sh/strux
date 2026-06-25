@@ -1,6 +1,6 @@
 # Path Resolution
 
-How Strux resolves the paths you write in a script entry's `cached_generated_artifacts` and `depends_on` in [bsp.yaml](/bsp/reference/bsp-yaml.html#bsp-scripts). Getting these right is what makes [script caching](/bsp/concepts/lifecycle-scripts.html) work.
+How Strux resolves the paths you write in a script entry's `cached_generated_artifacts` and `depends_on` in [bsp.yaml](/bsp/reference/bsp-yaml.md#bsp-scripts). Getting these right is what makes [script caching](/bsp/concepts/lifecycle-scripts.md) work.
 
 ## The rules
 
@@ -30,7 +30,7 @@ Paths describe files your script **reads**. One extra rule, checked first:
 The script path itself is always resolved relative to the BSP directory, with or without a leading `./` — `./scripts/make-image.sh` and `scripts/make-image.sh` are equivalent.
 
 ::: tip Inside your script, use the environment variables
-These same locations are exposed to scripts as `PROJECT_DIST_CACHE_FOLDER`, `PROJECT_DIST_OUTPUT_FOLDER`, `BSP_FOLDER`, and friends — see [Environment Variables](/bsp/reference/environment-variables.html). Write to `$PROJECT_DIST_CACHE_FOLDER/...` in the script and declare the matching `cache/...` artifact in `bsp.yaml`.
+These same locations are exposed to scripts as `PROJECT_DIST_CACHE_FOLDER`, `PROJECT_DIST_OUTPUT_FOLDER`, `BSP_FOLDER`, and friends — see [Environment Variables](/bsp/reference/environment-variables.md). Write to `$PROJECT_DIST_CACHE_FOLDER/...` in the script and declare the matching `cache/...` artifact in `bsp.yaml`.
 :::
 
 ## How caching uses these paths
@@ -41,7 +41,7 @@ A script is **skipped** only when all of these hold (and `--clean` was not passe
 2. The script file itself is unchanged (SHA-style content hash).
 3. Every `depends_on` file exists and its hash matches the last run.
 
-A script with no `cached_generated_artifacts` runs on **every** build. See [Caching](/concepts/caching.html) for the wider build cache.
+A script with no `cached_generated_artifacts` runs on **every** build. See [Caching](/concepts/caching.md) for the wider build cache.
 
 ## Worked examples
 
@@ -86,6 +86,6 @@ scripts:
 
 ## Related pages
 
-- [bsp.yaml Reference](/bsp/reference/bsp-yaml.html) — the full script entry schema.
-- [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.html) — when scripts run.
-- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) — the concept behind hook scripts and their caching.
+- [bsp.yaml Reference](/bsp/reference/bsp-yaml.md) — the full script entry schema.
+- [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.md) — when scripts run.
+- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) — the concept behind hook scripts and their caching.

@@ -4,7 +4,7 @@ This page takes you from nothing to a Strux OS image booting in a virtual machin
 
 ## Prerequisites
 
-You need the `strux` CLI and Docker installed — see [Installation](/guide/installation.html). QEMU is required for running the image locally.
+You need the `strux` CLI and Docker installed — see [Installation](/guide/installation.md). QEMU is required for running the image locally.
 
 ## 1. Create a project
 
@@ -51,12 +51,12 @@ This is where you'll spend most of your time. Strux builds a development image, 
 A QEMU window opens showing exactly what your device will display: your app, full-screen.
 
 ::: tip First run is slow — that's normal
-The first build compiles the Cage compositor and WPE WebKit and assembles a Debian root filesystem inside Docker. Subsequent runs reuse the cache and only rebuild what changed. See [Caching](/concepts/caching.html) for how this works.
+The first build compiles the Cage compositor and WPE WebKit and assembles a Debian root filesystem inside Docker. Subsequent runs reuse the cache and only rebuild what changed. See [Caching](/concepts/caching.md) for how this works.
 :::
 
 ## 3. Make it yours
 
-Open `frontend/src/` and change something visible — the QEMU window updates as you save. Then look at `main.go`: the template includes a small example of backend state and methods that the frontend calls through a generated, typed API. The [Backend guide](/guide/backend.html) explains how that bridge works.
+Open `frontend/src/` and change something visible — the QEMU window updates as you save. Then look at `main.go`: the template includes a small example of backend state and methods that the frontend calls through a generated, typed API. The [Backend guide](/guide/backend.md) explains how that bridge works.
 
 ## 4. Build a real image
 
@@ -66,7 +66,7 @@ When you want a production image rather than a dev environment:
 strux build
 ```
 
-This runs the full [build pipeline](/concepts/build-pipeline.html) — frontend, Go application, compositor, browser engine, kernel, bootloader, root filesystem — and produces a bootable disk image under `dist/output/`.
+This runs the full [build pipeline](/concepts/build-pipeline.md) — frontend, Go application, compositor, browser engine, kernel, bootloader, root filesystem — and produces a bootable disk image under `dist/output/`.
 
 ## 5. Boot the image
 
@@ -78,7 +78,7 @@ This launches the built image in QEMU, exactly as it would boot on hardware: spl
 
 ## Where to go next
 
-- [Project Structure](/guide/project-structure.html) — what every file and folder in your new project does.
-- [Dev Mode](/guide/dev-mode.html) — the full tour: remote devices, the WebKit inspector, USB networking.
-- [Frontend](/guide/frontend.html) and [Backend](/guide/backend.html) — how to actually build your app.
-- [Flashing](/guide/flashing.html) — getting the image onto real hardware when you're ready.
+- [Project Structure](/guide/project-structure.md) — what every file and folder in your new project does.
+- [Dev Mode](/guide/dev-mode.md) — the full tour: remote devices, the WebKit inspector, USB networking.
+- [Frontend](/guide/frontend.md) and [Backend](/guide/backend.md) — how to actually build your app.
+- [Flashing](/guide/flashing.md) — getting the image onto real hardware when you're ready.

@@ -1,10 +1,10 @@
 # Build Steps & Lifecycle Hooks
 
-The exact order of the build pipeline, what each step does, when conditional steps run, and the full list of `before_*` / `after_*` hook values your BSP scripts can attach to. For the mental model behind the pipeline, see [Build Pipeline](/concepts/build-pipeline.html); for how to write hook scripts, see the [Scripts guide](/bsp/guide/scripts.html).
+The exact order of the build pipeline, what each step does, when conditional steps run, and the full list of `before_*` / `after_*` hook values your BSP scripts can attach to. For the mental model behind the pipeline, see [Build Pipeline](/concepts/build-pipeline.md); for how to write hook scripts, see the [Scripts guide](/bsp/guide/scripts.md).
 
 ## Pipeline order
 
-Steps run in this order on every `strux build` (and the build phase of `strux dev`). Each cacheable step is skipped when the [build cache](/concepts/caching.html) detects no changes to its inputs; its surrounding hooks still run (subject to their own [script caching](/bsp/concepts/lifecycle-scripts.html)).
+Steps run in this order on every `strux build` (and the build phase of `strux dev`). Each cacheable step is skipped when the [build cache](/concepts/caching.md) detects no changes to its inputs; its surrounding hooks still run (subject to their own [script caching](/bsp/concepts/lifecycle-scripts.md)).
 
 | # | Step | What it does | Runs when | Hooks around it |
 | --- | --- | --- | --- | --- |
@@ -20,7 +20,7 @@ Steps run in this order on every `strux build` (and the build phase of `strux de
 | 10 | `rootfs-post` | Post-processes the rootfs: installs your binaries, kernel, packages, overlays, splash, and display config into it. The display config is written just before this step. | Always | none (followed by `before_bundle`) |
 | 11 | `before_bundle` | Hook-only stage between rootfs post-processing and image creation. | Always | — |
 | 12 | `make_image` | Runs the BSP's `make_image` script(s) to produce the final disk image. There is no built-in image step — the BSP must provide this. | Always (if the BSP defines a `make_image` script) | — |
-| 13 | update bundle | Generates the signed Strux rootfs update bundle from the built image. | Only when `strux.yaml` has `update.enabled: true` and `update.auto_bundle: true` — see [Updates](/guide/updates.html) | — |
+| 13 | update bundle | Generates the signed Strux rootfs update bundle from the built image. | Only when `strux.yaml` has `update.enabled: true` and `update.auto_bundle: true` — see [Updates](/guide/updates.md) | — |
 | 14 | `after_build` | Hook-only stage after everything completes. | Always | — |
 
 `before_build` hooks run before step 1, right after configuration validation and artifact preparation.
@@ -40,7 +40,7 @@ Two hook values don't wrap a built-in step — they **replace** it:
 
 ## All valid hook values
 
-The complete set of values accepted by `scripts[].step` in [bsp.yaml](/bsp/reference/bsp-yaml.html#bsp-scripts):
+The complete set of values accepted by `scripts[].step` in [bsp.yaml](/bsp/reference/bsp-yaml.md#bsp-scripts):
 
 | Step value | Fires |
 | --- | --- |
@@ -67,11 +67,11 @@ The complete set of values accepted by `scripts[].step` in [bsp.yaml](/bsp/refer
 | `before_bundle` | After rootfs post-processing, before `make_image`. |
 | `make_image` | Creates the final disk image for the target device. |
 | `after_build` | Very last, after everything completes. |
-| `flash_script_tool` | Not part of the build. Run on the **host** by `strux flash`, before `flash_script` — e.g. to download a vendor flashing tool. See [Flash Scripts](/bsp/guide/flash-scripts.html). |
-| `flash_script` | Not part of the build. Run on the **host** by `strux flash` to write the image to a device. See [Flash Scripts](/bsp/guide/flash-scripts.html). |
+| `flash_script_tool` | Not part of the build. Run on the **host** by `strux flash`, before `flash_script` — e.g. to download a vendor flashing tool. See [Flash Scripts](/bsp/guide/flash-scripts.md). |
+| `flash_script` | Not part of the build. Run on the **host** by `strux flash` to write the image to a device. See [Flash Scripts](/bsp/guide/flash-scripts.md). |
 
 Multiple scripts may share the same step; they run in the order they appear in `bsp.yaml`.
 
 ## Where scripts run
 
-All build-time scripts run inside the `strux-builder` Docker container with your project mounted at `/project`. The two `flash_*` steps run directly on your host machine. Either way, scripts get a standard set of environment variables — see [Environment Variables](/bsp/reference/environment-variables.html).
+All build-time scripts run inside the `strux-builder` Docker container with your project mounted at `/project`. The two `flash_*` steps run directly on your host machine. Either way, scripts get a standard set of environment variables — see [Environment Variables](/bsp/reference/environment-variables.md).

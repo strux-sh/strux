@@ -1,6 +1,6 @@
 # Bootloaders
 
-This page covers the `boot.bootloader` block of `bsp.yaml`: bootloader types, the built-in U-Boot build, bootloader-level device trees, boot methods, and the vendor firmware blobs that ARM boards need before a bootloader can even run. Read [Custom Kernels](/bsp/guide/kernel.html) first — the bootloader's whole job is loading what that page builds.
+This page covers the `boot.bootloader` block of `bsp.yaml`: bootloader types, the built-in U-Boot build, bootloader-level device trees, boot methods, and the vendor firmware blobs that ARM boards need before a bootloader can even run. Read [Custom Kernels](/bsp/guide/kernel.md) first — the bootloader's whole job is loading what that page builds.
 
 ## What the bootloader does
 
@@ -175,7 +175,7 @@ label strux
 `kernel`, `initrd`, and `fdt` point at the artifacts your kernel build produced (installed into `/boot` by the image scripts); `append` is the kernel command line — root device, console, splash flags.
 
 ::: warning Experimental: A/B boot scripts
-The example BSPs also carry a `boot/strux-ab-boot.cmd` U-Boot script and `-ab.genimage.cfg` partition layouts. These belong to the dual-rootfs A/B update system, which is experimental and only activates when updates are enabled in `strux.yaml` — the install script then switches to slot-aware boot assets instead of the plain extlinux flow. The design may change; see [Dual RootFS](/bsp/concepts/dual-rootfs.html) before depending on it.
+The example BSPs also carry a `boot/strux-ab-boot.cmd` U-Boot script and `-ab.genimage.cfg` partition layouts. These belong to the dual-rootfs A/B update system, which is experimental and only activates when updates are enabled in `strux.yaml` — the install script then switches to slot-aware boot assets instead of the plain extlinux flow. The design may change; see [Dual RootFS](/bsp/concepts/dual-rootfs.md) before depending on it.
 :::
 
 ## Splash screens
@@ -184,8 +184,8 @@ A kiosk should show your logo from the first second, and that's a bootloader job
 
 ## Where to go next
 
-- [Writing a BSP](/bsp/guide/writing-a-bsp.html) — where the bootloader fits in the bring-up sequence.
-- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) — `before_bootloader`, `after_bootloader`, `custom_bootloader`.
-- [Flash Scripts](/bsp/guide/flash-scripts.html) — getting the assembled image onto the board.
-- [bsp.yaml Reference](/bsp/reference/bsp-yaml.html) — every bootloader key in one table.
-- [Example BSPs](/bsp/guide/examples.html) — three real Rockchip bootloader setups to crib from.
+- [Writing a BSP](/bsp/guide/writing-a-bsp.md) — where the bootloader fits in the bring-up sequence.
+- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) — `before_bootloader`, `after_bootloader`, `custom_bootloader`.
+- [Flash Scripts](/bsp/guide/flash-scripts.md) — getting the assembled image onto the board.
+- [bsp.yaml Reference](/bsp/reference/bsp-yaml.md) — every bootloader key in one table.
+- [Example BSPs](/bsp/guide/examples.md) — three real Rockchip bootloader setups to crib from.

@@ -51,10 +51,10 @@ Typical use cases: kiosks, digital signage, point-of-sale, industrial HMIs, inte
 3. `strux build` produces a complete OS image. A smart cache means only the steps affected by your changes are rebuilt.
 4. `strux flash` writes the image to real hardware.
 
-Hardware targets are described by **Board Support Packages (BSPs)** — a folder in your project that defines the kernel, bootloader, and device-specific configuration for a board. Your project ships with a QEMU BSP so you can develop on your laptop, and you add BSPs for your real hardware when you're ready. If you need to support a new board, see the [BSP Development guide](/bsp/guide/introduction.html).
+Hardware targets are described by **Board Support Packages (BSPs)** — a folder in your project that defines the kernel, bootloader, and device-specific configuration for a board. Your project ships with a QEMU BSP so you can develop on your laptop, and you add BSPs for your real hardware when you're ready. If you need to support a new board, see the [BSP Development guide](/bsp/guide/introduction.md).
 
 ## Where to go next
 
-- [Installation](/guide/installation.html) — install the `strux` CLI and its prerequisites.
-- [Getting Started](/guide/getting-started.html) — from zero to a booting kiosk in QEMU in about ten minutes.
-- [Architecture Overview](/concepts/overview.html) — how the pieces fit together, in more depth.
+- [Installation](/guide/installation.md) — install the `strux` CLI and its prerequisites.
+- [Getting Started](/guide/getting-started.md) — from zero to a booting kiosk in QEMU in about ten minutes.
+- [Architecture Overview](/concepts/overview.md) — how the pieces fit together, in more depth.

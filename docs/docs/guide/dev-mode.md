@@ -10,14 +10,14 @@ strux dev
 
 In local mode (the default), Strux always uses your project's `qemu` BSP and brings up five things, in order:
 
-1. **An initial build** of a development image — the same [build pipeline](/concepts/build-pipeline.html) as `strux build`, so the first run is slow and later runs are mostly cached.
+1. **An initial build** of a development image — the same [build pipeline](/concepts/build-pipeline.md) as `strux build`, so the first run is slow and later runs are mostly cached.
 2. **The dev server** — a WebSocket server (a persistent two-way connection between your machine and the device) on port 8000. The device connects back to it for log streaming, binary pushes, and remote commands.
 3. **mDNS advertising** — the dev server announces itself on your local network as a `_strux-dev._tcp` service so devices can find it without knowing your IP. mDNS (also called Bonjour) is zero-configuration name discovery on a LAN.
 4. **A file watcher** plus **the Vite dev server** — Vite runs inside Docker on port 5173 and serves your frontend with hot module replacement (HMR: changed modules are swapped into the running page without a reload).
 5. **QEMU** — the development image boots in a virtual machine, and a window opens showing your app exactly as a device would display it.
 
 ::: tip Dev images are not production images
-A development image enables the dev client, remote control paths, and log streaming. `strux run` refuses to boot one — see [Building](/guide/building.html#dev-images-vs-production-images).
+A development image enables the dev client, remote control paths, and log streaming. `strux run` refuses to boot one — see [Building](/guide/building.md#dev-images-vs-production-images).
 :::
 
 The dev server's port comes from the first entry in `dev.server.fallback_hosts` in `strux.yaml`, and defaults to 8000 if none is set.
@@ -31,7 +31,7 @@ The dev server's port comes from the first entry in `dev.server.fallback_hosts` 
 - **QEMU** — emulator console output.
 - **Watcher** — file change and rebuild activity.
 - **Screen** — the remote screen stream daemon.
-- **Flash** — only shown if the active BSP defines a `flash_script` (see [Flashing](/guide/flashing.html)).
+- **Flash** — only shown if the active BSP defines a `flash_script` (see [Flashing](/guide/flashing.md)).
 
 Keybindings (also shown in the bottom bar):
 
@@ -49,7 +49,7 @@ Keybindings (also shown in the bottom bar):
 
 The shell opened with `s` is a real `/bin/bash` on the device, tunneled through the dev server's WebSocket connection — no SSH setup required. Detaching keeps the session alive on the device so you can reattach later.
 
-The config panel (`c`) offers one-keystroke maintenance actions: restore Strux artifacts to their built-in versions, rebuild Strux components and transfer them to the device, rebuild the builder Docker image, install the latest [system update bundle](/guide/updates.html), flash the device (if the BSP supports it), restart the Strux service, and reboot the device.
+The config panel (`c`) offers one-keystroke maintenance actions: restore Strux artifacts to their built-in versions, rebuild Strux components and transfer them to the device, rebuild the builder Docker image, install the latest [system update bundle](/guide/updates.md), flash the device (if the BSP supports it), restart the Strux service, and reboot the device.
 
 ::: tip Running without the TUI
 Set `STRUX_DEV_NO_UI=1` to run dev mode with plain log output instead of the terminal UI.
@@ -61,13 +61,13 @@ Different files take different paths back to the running device:
 
 - **Frontend files** (`frontend/`) — Vite handles these directly. In dev mode the device loads your frontend from the Vite server on port 5173, not from a compiled bundle, so changes hot-reload in the running page within a second.
 - **Go files** (`*.go`, `go.mod`, `go.sum`) — the file watcher recompiles your application and pushes the new binary to the connected device over the WebSocket. The app restarts with the new binary in seconds; no image rebuild, no reboot.
-- **`strux.yaml`** — a YAML change triggers a full image rebuild, because configuration can affect any build step. The [build cache](/concepts/caching.html) keeps this fast: only the steps whose inputs actually changed are rebuilt.
+- **`strux.yaml`** — a YAML change triggers a full image rebuild, because configuration can affect any build step. The [build cache](/concepts/caching.md) keeps this fast: only the steps whose inputs actually changed are rebuilt.
 
 The watcher ignores `frontend/` (Vite's job), `dist/`, `assets/`, `bsp/`, `overlay/`, and `.git/`. That means edits to `bsp/` or `overlay/` do **not** trigger a dev rebuild — run a build manually (or restart dev mode) to pick those up. Rapid changes are debounced, and changes made while the watcher is paused (`p`) are replayed when you resume.
 
 ## Developing on a real device with `--remote`
 
-Once you have hardware running a development image (see [Flashing](/guide/flashing.html)), you can point dev mode at it instead of QEMU:
+Once you have hardware running a development image (see [Flashing](/guide/flashing.md)), you can point dev mode at it instead of QEMU:
 
 ```bash
 strux dev --remote
@@ -143,7 +143,7 @@ dev:
 
 ## Where to go next
 
-- [Building](/guide/building.html) — the build pipeline you just triggered, and how caching keeps it fast.
-- [Frontend](/guide/frontend.html) and [Backend](/guide/backend.html) — what to actually write inside this loop.
-- [Flashing](/guide/flashing.html) — get a development image onto real hardware for `--remote`.
-- [Updates](/guide/updates.html) — push full system updates to a connected device.
+- [Building](/guide/building.md) — the build pipeline you just triggered, and how caching keeps it fast.
+- [Frontend](/guide/frontend.md) and [Backend](/guide/backend.md) — what to actually write inside this loop.
+- [Flashing](/guide/flashing.md) — get a development image onto real hardware for `--remote`.
+- [Updates](/guide/updates.md) — push full system updates to a connected device.

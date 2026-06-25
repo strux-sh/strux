@@ -2,11 +2,11 @@
 
 A BSP can ship **Go code that runs inside your application** on the device. This is how board-specific hardware support — network management, Wi‑Fi, displays, or anything else a particular board needs — gets exposed to your frontend without baking it into either the Strux runtime or your app.
 
-This page explains the model. For the step-by-step of writing one, see [Writing Runtime Extensions](/bsp/guide/runtime-extensions.html).
+This page explains the model. For the step-by-step of writing one, see [Writing Runtime Extensions](/bsp/guide/runtime-extensions.md).
 
 ## Why extensions exist
 
-Your application is a single Go binary built from your `main.go`. The Strux runtime gives it a set of built-in services (`Boot`, `Display`, `Network`, `WiFi`, and so on — see the [Go runtime reference](/reference/go-runtime.html)). But the *implementation* of something like "list Wi‑Fi networks" depends entirely on the board: one device uses NetworkManager, another a vendor daemon, another has no Wi‑Fi at all.
+Your application is a single Go binary built from your `main.go`. The Strux runtime gives it a set of built-in services (`Boot`, `Display`, `Network`, `WiFi`, and so on — see the [Go runtime reference](/reference/go-runtime.md)). But the *implementation* of something like "list Wi‑Fi networks" depends entirely on the board: one device uses NetworkManager, another a vendor daemon, another has no Wi‑Fi at all.
 
 Extensions let the **BSP** supply that implementation. The BSP author writes a Go package; Strux links it into your application at build time; and its methods appear on the frontend bridge alongside the built-in services. Your frontend code calls them the same way it calls everything else.
 
@@ -124,7 +124,7 @@ namespace . subnamespace . Method
 
 When the frontend calls a method, the runtime first checks your application's own methods, then falls back to the extension registry, splitting the name into its three parts and invoking the matching method by reflection. So a registered `network` provider's `ListInterfaces` is reachable as `strux.network.ListInterfaces` — identical in shape to a built-in call.
 
-Because the bridge uses reflection over exported methods, the same rules as the rest of the [frontend bridge](/guide/frontend.html) apply: export the methods you want exposed, keep signatures to JSON-serializable parameters and returns, and a trailing `error` becomes a rejected promise on the frontend side. The generated TypeScript types (`strux types`) pick these up too — see the [frontend API reference](/reference/frontend-api.html).
+Because the bridge uses reflection over exported methods, the same rules as the rest of the [frontend bridge](/guide/frontend.md) apply: export the methods you want exposed, keep signatures to JSON-serializable parameters and returns, and a trailing `error` becomes a rejected promise on the frontend side. The generated TypeScript types (`strux types`) pick these up too — see the [frontend API reference](/reference/frontend-api.md).
 
 ## API compatibility
 
@@ -143,6 +143,6 @@ This is a guard, not a hard lock: if you've verified a BSP works against a newer
 
 ## Where to go next
 
-- [Writing Runtime Extensions](/bsp/guide/runtime-extensions.html) — the hands-on guide to building a provider or extension package.
-- [Go Runtime Reference](/reference/go-runtime.html) — the built-in services and provider interfaces you implement.
-- [Frontend](/guide/frontend.html) — how the bridge looks from the frontend side.
+- [Writing Runtime Extensions](/bsp/guide/runtime-extensions.md) — the hands-on guide to building a provider or extension package.
+- [Go Runtime Reference](/reference/go-runtime.md) — the built-in services and provider interfaces you implement.
+- [Frontend](/guide/frontend.md) — how the bridge looks from the frontend side.

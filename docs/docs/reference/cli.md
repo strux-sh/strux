@@ -1,6 +1,6 @@
 # CLI Reference
 
-Every `strux` command, argument, and flag. For task-oriented walkthroughs, see the [Getting Started guide](/guide/getting-started.html) — this page is the lookup table.
+Every `strux` command, argument, and flag. For task-oriented walkthroughs, see the [Getting Started guide](/guide/getting-started.md) — this page is the lookup table.
 
 Run `strux --help` (or `strux <command> --help`) for the same information in your terminal. `strux --version` prints the CLI version.
 
@@ -37,7 +37,7 @@ strux init my-kiosk --template react --arch arm64
 | `-t, --template <template>` | Frontend template: `vanilla`, `react`, or `vue`. Default: `vanilla`. |
 | `-a, --arch <arch>` | Target architecture: `host`, `arm64`, `x86_64`, or `armhf`. Default: `host`. |
 
-See [Getting Started](/guide/getting-started.html) for what the scaffolded project contains and [Project Structure](/guide/project-structure.html) for a file-by-file tour.
+See [Getting Started](/guide/getting-started.md) for what the scaffolded project contains and [Project Structure](/guide/project-structure.md) for a file-by-file tour.
 
 ## strux types
 
@@ -47,11 +47,11 @@ Generate TypeScript type definitions for your frontend from the Go structs and m
 strux types
 ```
 
-No arguments or options. Run it from the project root. Dev mode runs this automatically when your Go code changes — see the [Backend guide](/guide/backend.html) for how the generated API works.
+No arguments or options. Run it from the project root. Dev mode runs this automatically when your Go code changes — see the [Backend guide](/guide/backend.md) for how the generated API works.
 
 ## strux build
 
-Build a complete OS image for a BSP. Runs the full [build pipeline](/concepts/build-pipeline.html) inside Docker and writes the result to `dist/output/<bsp>/`.
+Build a complete OS image for a BSP. Runs the full [build pipeline](/concepts/build-pipeline.md) inside Docker and writes the result to `dist/output/<bsp>/`.
 
 ```bash
 strux build qemu --clean
@@ -68,7 +68,7 @@ strux build qemu --clean
 | `--no-chown` | Skip file permission fixing after builds. |
 | `--local-runtime <path>` | Use a local strux repo for the Go runtime instead of the published module. |
 
-See [Building](/guide/building.html) for a walkthrough and [Caching](/concepts/caching.html) for how the build cache decides what to rebuild.
+See [Building](/guide/building.md) for a walkthrough and [Caching](/concepts/caching.md) for how the build cache decides what to rebuild.
 
 ## strux update gen-keypair
 
@@ -84,7 +84,7 @@ strux update gen-keypair
 | `--public-key <path>` | Public key output path. Default: `./strux-update.pub`. |
 | `-f, --force` | Overwrite existing key files. Without it, the command refuses to overwrite either file. |
 
-See the [Updates guide](/guide/updates.html) for the full signing and delivery workflow.
+See the [Updates guide](/guide/updates.md) for the full signing and delivery workflow.
 
 ## strux update bundle
 
@@ -105,7 +105,7 @@ strux update bundle --bsp qemu --version 1.2.0
 | `--version <version>` | Update version/generation label. Default: `project_version` from `strux.yaml`. |
 | `-o, --out <path>` | Output `.struxb` path. Default: `dist/output/<bsp>/<image-name>.struxb`. |
 
-The rootfs image, private key, and output path must all live inside the project folder so the builder container can access them. See the [update system concept page](/concepts/update-system.html) for what's inside a bundle.
+The rootfs image, private key, and output path must all live inside the project folder so the builder container can access them. See the [update system concept page](/concepts/update-system.md) for what's inside a bundle.
 
 ## strux update send
 
@@ -124,7 +124,7 @@ strux update send dist/output/qemu/rootfs.ext4.struxb
 | `--server <url>` | Running dev server URL for control requests. Default: the `STRUX_DEV_SERVER_URL` environment variable, or `http://127.0.0.1:8000` if that is unset. |
 | `--key <key>` | Client/dev server key. Default: `dev.server.client_key` from `strux.yaml`. Required one way or the other. |
 
-See [Dev Mode](/guide/dev-mode.html) for running the dev server and the [Updates guide](/guide/updates.html) for testing updates end to end.
+See [Dev Mode](/guide/dev-mode.md) for running the dev server and the [Updates guide](/guide/updates.md) for testing updates end to end.
 
 ## strux run
 
@@ -139,7 +139,7 @@ strux run --debug
 | `--debug` | Show console output and systemd messages during boot. |
 | `--headless` | Run QEMU without opening a host display window. |
 
-See [Running in QEMU](/guide/running-qemu.html) for QEMU configuration, networking, and USB passthrough.
+See [Running in QEMU](/guide/running-qemu.md) for QEMU configuration, networking, and USB passthrough.
 
 ## strux dev
 
@@ -160,7 +160,7 @@ strux dev --remote
 | `--no-chown` | Skip file permission fixing after builds. |
 | `--local-runtime <path>` | Use a local strux repo for the Go runtime instead of the published module. |
 
-See [Dev Mode](/guide/dev-mode.html) for the full tour: remote devices, the WebKit inspector, and USB networking.
+See [Dev Mode](/guide/dev-mode.md) for the full tour: remote devices, the WebKit inspector, and USB networking.
 
 ## strux flash
 
@@ -174,7 +174,7 @@ strux flash my-board
 | --- | --- |
 | `[bsp]` | The board support package to flash. Default: the `bsp` value from `strux.yaml`. |
 
-The command fails if the BSP defines no `flash_script`. Scripts run from a workspace at `dist/flash/<bsp>/`. See the [Flashing guide](/guide/flashing.html) for usage and [flash scripts](/bsp/guide/flash-scripts.html) for writing them.
+The command fails if the BSP defines no `flash_script`. Scripts run from a workspace at `dist/flash/<bsp>/`. See the [Flashing guide](/guide/flashing.md) for usage and [flash scripts](/bsp/guide/flash-scripts.md) for writing them.
 
 ## strux usb
 
@@ -202,7 +202,7 @@ List configured USB devices and optionally remove selected devices.
 strux usb list
 ```
 
-No options. See [Running in QEMU](/guide/running-qemu.html) for how passthrough devices reach the VM.
+No options. See [Running in QEMU](/guide/running-qemu.md) for how passthrough devices reach the VM.
 
 ## strux kernel
 
@@ -220,7 +220,7 @@ strux kernel menuconfig --save
 | --- | --- |
 | `--save` | Save the configuration as a fragment file. |
 
-See the [BSP kernel guide](/bsp/guide/kernel.html) for how kernel configuration fits into a BSP.
+See the [BSP kernel guide](/bsp/guide/kernel.md) for how kernel configuration fits into a BSP.
 
 ### strux kernel clean
 

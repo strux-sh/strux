@@ -6,7 +6,7 @@ This page explains how your web app gets onto physical screens: the Cage composi
 
 On a desktop, a window manager juggles overlapping windows. A kiosk doesn't need any of that — it needs exactly one app, full-screen, forever. A **Wayland compositor** is the Linux component that owns the displays and input devices and decides what gets drawn; **Cage** is a tiny one built for the kiosk case: it shows a single maximized application per output and nothing else. No taskbar, no alt-tab, nothing to escape into.
 
-Strux ships a modified fork of Cage (the source is in your project at `dist/artifacts/cage/` — see [Artifacts](/concepts/artifacts.html)). The fork adds what kiosks need: rendering the boot splash itself for a seamless logo-to-app transition, spawning one browser per monitor, per-output rotation, and mapping touchscreens to the right screen.
+Strux ships a modified fork of Cage (the source is in your project at `dist/artifacts/cage/` — see [Artifacts](/concepts/artifacts.md)). The fork adds what kiosks need: rendering the boot splash itself for a seamless logo-to-app transition, spawning one browser per monitor, per-output rotation, and mapping touchscreens to the right screen.
 
 Inside Cage runs **Cog**, a minimal browser shell around WPE WebKit — all of the rendering engine, none of the browser UI. For web developers: think of each Cog instance as one full-screen, chromeless browser tab pointed at your backend.
 
@@ -106,7 +106,7 @@ bsp:
 
 ## Where to go next
 
-- [Frontend](/guide/frontend.html) — routing different paths to different views in your app.
-- [Architecture Overview](/concepts/overview.html) — where the display stack sits in the boot chain.
-- [bsp.yaml reference](/bsp/reference/bsp-yaml.html) — the `display` and `cage` keys in full.
-- [strux.yaml reference](/reference/strux-yaml.html) — the `display.monitors` schema in full.
+- [Frontend](/guide/frontend.md) — routing different paths to different views in your app.
+- [Architecture Overview](/concepts/overview.md) — where the display stack sits in the boot chain.
+- [bsp.yaml reference](/bsp/reference/bsp-yaml.md) — the `display` and `cage` keys in full.
+- [strux.yaml reference](/reference/strux-yaml.md) — the `display.monitors` schema in full.

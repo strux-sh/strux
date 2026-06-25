@@ -1,6 +1,6 @@
 # Lifecycle Scripts
 
-A BSP customizes the build by attaching shell scripts to **hooks** in the build pipeline — points before and after each built-in step. This page explains the hook model: where the hooks are, what environment your scripts run in, how script caching decides whether to run them, and how paths in their configuration resolve. For a hands-on walkthrough of writing a script, see the [scripts guide](/bsp/guide/scripts.html).
+A BSP customizes the build by attaching shell scripts to **hooks** in the build pipeline — points before and after each built-in step. This page explains the hook model: where the hooks are, what environment your scripts run in, how script caching decides whether to run them, and how paths in their configuration resolve. For a hands-on walkthrough of writing a script, see the [scripts guide](/bsp/guide/scripts.md).
 
 ## The mental model
 
@@ -15,7 +15,7 @@ scripts:
     description: "Create QEMU disk image"
 ```
 
-Before and after each built-in step, Strux runs every script registered for that hook, in the order they appear in `bsp.yaml`. The built-in step in the middle may be skipped by the [build cache](/concepts/caching.html); the hooks around it are still evaluated (each script has its own cache, described below).
+Before and after each built-in step, Strux runs every script registered for that hook, in the order they appear in `bsp.yaml`. The built-in step in the middle may be skipped by the [build cache](/concepts/caching.md); the hooks around it are still evaluated (each script has its own cache, described below).
 
 ```txt
 before_build
@@ -35,7 +35,7 @@ after_build
 
 ## The hooks
 
-Most hooks come in `before_*` / `after_*` pairs around a pipeline step, plus a handful of special ones. The complete list with exact ordering is in the [build steps reference](/bsp/reference/build-steps.html); here is the shape of it:
+Most hooks come in `before_*` / `after_*` pairs around a pipeline step, plus a handful of special ones. The complete list with exact ordering is in the [build steps reference](/bsp/reference/build-steps.md); here is the shape of it:
 
 | Hook | Runs |
 |---|---|
@@ -53,7 +53,7 @@ Most hooks come in `before_*` / `after_*` pairs around a pipeline step, plus a h
 | `before_rootfs` / `after_rootfs` | Around base root filesystem creation |
 | `before_bundle` | After rootfs post-processing, right before image creation |
 | `make_image` | Creates the final disk image — nearly every BSP defines this |
-| `flash_script_tool` / `flash_script` | **Not run during build.** Run on the host by [`strux flash`](/bsp/guide/flash-scripts.html) |
+| `flash_script_tool` / `flash_script` | **Not run during build.** Run on the host by [`strux flash`](/bsp/guide/flash-scripts.md) |
 
 ::: tip rootfs?
 The **root filesystem** (rootfs) is the Linux file tree the device boots into — `/usr`, `/etc`, your app, everything. Strux assembles it as a Debian system inside Docker, then "post-processing" installs your binaries and overlay files into it.
@@ -70,12 +70,12 @@ Three details about the kernel and bootloader hooks are worth knowing:
 Build-time scripts do **not** run on your machine directly. Strux reads the script file and executes its content with `/bin/bash -c` inside the `strux-builder` Docker container — the same privileged container all built-in build steps use, with your project mounted at `/project`. This means:
 
 - The script runs as root inside Debian Linux, regardless of your host OS. Tools like `genimage`, `mkfs.ext4`, `dtc`, and cross-compilers are available there.
-- Host paths mean nothing inside the container. Always use the environment variables Strux provides — `PROJECT_FOLDER` is `/project`, `PROJECT_DIST_CACHE_FOLDER` is `/project/dist/cache/{bsp}`, `PROJECT_DIST_OUTPUT_FOLDER` is `/project/dist/output/{bsp}`, and so on. The full list is in the [environment variables reference](/bsp/reference/environment-variables.html).
+- Host paths mean nothing inside the container. Always use the environment variables Strux provides — `PROJECT_FOLDER` is `/project`, `PROJECT_DIST_CACHE_FOLDER` is `/project/dist/cache/{bsp}`, `PROJECT_DIST_OUTPUT_FOLDER` is `/project/dist/output/{bsp}`, and so on. The full list is in the [environment variables reference](/bsp/reference/environment-variables.md).
 - Because the container is run with `--privileged`, scripts can loop-mount images and chroot — that's how `make-image.sh` scripts build disk images.
 
 Strux also passes context as environment variables: `BSP_NAME`, `STEP` (the current hook name), `HOST_ARCH` and `TARGET_ARCH`, `STRUX_VERSION`, `PROJECT_NAME`, `PROJECT_VERSION`, `STRUX_UPDATE_ENABLED`, splash configuration (`SPLASH_ENABLED`, `SPLASH_LOGO`, `SPLASH_COLOR`) and the display size (`DISPLAY_WIDTH`, `DISPLAY_HEIGHT`).
 
-The two flash hooks are the exception: they run **on the host**, outside Docker, because they need access to your USB ports and SD card readers. See [flash scripts](/bsp/guide/flash-scripts.html).
+The two flash hooks are the exception: they run **on the host**, outside Docker, because they need access to your USB ports and SD card readers. See [flash scripts](/bsp/guide/flash-scripts.md).
 
 ## Script caching
 
@@ -119,11 +119,11 @@ This two-sided design matters for chaining scripts: declaring another script's o
 | `./` | `bsp/{bsp}/` (the BSP directory) — `depends_on` only | Your DTS files, patches, blobs, configs |
 | anything else | `dist/` | Rarely needed |
 
-So `cache/rootfs-post.tar.gz` is the post-processed rootfs tarball in this BSP's cache, and `./boot/extlinux.conf` is a file inside the BSP folder. The same rules, with examples, are in the [path resolution reference](/bsp/reference/path-resolution.html).
+So `cache/rootfs-post.tar.gz` is the post-processed rootfs tarball in this BSP's cache, and `./boot/extlinux.conf` is a file inside the BSP folder. The same rules, with examples, are in the [path resolution reference](/bsp/reference/path-resolution.md).
 
 ## Where to go next
 
-- [Writing lifecycle scripts](/bsp/guide/scripts.html) — the practical guide: a first script, choosing hooks, debugging.
-- [Build steps reference](/bsp/reference/build-steps.html) — every hook, in exact execution order.
-- [Environment variables reference](/bsp/reference/environment-variables.html) — everything available to your scripts.
-- [Build pipeline](/concepts/build-pipeline.html) and [caching](/concepts/caching.html) — how the built-in steps and their cache work.
+- [Writing lifecycle scripts](/bsp/guide/scripts.md) — the practical guide: a first script, choosing hooks, debugging.
+- [Build steps reference](/bsp/reference/build-steps.md) — every hook, in exact execution order.
+- [Environment variables reference](/bsp/reference/environment-variables.md) — everything available to your scripts.
+- [Build pipeline](/concepts/build-pipeline.md) and [caching](/concepts/caching.md) — how the built-in steps and their cache work.
