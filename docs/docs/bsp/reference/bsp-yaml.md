@@ -1,6 +1,6 @@
 # bsp.yaml Reference
 
-Every key that `bsp.yaml` accepts, with types, defaults, and accepted values. The file is validated with a Zod schema when any build-related command loads the BSP — unknown values for enums and missing required keys abort the build with a validation error. For a guided walkthrough of writing one, see [Writing a BSP](/bsp/guide/writing-a-bsp.html).
+Every key that `bsp.yaml` accepts, with types, defaults, and accepted values. The file is validated with a Zod schema when any build-related command loads the BSP — unknown values for enums and missing required keys abort the build with a validation error. For a guided walkthrough of writing one, see [Writing a BSP](/bsp/guide/writing-a-bsp.md).
 
 ## Top level
 
@@ -45,25 +45,25 @@ The Linux component that puts windows on a screen. Cage is a tiny one: it runs a
 
 ## bsp.scripts
 
-A list of script entries that hook into the [build pipeline](/bsp/reference/build-steps.html). Each entry:
+A list of script entries that hook into the [build pipeline](/bsp/reference/build-steps.md). Each entry:
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `location` | `string` | required | Path to the script, relative to the BSP directory (with or without a leading `./`). |
 | `step` | `enum` | required | Which build step to run at. See the [valid steps](#valid-step-values) below. |
-| `cached_generated_artifacts` | `string[]` | — | Files the script generates. If all exist and nothing changed, the script is skipped. See [Path Resolution](/bsp/reference/path-resolution.html). |
-| `depends_on` | `string[]` | — | Files the script depends on. If any file's hash changes, the script re-runs. See [Path Resolution](/bsp/reference/path-resolution.html). |
+| `cached_generated_artifacts` | `string[]` | — | Files the script generates. If all exist and nothing changed, the script is skipped. See [Path Resolution](/bsp/reference/path-resolution.md). |
+| `depends_on` | `string[]` | — | Files the script depends on. If any file's hash changes, the script re-runs. See [Path Resolution](/bsp/reference/path-resolution.md). |
 | `description` | `string` | — | Human-readable name shown in build logs. |
 
 ### Valid step values
 
 `before_build`, `after_build`, `before_frontend`, `after_frontend`, `before_application`, `after_application`, `before_cage`, `after_cage`, `before_wpe`, `after_wpe`, `before_client`, `after_client`, `before_kernel`, `after_kernel_extract`, `after_kernel`, `custom_kernel`, `before_bootloader`, `after_bootloader`, `custom_bootloader`, `before_rootfs`, `after_rootfs`, `before_bundle`, `make_image`, `flash_script_tool`, `flash_script`.
 
-When each one fires — and which are conditional — is covered in [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.html). How to write the scripts themselves is covered in the [Scripts guide](/bsp/guide/scripts.html) and [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html).
+When each one fires — and which are conditional — is covered in [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.md). How to write the scripts themselves is covered in the [Scripts guide](/bsp/guide/scripts.md) and [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md).
 
 ## bsp.boot.kernel
 
-Custom kernel configuration. See the [Kernel guide](/bsp/guide/kernel.html) for a walkthrough.
+Custom kernel configuration. See the [Kernel guide](/bsp/guide/kernel.md) for a walkthrough.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -89,7 +89,7 @@ A **defconfig** is a saved set of kernel build options for a board family. A **d
 
 ## bsp.boot.bootloader
 
-Bootloader configuration. See the [Bootloader guide](/bsp/guide/bootloader.html) for a walkthrough.
+Bootloader configuration. See the [Bootloader guide](/bsp/guide/bootloader.md) for a walkthrough.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -136,7 +136,7 @@ BSP-specific additions to the root filesystem (the Linux filesystem the device b
 | `overlay` | `string` | — | Folder whose contents are copied verbatim into the root filesystem, e.g. `./overlay`. Merged with the project-level overlay from `strux.yaml`. |
 | `packages` | `string[]` | — | Debian packages to install (names or paths to `.deb` files). Board-specific packages — firmware, drivers, tools — belong here rather than in `strux.yaml`. |
 
-See [Customizing the OS](/guide/customizing-the-os.html) for the project-level counterparts.
+See [Customizing the OS](/guide/customizing-the-os.md) for the project-level counterparts.
 
 ## bsp.runtime
 
@@ -147,7 +147,7 @@ See [Customizing the OS](/guide/customizing-the-os.html) for the project-level c
 
 ### bsp.runtime.extensions
 
-Each entry registers a Go package that extends the device runtime API — see [Runtime Extensions](/bsp/guide/runtime-extensions.html) and the [Extension System](/bsp/concepts/extension-system.html).
+Each entry registers a Go package that extends the device runtime API — see [Runtime Extensions](/bsp/guide/runtime-extensions.md) and the [Extension System](/bsp/concepts/extension-system.md).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -270,7 +270,7 @@ bsp:
 
 ## Related pages
 
-- [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.html) — when each script step runs.
-- [Environment Variables](/bsp/reference/environment-variables.html) — what your scripts can read.
-- [Path Resolution](/bsp/reference/path-resolution.html) — how `cached_generated_artifacts` and `depends_on` paths resolve.
-- [strux.yaml Reference](/reference/strux-yaml.html) — the project-level configuration file.
+- [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.md) — when each script step runs.
+- [Environment Variables](/bsp/reference/environment-variables.md) — what your scripts can read.
+- [Path Resolution](/bsp/reference/path-resolution.md) — how `cached_generated_artifacts` and `depends_on` paths resolve.
+- [strux.yaml Reference](/reference/strux-yaml.md) — the project-level configuration file.

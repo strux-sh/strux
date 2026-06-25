@@ -49,7 +49,7 @@ Additionally, when the CLI adds a *new* file to a directory you already have (sa
 
 ## Your edits are part of the build cache
 
-The [cache](/concepts/caching.html) hashes the relevant `dist/artifacts/` directories as dependencies of their build steps. Edit `dist/artifacts/client/socket.go` and the client step rebuilds on your next `strux build`; edit `systemd/strux.service` or anything in `scripts/` or `plymouth/` and the rootfs-post step reruns. No special command needed — edited artifacts behave exactly like project source.
+The [cache](/concepts/caching.md) hashes the relevant `dist/artifacts/` directories as dependencies of their build steps. Edit `dist/artifacts/client/socket.go` and the client step rebuilds on your next `strux build`; edit `systemd/strux.service` or anything in `scripts/` or `plymouth/` and the rootfs-post step reruns. No special command needed — edited artifacts behave exactly like project source.
 
 On the very first build, before anything has been copied out, the cache falls back to hashing the CLI's embedded versions, so first builds are tracked correctly too.
 
@@ -65,6 +65,6 @@ Most of `dist/` (cache, output) should stay out of git. If you've customized fil
 
 ## Where to go next
 
-- [Customizing the OS](/guide/customizing-the-os.html) — practical recipes that use these files.
-- [Caching](/concepts/caching.html) — how artifact edits trigger rebuilds.
-- [Architecture Overview](/concepts/overview.html) — where each artifact runs on the device.
+- [Customizing the OS](/guide/customizing-the-os.md) — practical recipes that use these files.
+- [Caching](/concepts/caching.md) — how artifact edits trigger rebuilds.
+- [Architecture Overview](/concepts/overview.md) — where each artifact runs on the device.

@@ -4,7 +4,7 @@ A full Strux build compiles a browser stack and assembles a Debian system — th
 
 ## The mental model
 
-Every [build step](/concepts/build-pipeline.html) declares its **dependencies** — the files, directories, and configuration keys that affect its output. Before running a step, the CLI hashes all of them (SHA256-style content hashes) and compares against the hashes recorded the last time the step ran. Same hashes, artifacts still on disk, nothing upstream rebuilt → the step is skipped and you see:
+Every [build step](/concepts/build-pipeline.md) declares its **dependencies** — the files, directories, and configuration keys that affect its output. Before running a step, the CLI hashes all of them (SHA256-style content hashes) and compares against the hashes recorded the last time the step ran. Same hashes, artifacts still on disk, nothing upstream rebuilt → the step is skipped and you see:
 
 ```txt
 ✓ cached: frontend (no changes detected)
@@ -74,7 +74,7 @@ strux build --clean
 
 ## BSP script caching
 
-[BSP lifecycle scripts](/bsp/concepts/lifecycle-scripts.html) participate in the same manifest with a declaration-based scheme. In `bsp.yaml`, a script opts into caching by declaring what it produces and what it reads:
+[BSP lifecycle scripts](/bsp/concepts/lifecycle-scripts.md) participate in the same manifest with a declaration-based scheme. In `bsp.yaml`, a script opts into caching by declaring what it produces and what it reads:
 
 ```yaml
 scripts:
@@ -94,10 +94,10 @@ The script is skipped when *all* of these hold:
 2. The script file itself hasn't changed since the last run.
 3. None of the `depends_on` file hashes changed.
 
-A script that declares no `cached_generated_artifacts` **always runs** — there's no way to know it's safe to skip. Paths resolve per the BSP path rules: `cache/` → `dist/cache/{bsp}/`, `output/` → `dist/output/{bsp}/`, `./` → the BSP directory (see [Path Resolution](/bsp/reference/path-resolution.html)).
+A script that declares no `cached_generated_artifacts` **always runs** — there's no way to know it's safe to skip. Paths resolve per the BSP path rules: `cache/` → `dist/cache/{bsp}/`, `output/` → `dist/output/{bsp}/`, `./` → the BSP directory (see [Path Resolution](/bsp/reference/path-resolution.md)).
 
 ## Where to go next
 
-- [Build Pipeline](/concepts/build-pipeline.html) — what each cached step actually does.
-- [Artifacts](/concepts/artifacts.html) — the user-editable assets the cache tracks.
-- [strux.yaml reference](/reference/strux-yaml.html) — all `build.cache` options.
+- [Build Pipeline](/concepts/build-pipeline.md) — what each cached step actually does.
+- [Artifacts](/concepts/artifacts.md) — the user-editable assets the cache tracks.
+- [strux.yaml reference](/reference/strux-yaml.md) — all `build.cache` options.

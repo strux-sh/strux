@@ -16,7 +16,7 @@ QEMU loads the kernel, initramfs, and root filesystem from your `dist/` folder a
 `strux run` picks the right QEMU binary for your target architecture (`qemu-system-x86_64`, `qemu-system-aarch64`, or `qemu-system-arm`) and uses hardware acceleration when the host supports it — HVF on macOS, KVM on Linux for x86_64. On Linux, GL acceleration is auto-enabled for Intel and AMD GPUs; NVIDIA and unknown GPUs use software rendering (set `STRUX_GL=1` to force GL on).
 
 ::: warning Production images only
-`strux run` refuses to boot a development image (one built with `--dev` or by `strux dev`) — those expect a dev server to connect to. Rebuild without `--dev`, or use [`strux dev`](/guide/dev-mode.html) for the live development loop.
+`strux run` refuses to boot a development image (one built with `--dev` or by `strux dev`) — those expect a dev server to connect to. Rebuild without `--dev`, or use [`strux dev`](/guide/dev-mode.md) for the live development loop.
 :::
 
 Press `Ctrl-C` in the terminal to stop the VM.
@@ -53,7 +53,7 @@ qemu:
 
 **Memory and custom flags.** The VM gets 2048 MB of RAM by default. `qemu.flags` is a list of extra QEMU command-line flags appended to the launch command — and if a custom flag matches a built-in one (like `-m`), the built-in is removed so yours wins. So `- -m 4G` raises memory to 4 GB. Any QEMU flag works here; each list entry is split on whitespace into flag and value.
 
-**Networking.** The VM uses QEMU user-mode networking with a virtio network card — the guest gets outbound network access through your machine without any host network configuration. From inside the guest, your host machine is reachable at `10.0.2.2` (QEMU's built-in gateway address). When the image runs under [dev mode](/guide/dev-mode.html) with the WebKit inspector enabled, the inspector ports are additionally forwarded from your host into the guest.
+**Networking.** The VM uses QEMU user-mode networking with a virtio network card — the guest gets outbound network access through your machine without any host network configuration. From inside the guest, your host machine is reachable at `10.0.2.2` (QEMU's built-in gateway address). When the image runs under [dev mode](/guide/dev-mode.md) with the WebKit inspector enabled, the inspector ports are additionally forwarded from your host into the guest.
 
 ## USB passthrough
 
@@ -92,6 +92,6 @@ If passthrough fails, make sure nothing on the host has claimed the device exclu
 
 ## Where to go next
 
-- [Dev Mode](/guide/dev-mode.html) — don't rebuild-and-run by hand; get hot reload in the same VM.
-- [Flashing](/guide/flashing.html) — when QEMU looks right, put the image on hardware.
-- [strux.yaml reference](/reference/strux-yaml.html) — every key in the `qemu` section and beyond.
+- [Dev Mode](/guide/dev-mode.md) — don't rebuild-and-run by hand; get hot reload in the same VM.
+- [Flashing](/guide/flashing.md) — when QEMU looks right, put the image on hardware.
+- [strux.yaml reference](/reference/strux-yaml.md) — every key in the `qemu` section and beyond.

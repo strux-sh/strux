@@ -1,6 +1,6 @@
 # Environment Variables
 
-Every environment variable Strux sets for BSP scripts, plus the variables the `strux` CLI itself reads from your shell. For when scripts run, see [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.html).
+Every environment variable Strux sets for BSP scripts, plus the variables the `strux` CLI itself reads from your shell. For when scripts run, see [Build Steps & Lifecycle Hooks](/bsp/reference/build-steps.md).
 
 ## Build script variables
 
@@ -30,7 +30,7 @@ Inside the container the project root is `/project` (when the CLI itself runs in
 | `PROJECT_FOLDER` | `/project` | Alias for `PROJECT_DIR`. |
 | `PROJECT_DIST_DIR` | `/project/dist` | The `dist/` directory. |
 | `PROJECT_DIST_FOLDER` | `/project/dist` | Alias for `PROJECT_DIST_DIR`. |
-| `PROJECT_DIST_ARTIFACTS_FOLDER` | `/project/dist/artifacts` | Shared, user-editable build artifacts. See [Artifacts](/concepts/artifacts.html). |
+| `PROJECT_DIST_ARTIFACTS_FOLDER` | `/project/dist/artifacts` | Shared, user-editable build artifacts. See [Artifacts](/concepts/artifacts.md). |
 | `SHARED_CACHE_DIR` | `/project/dist/cache` | Shared cache root, for artifacts reused across BSPs. |
 | `BSP_CACHE_DIR` | `/project/dist/cache/{bsp}` | BSP-specific cache directory. |
 | `PROJECT_DIST_CACHE_FOLDER` | `/project/dist/cache/{bsp}` | Alias for `BSP_CACHE_DIR`. |
@@ -51,7 +51,7 @@ Set only when the corresponding configuration exists.
 
 ## Flash script variables
 
-`flash_script_tool` and `flash_script` scripts are run by [`strux flash`](/guide/flashing.html) directly on your **host machine** (not in Docker), with the flash workspace as the working directory. They inherit your shell environment plus `BSP_NAME`, `PRESELECTED_BSP`, `HOST_ARCH`, `TARGET_ARCH`, `STRUX_VERSION`, and the splash/display variables above (`PROJECT_NAME`, `PROJECT_VERSION`, and `STRUX_UPDATE_ENABLED` are **not** set for flash scripts). The path variables point at real host paths:
+`flash_script_tool` and `flash_script` scripts are run by [`strux flash`](/guide/flashing.md) directly on your **host machine** (not in Docker), with the flash workspace as the working directory. They inherit your shell environment plus `BSP_NAME`, `PRESELECTED_BSP`, `HOST_ARCH`, `TARGET_ARCH`, `STRUX_VERSION`, and the splash/display variables above (`PROJECT_NAME`, `PROJECT_VERSION`, and `STRUX_UPDATE_ENABLED` are **not** set for flash scripts). The path variables point at real host paths:
 
 | Variable | Value | Description |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ Set only when the corresponding configuration exists.
 | `PROJECT_DIST_FLASH_FOLDER` | same as `FLASH_DIR` | Alias for `FLASH_DIR`. |
 | `STEP` | `flash_script_tool` or `flash_script` | Which flash stage is running. |
 
-See [Flash Scripts](/bsp/guide/flash-scripts.html) for how to structure them.
+See [Flash Scripts](/bsp/guide/flash-scripts.md) for how to structure them.
 
 ## Variables the CLI reads
 
@@ -77,8 +77,8 @@ These are read from **your** environment when you run `strux`:
 | `STRUX_IN_CONTAINER` | `1` | Tells Strux it is already running inside the builder container (CI). Build scripts execute directly instead of spawning Docker, and verbose output is auto-enabled when there is no TTY. |
 | `STRUX_VERSION` | version string | Overrides the CLI's reported version (set at compile time in CI; local builds fall back to `package.json`). |
 | `STRUX_DEV_SERVER_URL` | URL | Default dev server URL for `strux update` when `--server` is not passed. Falls back to `http://127.0.0.1:8000`. |
-| `STRUX_DEV_NO_UI` | `1` | Disables the interactive terminal UI in [`strux dev`](/guide/dev-mode.html), logging plainly instead. |
-| `STRUX_GL` | `1` or `0` | Forces GL acceleration on (`1`) or off (any other value) for [`strux run`](/guide/running-qemu.html) QEMU. Unset, Strux auto-detects from the GPU vendor (Intel/AMD on, NVIDIA and unknown off). |
+| `STRUX_DEV_NO_UI` | `1` | Disables the interactive terminal UI in [`strux dev`](/guide/dev-mode.md), logging plainly instead. |
+| `STRUX_GL` | `1` or `0` | Forces GL acceleration on (`1`) or off (any other value) for [`strux run`](/guide/running-qemu.md) QEMU. Unset, Strux auto-detects from the GPU vendor (Intel/AMD on, NVIDIA and unknown off). |
 
 ::: warning Values must be shell-safe
 Strux validates script environment values before injecting them into the container; values that could break shell quoting are rejected. Keep paths and config values free of quotes and shell metacharacters.

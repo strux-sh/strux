@@ -1,6 +1,6 @@
 # Custom Kernels
 
-This page covers the `boot.kernel` block of `bsp.yaml`: choosing a kernel source, configuring it with a defconfig and fragments, applying patches, building device trees, and the `strux kernel` commands for iterating on configuration. It assumes you have a building BSP — if not, start with [Writing a BSP](/bsp/guide/writing-a-bsp.html).
+This page covers the `boot.kernel` block of `bsp.yaml`: choosing a kernel source, configuring it with a defconfig and fragments, applying patches, building device trees, and the `strux kernel` commands for iterating on configuration. It assumes you have a building BSP — if not, start with [Writing a BSP](/bsp/guide/writing-a-bsp.md).
 
 ## When you need a custom kernel
 
@@ -121,7 +121,7 @@ Two behaviors worth knowing:
 - Each patch is dry-run first; a patch that no longer applies **fails the build** (rather than silently producing a broken kernel).
 - A patch that is *already applied* (detected via a reverse dry-run) is skipped with a notice — so reusing a cached source tree across builds is safe.
 
-For board files that are additions rather than modifications, you don't need patches at all: the `ht109-rk3576s` BSP keeps whole vendor driver directories under `drivers/` in the BSP and copies them into the kernel tree with an `after_kernel_extract` script, which runs after fetch + patch and before configuration. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html).
+For board files that are additions rather than modifications, you don't need patches at all: the `ht109-rk3576s` BSP keeps whole vendor driver directories under `drivers/` in the BSP and copies them into the kernel tree with an `after_kernel_extract` script, which runs after fetch + patch and before configuration. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md).
 
 ## Device trees
 
@@ -168,7 +168,7 @@ For example, the `hd215-rk3576` extlinux boot configuration references `dtbs/rk3
 
 ## Replacing the build entirely
 
-If the built-in fetch/config/build flow doesn't fit (a kernel with a bespoke build system, or prebuilt vendor kernels), register a script with `step: custom_kernel`. It replaces the built-in extract and build phases completely — `before_kernel` and `after_kernel` hooks still run around it. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html).
+If the built-in fetch/config/build flow doesn't fit (a kernel with a bespoke build system, or prebuilt vendor kernels), register a script with `step: custom_kernel`. It replaces the built-in extract and build phases completely — `before_kernel` and `after_kernel` hooks still run around it. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md).
 
 ## Cleaning
 
@@ -184,7 +184,7 @@ strux kernel clean --mode full        # deletes the source checkout and build ou
 
 ## Where to go next
 
-- [Bootloaders](/bsp/guide/bootloader.html) — the other half of the boot story, including how the bootloader finds your kernel and DTB.
-- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) — `before_kernel`, `after_kernel_extract`, `after_kernel`, `custom_kernel`.
-- [bsp.yaml Reference](/bsp/reference/bsp-yaml.html) — the kernel block, key by key.
-- [Caching](/concepts/caching.html) — when the kernel step reruns and when it's skipped.
+- [Bootloaders](/bsp/guide/bootloader.md) — the other half of the boot story, including how the bootloader finds your kernel and DTB.
+- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) — `before_kernel`, `after_kernel_extract`, `after_kernel`, `custom_kernel`.
+- [bsp.yaml Reference](/bsp/reference/bsp-yaml.md) — the kernel block, key by key.
+- [Caching](/concepts/caching.md) — when the kernel step reruns and when it's skipped.

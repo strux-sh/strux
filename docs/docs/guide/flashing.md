@@ -21,13 +21,13 @@ Two kinds of scripts run, in order:
 1. **`flash_script_tool`** scripts — preparation: locate or set up the host-side flashing tool the board needs.
 2. **`flash_script`** scripts — the actual flash: talk to the board and write the image.
 
-The scripts run with a working directory of `dist/flash/<bsp>/` (created for you — a scratch space for tools and temporary files) and receive the standard Strux environment variables, including `PROJECT_DIST_OUTPUT_FOLDER` (where the built image lives), `FLASH_DIR`, `BSP_FOLDER`, `BSP_NAME`, and `TARGET_ARCH`. The full list is in the [environment variables reference](/bsp/reference/environment-variables.html).
+The scripts run with a working directory of `dist/flash/<bsp>/` (created for you — a scratch space for tools and temporary files) and receive the standard Strux environment variables, including `PROJECT_DIST_OUTPUT_FOLDER` (where the built image lives), `FLASH_DIR`, `BSP_FOLDER`, `BSP_NAME`, and `TARGET_ARCH`. The full list is in the [environment variables reference](/bsp/reference/environment-variables.md).
 
 ::: tip Build first
-`strux flash` doesn't build anything — it expects the image to already exist in `dist/output/<bsp>/`. Run [`strux build`](/guide/building.html) first; the flash script will tell you if the image is missing.
+`strux flash` doesn't build anything — it expects the image to already exist in `dist/output/<bsp>/`. Run [`strux build`](/guide/building.md) first; the flash script will tell you if the image is missing.
 :::
 
-You can also trigger a flash from inside [dev mode](/guide/dev-mode.html): the TUI shows a **Flash** entry (and a "Flash Device" action in the config panel) whenever the active BSP defines a `flash_script`, with the script's output streamed into its own log tab.
+You can also trigger a flash from inside [dev mode](/guide/dev-mode.md): the TUI shows a **Flash** entry (and a "Flash Device" action in the config panel) whenever the active BSP defines a `flash_script`, with the script's output streamed into its own log tab.
 
 ## A real example: Rockchip RK3576
 
@@ -73,10 +73,10 @@ Not Available for this BSP: my-board does not define a flash_script in bsp.yaml.
 That just means nobody has written one for this board yet. Two options:
 
 - **Flash manually.** The built image is a regular file in `dist/output/<bsp>/` — if your board boots from an SD card, writing the image with `dd` or a tool like balenaEtcher works fine.
-- **Write a flash script.** It's an ordinary bash script plus two lines of `bsp.yaml` — the [flash scripts guide](/bsp/guide/flash-scripts.html) walks through writing one, with the conventions for tool preparation, progress markers, and error handling.
+- **Write a flash script.** It's an ordinary bash script plus two lines of `bsp.yaml` — the [flash scripts guide](/bsp/guide/flash-scripts.md) walks through writing one, with the conventions for tool preparation, progress markers, and error handling.
 
 ## Where to go next
 
-- [Flash Scripts](/bsp/guide/flash-scripts.html) — write a flash script for your board.
-- [Dev Mode](/guide/dev-mode.html) — flash a development image, then develop against the real device with `strux dev --remote`.
-- [Updates](/guide/updates.html) — after the first flash, ship new versions over the network instead of re-flashing.
+- [Flash Scripts](/bsp/guide/flash-scripts.md) — write a flash script for your board.
+- [Dev Mode](/guide/dev-mode.md) — flash a development image, then develop against the real device with `strux dev --remote`.
+- [Updates](/guide/updates.md) — after the first flash, ship new versions over the network instead of re-flashing.

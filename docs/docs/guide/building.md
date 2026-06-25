@@ -1,6 +1,6 @@
 # Building
 
-`strux build` turns your project into a complete, bootable OS image. This page is the day-to-day guide: what a build actually does, how to read its output, when to reach for `--clean`, and where the results land. For the full anatomy of the pipeline, see [Build Pipeline](/concepts/build-pipeline.html).
+`strux build` turns your project into a complete, bootable OS image. This page is the day-to-day guide: what a build actually does, how to read its output, when to reach for `--clean`, and where the results land. For the full anatomy of the pipeline, see [Build Pipeline](/concepts/build-pipeline.md).
 
 ## Running a build
 
@@ -32,7 +32,7 @@ The pipeline runs these steps in order, each inside the `strux-builder` Docker c
 10. **rootfs-post** — applies your overlay, packages, and configuration on top.
 11. **make_image** — the BSP's image script packs everything into a flashable disk image.
 
-BSPs can hook scripts before and after each step — see [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html). If `update.enabled` and `update.auto_bundle` are set in `strux.yaml`, the build also produces a signed `.struxb` [update bundle](/guide/updates.html) at the end.
+BSPs can hook scripts before and after each step — see [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md). If `update.enabled` and `update.auto_bundle` are set in `strux.yaml`, the build also produces a signed `.struxb` [update bundle](/guide/updates.md) at the end.
 
 ## Reading the output
 
@@ -60,7 +60,7 @@ Strux hashes every input a step depends on — source files, directories, specif
 - the builder Docker image changed (this invalidates everything), or
 - you upgraded the Strux CLI in a way that changed that step's embedded build scripts.
 
-So editing `main.go` rebuilds the application and the steps downstream of it — not the kernel, not the compositor. The full mechanics are on the [Caching](/concepts/caching.html) page.
+So editing `main.go` rebuilds the application and the steps downstream of it — not the kernel, not the compositor. The full mechanics are on the [Caching](/concepts/caching.md) page.
 
 You can tune the cache in `strux.yaml`:
 
@@ -94,13 +94,13 @@ strux build qemu --clean
 strux build qemu --dev
 ```
 
-`--dev` builds a **development image**: it includes the dev client configuration so the device connects to a [dev server](/guide/dev-mode.html) at boot, streams logs, and accepts pushed binaries. The CLI shows a loud warning when you build one — dev images enable remote control paths and are not hardened, so never deploy them to production.
+`--dev` builds a **development image**: it includes the dev client configuration so the device connects to a [dev server](/guide/dev-mode.md) at boot, streams logs, and accepts pushed binaries. The CLI shows a loud warning when you build one — dev images enable remote control paths and are not hardened, so never deploy them to production.
 
 ::: warning You Might Need a Dev Image
 If you're currently testing and developing your app on real hardware, you'll need to add the ```--dev``` flag so that your device works with the ```strux dev --remote``` tool! When you've finished your image and it's all ready for production, you can omit the ```--dev``` flag.
 :::
 
-A plain `strux build` produces a production image: no dev services, no remote control, the app runs from the image itself. The build mode is recorded in `dist/output/<bsp>/.build-info.json`, and [`strux run`](/guide/running-qemu.html) refuses to boot a dev image.
+A plain `strux build` produces a production image: no dev services, no remote control, the app runs from the image itself. The build mode is recorded in `dist/output/<bsp>/.build-info.json`, and [`strux run`](/guide/running-qemu.md) refuses to boot a dev image.
 
 You normally don't run `--dev` yourself — `strux dev` builds its development image automatically. You will need to add ```--dev``` to ```strux build <bsp>``` if you plan to test on real hardware as you develop.
 
@@ -120,7 +120,7 @@ dist/
     └── .build-info.json     # Build mode, time, versions
 ```
 
-The exact files in `output/` depend on the BSP's `make_image` script — a Rockchip board produces a single flashable `.img`, while the qemu BSP keeps kernel, initramfs, and rootfs separate for QEMU to load directly. See [Artifacts](/concepts/artifacts.html) for what lives in `dist/artifacts/` and why you might edit it.
+The exact files in `output/` depend on the BSP's `make_image` script — a Rockchip board produces a single flashable `.img`, while the qemu BSP keeps kernel, initramfs, and rootfs separate for QEMU to load directly. See [Artifacts](/concepts/artifacts.md) for what lives in `dist/artifacts/` and why you might edit it.
 
 ## Command reference
 
@@ -133,7 +133,7 @@ The exact files in `output/` depend on the BSP's `make_image` script — a Rockc
 
 ## Where to go next
 
-- [Running in QEMU](/guide/running-qemu.html) — boot the image you just built.
-- [Flashing](/guide/flashing.html) — write it to real hardware.
-- [Build Pipeline](/concepts/build-pipeline.html) and [Caching](/concepts/caching.html) — the deep dives.
-- [Customizing the OS](/guide/customizing-the-os.html) — packages, overlays, and system configuration.
+- [Running in QEMU](/guide/running-qemu.md) — boot the image you just built.
+- [Flashing](/guide/flashing.md) — write it to real hardware.
+- [Build Pipeline](/concepts/build-pipeline.md) and [Caching](/concepts/caching.md) — the deep dives.
+- [Customizing the OS](/guide/customizing-the-os.md) — packages, overlays, and system configuration.

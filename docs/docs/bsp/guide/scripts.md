@@ -1,6 +1,6 @@
 # Writing Lifecycle Scripts
 
-Lifecycle scripts are how your BSP does board-specific work the generic build pipeline can't: assembling the final disk image, patching kernel sources, converting a splash logo for U-Boot. This page walks you through writing one — picking the right hook, declaring caching so it doesn't re-run needlessly, and debugging it when it fails. For the underlying model, read [lifecycle scripts](/bsp/concepts/lifecycle-scripts.html) first.
+Lifecycle scripts are how your BSP does board-specific work the generic build pipeline can't: assembling the final disk image, patching kernel sources, converting a splash logo for U-Boot. This page walks you through writing one — picking the right hook, declaring caching so it doesn't re-run needlessly, and debugging it when it fails. For the underlying model, read [lifecycle scripts](/bsp/concepts/lifecycle-scripts.md) first.
 
 ## Where scripts live
 
@@ -50,7 +50,7 @@ mkdir -p "$PROJECT_DIST_CACHE_FOLDER"
 ```
 
 ::: tip Why the env vars matter
-The script runs inside Docker, where your project lives at `/project` — paths from your host machine don't exist there. `BSP_NAME`, `TARGET_ARCH`, `STEP`, and friends are also set so one script can serve several boards. The full list is in the [environment variables reference](/bsp/reference/environment-variables.html).
+The script runs inside Docker, where your project lives at `/project` — paths from your host machine don't exist there. `BSP_NAME`, `TARGET_ARCH`, `STEP`, and friends are also set so one script can serve several boards. The full list is in the [environment variables reference](/bsp/reference/environment-variables.md).
 :::
 
 Two progress marker formats are recognized in your script's output:
@@ -71,9 +71,9 @@ Ask: *what does my script need to exist, and what consumes its output?* Then pic
 | Post-process bootloader output | `after_bootloader` | HD215 converts the splash PNG to BMP and packages `idbloader.img` |
 | Install files into the finished rootfs | `before_bundle` | HD215 installs `extlinux.conf` and boot assets into the rootfs tarball |
 | Produce the final disk image | `make_image` | Every BSP — qemu makes a raw ext4, the Rockchip boards run `genimage` |
-| Flash the image to hardware | `flash_script` | Runs on the host via `strux flash`, see [flash scripts](/bsp/guide/flash-scripts.html) |
+| Flash the image to hardware | `flash_script` | Runs on the host via `strux flash`, see [flash scripts](/bsp/guide/flash-scripts.md) |
 
-The complete hook list in execution order is in the [build steps reference](/bsp/reference/build-steps.html). Remember that kernel hooks only fire when `boot.kernel.custom_kernel: true`, and bootloader hooks only when `boot.bootloader.enabled: true`.
+The complete hook list in execution order is in the [build steps reference](/bsp/reference/build-steps.md). Remember that kernel hooks only fire when `boot.kernel.custom_kernel: true`, and bootloader hooks only when `boot.bootloader.enabled: true`.
 
 ## 3. Declare caching
 
@@ -100,7 +100,7 @@ The rules, in the order Strux checks them:
 4. The script file itself changed (SHA256 hash) → run. You never list the script in its own `depends_on`.
 5. Any `depends_on` file changed, missing, or not seen before → run.
 
-Paths use a prefix convention: `cache/` → `dist/cache/{bsp}/`, `output/` → `dist/output/{bsp}/`, `./` → the BSP directory, anything else → `dist/`. Details in the [path resolution reference](/bsp/reference/path-resolution.html).
+Paths use a prefix convention: `cache/` → `dist/cache/{bsp}/`, `output/` → `dist/output/{bsp}/`, `./` → the BSP directory, anything else → `dist/`. Details in the [path resolution reference](/bsp/reference/path-resolution.md).
 
 Getting this right is mostly about honesty:
 
@@ -138,7 +138,7 @@ Other debugging tactics that work well:
 
 ## Where to go next
 
-- [Lifecycle scripts concept](/bsp/concepts/lifecycle-scripts.html) — the hook model, execution environment, and caching semantics in depth.
-- [Build steps reference](/bsp/reference/build-steps.html) — every hook in exact order.
-- [BSP examples](/bsp/guide/examples.html) — real scripts in real BSPs, annotated.
-- [Flash scripts](/bsp/guide/flash-scripts.html) — the host-side counterpart for `strux flash`.
+- [Lifecycle scripts concept](/bsp/concepts/lifecycle-scripts.md) — the hook model, execution environment, and caching semantics in depth.
+- [Build steps reference](/bsp/reference/build-steps.md) — every hook in exact order.
+- [BSP examples](/bsp/guide/examples.md) — real scripts in real BSPs, annotated.
+- [Flash scripts](/bsp/guide/flash-scripts.md) — the host-side counterpart for `strux flash`.

@@ -82,7 +82,7 @@ kernel:
 ```
 
 ::: tip Device tree?
-A **device tree** (DTS) is a data file describing the board's hardware — which chips sit on which buses, at which addresses — so the kernel doesn't need board-specific code compiled in. See the [kernel guide](/bsp/guide/kernel.html).
+A **device tree** (DTS) is a data file describing the board's hardware — which chips sit on which buses, at which addresses — so the kernel doesn't need board-specific code compiled in. See the [kernel guide](/bsp/guide/kernel.md).
 :::
 
 **Vendor U-Boot via `custom_bootloader`.** Mainline U-Boot couldn't drive this board's display for a boot splash, so the BSP sets `type: custom` and builds Rockchip's U-Boot fork with its own script, chaining the required firmware **blobs** (pre-compiled vendor binaries for DDR memory training and the ARM trusted firmware) through the `blobs:` list:
@@ -107,7 +107,7 @@ bootloader:
       required: true
 ```
 
-**A realistic script set** — the clearest demonstration of [lifecycle script](/bsp/concepts/lifecycle-scripts.html) hooks working together: `custom_bootloader` builds U-Boot, two `after_bootloader` scripts convert the splash logo to BMP and package `idbloader.img`, a `before_bundle` script installs boot assets into the rootfs, and `make_image` produces the final disk image with `genimage`. Plus `flash_script_tool` / `flash_script` for [flashing over Rockchip Maskrom](/bsp/guide/flash-scripts.html).
+**A realistic script set** — the clearest demonstration of [lifecycle script](/bsp/concepts/lifecycle-scripts.md) hooks working together: `custom_bootloader` builds U-Boot, two `after_bootloader` scripts convert the splash logo to BMP and package `idbloader.img`, a `before_bundle` script installs boot assets into the rootfs, and `make_image` produces the final disk image with `genimage`. Plus `flash_script_tool` / `flash_script` for [flashing over Rockchip Maskrom](/bsp/guide/flash-scripts.md).
 
 **Runtime extensions.** The BSP ships Go packages that implement the `strux.network` and `strux.wifi` runtime APIs (backed by NetworkManager's `nmcli`):
 
@@ -118,14 +118,14 @@ runtime:
     - path: runtime/wifi
 ```
 
-See [runtime extensions](/bsp/guide/runtime-extensions.html) for how these get compiled into the user's app.
+See [runtime extensions](/bsp/guide/runtime-extensions.md) for how these get compiled into the user's app.
 
 **Audio and connectivity packages.** Its `rootfs.packages` list pulls in PulseAudio, GStreamer plugins, ALSA utilities, NetworkManager, `wpasupplicant`, and Bluetooth tooling — a good reference for what a sound- and network-capable kiosk needs. The BSP folder also includes `AUDIO.md`, `WIFI.md`, and `BLUETOOTH.md` notes documenting the bring-up.
 
 **A/B dual-rootfs layout.** The BSP carries two `genimage` configs and a U-Boot boot script (`boot/strux-ab-boot.cmd`); when the project enables updates, `make-image.sh` switches to the A/B partition layout.
 
 ::: warning Experimental
-The dual-rootfs / A-B update layout is experimental and its design may change. See [dual rootfs](/bsp/concepts/dual-rootfs.html).
+The dual-rootfs / A-B update layout is experimental and its design may change. See [dual rootfs](/bsp/concepts/dual-rootfs.md).
 :::
 
 Start here if: you're bringing up an ARM single-board device that needs a custom kernel, a bootloader with splash, or vendor firmware blobs.
@@ -149,6 +149,6 @@ Start here if: you target a 32-bit ARM board, or you're fighting an old vendor U
 
 ## Where to go next
 
-- [Writing a BSP](/bsp/guide/writing-a-bsp.html) — build your own, step by step.
-- [Kernel](/bsp/guide/kernel.html) and [bootloader](/bsp/guide/bootloader.html) — the two big subsystems these examples configure.
-- [bsp.yaml reference](/bsp/reference/bsp-yaml.html) — every key used in the snippets above.
+- [Writing a BSP](/bsp/guide/writing-a-bsp.md) — build your own, step by step.
+- [Kernel](/bsp/guide/kernel.md) and [bootloader](/bsp/guide/bootloader.md) — the two big subsystems these examples configure.
+- [bsp.yaml reference](/bsp/reference/bsp-yaml.md) — every key used in the snippets above.

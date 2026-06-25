@@ -14,7 +14,7 @@ Many string values feed into build scripts, so the schema rejects characters tha
 | --- | --- | --- | --- |
 | `project_version` | string (semver) | — | **Required.** Your project's version, e.g. `1.2.3` or `1.2.3-beta.1`. Must be valid semver (prerelease and build suffixes allowed). Numbers are coerced to strings before validation. Used as the default version label for update bundles. |
 | `name` | shell-safe string | — | **Required.** The project name. |
-| `bsp` | shell-safe string | — | **Required.** The default board support package — must match a folder under `bsp/` in your project. Commands like `strux run`, `strux dev`, `strux flash`, and `strux kernel` use this BSP. See [BSPs](/concepts/bsp.html). |
+| `bsp` | shell-safe string | — | **Required.** The default board support package — must match a folder under `bsp/` in your project. Commands like `strux run`, `strux dev`, `strux flash`, and `strux kernel` use this BSP. See [BSPs](/concepts/bsp.md). |
 | `hostname` | shell-safe string | — | The device hostname. |
 | `boot` | object | — | Boot configuration. See [boot.splash](#boot-splash). |
 | `update` | object | — | System update configuration. See [update](#update). |
@@ -27,7 +27,7 @@ Many string values feed into build scripts, so the schema rejects characters tha
 
 ## boot.splash
 
-The boot splash screen: the logo shown from power-on until your app takes over. If `boot.splash` is present, all three keys are required. See [Customizing the OS](/guide/customizing-the-os.html).
+The boot splash screen: the logo shown from power-on until your app takes over. If `boot.splash` is present, all three keys are required. See [Customizing the OS](/guide/customizing-the-os.md).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -37,7 +37,7 @@ The boot splash screen: the logo shown from power-on until your app takes over. 
 
 ## update
 
-Enables the signed system update mechanism. See the [Updates guide](/guide/updates.html) and the [update system concept page](/concepts/update-system.html).
+Enables the signed system update mechanism. See the [Updates guide](/guide/updates.md) and the [update system concept page](/concepts/update-system.md).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -46,7 +46,7 @@ Enables the signed system update mechanism. See the [Updates guide](/guide/updat
 
 ## display.monitors
 
-Maps monitors to frontend routes — each monitor shows your app at a different URL path. If `display` is present, `monitors` must contain at least one entry. See the [display stack concept page](/concepts/display-stack.html).
+Maps monitors to frontend routes — each monitor shows your app at a different URL path. If `display` is present, `monitors` must contain at least one entry. See the [display stack concept page](/concepts/display-stack.md).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -58,7 +58,7 @@ Maps monitors to frontend routes — each monitor shows your app at a different 
 
 ## rootfs
 
-Customizes the root filesystem — the Linux filesystem your image boots from. See [Customizing the OS](/guide/customizing-the-os.html).
+Customizes the root filesystem — the Linux filesystem your image boots from. See [Customizing the OS](/guide/customizing-the-os.md).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -67,7 +67,7 @@ Customizes the root filesystem — the Linux filesystem your image boots from. S
 
 ## scripts
 
-Project build scripts run against the fully assembled root filesystem. Use these for app-specific image customization that doesn't belong in a shared BSP — installing a tool that isn't packaged, dropping in a binary, or running a one-off `chroot` step. See [Customizing the OS](/guide/customizing-the-os.html#build-scripts).
+Project build scripts run against the fully assembled root filesystem. Use these for app-specific image customization that doesn't belong in a shared BSP — installing a tool that isn't packaged, dropping in a binary, or running a one-off `chroot` step. See [Customizing the OS](/guide/customizing-the-os.md#build-scripts).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -77,24 +77,24 @@ Project build scripts run against the fully assembled root filesystem. Use these
 | `scripts[].depends_on` | string[] | — | Files that invalidate the script's cache when changed. Project-relative when prefixed with `./`, otherwise resolved like generated artifacts (under `dist/`). |
 | `scripts[].cached_generated_artifacts` | string[] | — | Files (relative to `dist/`) the script produces. If all exist and no dependency changed, the script is skipped. **Omit to run every build** — ideal for "always fetch the latest" steps. |
 
-A `rootfs_post` script runs with `$ROOTFS_DIR` pointing at the extracted rootfs, the full [build environment](/bsp/reference/environment-variables.html) (`TARGET_ARCH`, `BSP_NAME`, `PROJECT_NAME`, …), and these helper functions: `run_in_chroot` / `strux_chroot`, `strux_install_file <src> <abs-dest> [mode]`, and `strux_progress` / `strux_progress_bar`. The harness repacks the rootfs in place after a successful run, so downstream bundling picks up the changes automatically; a failing script aborts the build. Scripts must be idempotent (overwrite, don't append).
+A `rootfs_post` script runs with `$ROOTFS_DIR` pointing at the extracted rootfs, the full [build environment](/bsp/reference/environment-variables.md) (`TARGET_ARCH`, `BSP_NAME`, `PROJECT_NAME`, …), and these helper functions: `run_in_chroot` / `strux_chroot`, `strux_install_file <src> <abs-dest> [mode]`, and `strux_progress` / `strux_progress_bar`. The harness repacks the rootfs in place after a successful run, so downstream bundling picks up the changes automatically; a failing script aborts the build. Scripts must be idempotent (overwrite, don't append).
 
 ## qemu
 
-Controls how `strux run` and `strux dev` launch the image in QEMU. If `qemu` is present, `enabled` and `network` are required. See [Running in QEMU](/guide/running-qemu.html).
+Controls how `strux run` and `strux dev` launch the image in QEMU. If `qemu` is present, `enabled` and `network` are required. See [Running in QEMU](/guide/running-qemu.md).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `qemu.enabled` | boolean | — | **Required.** Whether to use QEMU for local testing. |
 | `qemu.network` | boolean | — | **Required.** Whether to enable QEMU networking. |
-| `qemu.usb` | object[] | — | USB devices to pass through to the VM. Manage this list with `strux usb` — see the [CLI reference](/reference/cli.html). |
+| `qemu.usb` | object[] | — | USB devices to pass through to the VM. Manage this list with `strux usb` — see the [CLI reference](/reference/cli.md). |
 | `qemu.usb[].vendor_id` | string | — | **Required per entry.** USB vendor ID as exactly 4 hex digits, e.g. `"1234"`. |
 | `qemu.usb[].product_id` | string | — | **Required per entry.** USB product ID as exactly 4 hex digits, e.g. `"5678"`. |
 | `qemu.flags` | shell-safe string[] | — | Extra flags appended to the QEMU command line, e.g. `-m 2G`. |
 
 ## build
 
-Build environment and cache configuration. See the [build pipeline](/concepts/build-pipeline.html) and [caching](/concepts/caching.html) concept pages.
+Build environment and cache configuration. See the [build pipeline](/concepts/build-pipeline.md) and [caching](/concepts/caching.md) concept pages.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -105,7 +105,7 @@ Build environment and cache configuration. See the [build pipeline](/concepts/bu
 
 ## dev
 
-Configures `strux dev`: the dev server, the WebKit inspector, and USB networking. See the [Dev Mode guide](/guide/dev-mode.html).
+Configures `strux dev`: the dev server, the WebKit inspector, and USB networking. See the [Dev Mode guide](/guide/dev-mode.md).
 
 ### dev.server
 

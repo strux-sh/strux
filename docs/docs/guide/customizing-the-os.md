@@ -2,7 +2,7 @@
 
 Your project's `strux.yaml` controls more than the app — it shapes the operating system itself. This page covers the boot splash, adding your own files and packages to the image, the device hostname, and multi-monitor display configuration.
 
-All examples on this page are real keys from the `strux.yaml` schema (`src/types/main-yaml.ts` in the CLI). Run `strux build` after changing any of them — the [build cache](/concepts/caching.html) only rebuilds the steps affected by your change.
+All examples on this page are real keys from the `strux.yaml` schema (`src/types/main-yaml.ts` in the CLI). Run `strux build` after changing any of them — the [build cache](/concepts/caching.md) only rebuilds the steps affected by your change.
 
 ## Boot splash
 
@@ -25,7 +25,7 @@ boot:
 How it works: at build time your logo is copied into the image, where it's shown twice — first by Plymouth (the Linux boot splash system) during early boot, then by Strux's Cage compositor while the browser engine starts. Your app appears only when it's ready to render, so the user never sees an in-between state.
 
 ::: tip Make the hand-off invisible
-Set `color` to the background color of your app, and give your app's root element that same background. The splash fades into your UI with no visible transition. The color is also passed to BSP scripts as `SPLASH_COLOR`, so boards that render a bootloader splash can match it too — see [environment variables](/bsp/reference/environment-variables.html).
+Set `color` to the background color of your app, and give your app's root element that same background. The splash fades into your UI with no visible transition. The color is also passed to BSP scripts as `SPLASH_COLOR`, so boards that render a bootloader splash can match it too — see [environment variables](/bsp/reference/environment-variables.md).
 :::
 
 If the logo file is missing, the build logs an error and falls back to the default Strux logo rather than failing.
@@ -73,7 +73,7 @@ rootfs:
 A missing `.deb` file produces a warning and is skipped, so check the build output if a package doesn't show up on the device.
 
 ::: tip BSP packages live in the BSP
-Board-specific packages (firmware, hardware tools) belong in the BSP's `bsp.yaml`, not here — they're merged with your project list at build time. See the [bsp.yaml reference](/bsp/reference/bsp-yaml.html).
+Board-specific packages (firmware, hardware tools) belong in the BSP's `bsp.yaml`, not here — they're merged with your project list at build time. See the [bsp.yaml reference](/bsp/reference/bsp-yaml.md).
 :::
 
 ## Build scripts
@@ -109,7 +109,7 @@ Right before your script runs, Strux unpacks the device's filesystem into a fold
 
 - **`strux_progress "message"`** and **`strux_progress_bar "message" 50`** — print a status line or progress bar so your script's work shows up in the build output like every other step.
 
-Your script also gets the build's environment variables. The handy one is **`$TARGET_ARCH`** — the device's CPU type, like `arm64` — which lets you download the right file for the hardware. There are [more environment variables](/bsp/reference/environment-variables.html) available too.
+Your script also gets the build's environment variables. The handy one is **`$TARGET_ARCH`** — the device's CPU type, like `arm64` — which lets you download the right file for the hardware. There are [more environment variables](/bsp/reference/environment-variables.md) available too.
 
 ### A real example
 
@@ -138,7 +138,7 @@ The `curl` writes straight into `$ROOTFS_DIR`, so the binary ends up at `/usr/lo
 
 ### How often it runs
 
-By default, your script runs on **every build** — which is exactly what you want for "always grab the latest." If instead your script does something slow that rarely changes, you can let Strux skip it when nothing relevant has changed: list the files your script creates under `cached_generated_artifacts` (and, optionally, files it depends on under `depends_on`). See [caching](/concepts/caching.html) for the details.
+By default, your script runs on **every build** — which is exactly what you want for "always grab the latest." If instead your script does something slow that rarely changes, you can let Strux skip it when nothing relevant has changed: list the files your script creates under `cached_generated_artifacts` (and, optionally, files it depends on under `depends_on`). See [caching](/concepts/caching.md) for the details.
 
 ::: warning Write your script so it's safe to run twice
 Sometimes Strux runs your script against an image that already contains the result of a previous run (this happens when the build reuses a cached filesystem). So **overwrite instead of adding to**: copying a file into place again is harmless, but a line like `echo "..." >> /etc/some.conf` would add the line a second time. If your script only writes or replaces files — like the example above — you're already safe.
@@ -198,7 +198,7 @@ If you change `display` settings, rebuild — the config is baked into the image
 
 ## Where to go next
 
-- [Project Structure](/guide/project-structure.html) — every file in your project, explained.
-- [Building](/guide/building.html) — the build command and its options.
-- [Display Stack](/concepts/display-stack.html) — how Cage and WPE WebKit put your app on screen.
-- [Updates](/guide/updates.html) — ship a new OS version to devices in the field.
+- [Project Structure](/guide/project-structure.md) — every file in your project, explained.
+- [Building](/guide/building.md) — the build command and its options.
+- [Display Stack](/concepts/display-stack.md) — how Cage and WPE WebKit put your app on screen.
+- [Updates](/guide/updates.md) — ship a new OS version to devices in the field.

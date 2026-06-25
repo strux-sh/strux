@@ -1,6 +1,6 @@
 # Go Runtime Reference
 
-Every exported function, method, and type in the Strux Go runtime library (`github.com/strux-dev/strux/pkg/runtime`). This is the package your `main.go` imports: it exposes your app to the frontend, serves your built frontend over HTTP, carries events in both directions, and provides the built-in system services. For a task-oriented introduction, see the [Backend guide](/guide/backend.html); for the JavaScript side of everything on this page, see the [Frontend API reference](/reference/frontend-api.html).
+Every exported function, method, and type in the Strux Go runtime library (`github.com/strux-dev/strux/pkg/runtime`). This is the package your `main.go` imports: it exposes your app to the frontend, serves your built frontend over HTTP, carries events in both directions, and provides the built-in system services. For a task-oriented introduction, see the [Backend guide](/guide/backend.md); for the JavaScript side of everything on this page, see the [Frontend API reference](/reference/frontend-api.md).
 
 ## Creating and starting the runtime
 
@@ -97,7 +97,7 @@ rt.Boot().Reboot()
 level, err := rt.Display().GetBacklight("HDMI-A-1")
 ```
 
-Every service is also exposed to the frontend under `window.strux.<namespace>` — see the [Frontend API reference](/reference/frontend-api.html).
+Every service is also exposed to the frontend under `window.strux.<namespace>` — see the [Frontend API reference](/reference/frontend-api.md).
 
 Three services — Display backlight, Network, and Wi-Fi — are backed by **BSP capability providers**. If the active BSP has not registered a provider, those methods return `api.UnsupportedError` (message: `capability <name> is not supported by the active BSP`). Check support at runtime with the [Capabilities service](#capabilities) before relying on them.
 
@@ -146,7 +146,7 @@ type CapabilityInfo struct {
 
 ### Dev
 
-`rt.Dev() *api.DevService` — namespace `dev`. Reads and writes the on-device dev-mode configuration, so a kiosk can expose a settings screen that enables [dev mode](/guide/dev-mode.html) without reflashing. The active config lives at `/strux/.dev-env.json`; a stored-but-disabled config lives at `/strux/.dev-env.json.disabled`.
+`rt.Dev() *api.DevService` — namespace `dev`. Reads and writes the on-device dev-mode configuration, so a kiosk can expose a settings screen that enables [dev mode](/guide/dev-mode.md) without reflashing. The active config lives at `/strux/.dev-env.json`; a stored-but-disabled config lives at `/strux/.dev-env.json.disabled`.
 
 ```go
 func (d *DevService) GetConfig() (DevState, error)
@@ -278,7 +278,7 @@ type DisplayOutputChange struct {
 
 ### Network
 
-`rt.Network() *api.NetworkService` — namespace `network`. Generic (wired-first) network interface management. **Every method requires the `network` capability provider** from the active BSP; otherwise it returns `UnsupportedError`. See [Runtime Extensions](/bsp/guide/runtime-extensions.html) for how a BSP supplies one.
+`rt.Network() *api.NetworkService` — namespace `network`. Generic (wired-first) network interface management. **Every method requires the `network` capability provider** from the active BSP; otherwise it returns `UnsupportedError`. See [Runtime Extensions](/bsp/guide/runtime-extensions.md) for how a BSP supplies one.
 
 ```go
 func (NetworkService) ListInterfaces() ([]NetworkInterface, error)
@@ -346,10 +346,10 @@ type ProjectInfo struct {
 
 ### Update
 
-`rt.Update() *api.UpdateService` — namespace `update`. Read-only view of system update progress and state, written by the on-device `strux-client`. See [Updates](/guide/updates.html) and the [update system concept page](/concepts/update-system.html).
+`rt.Update() *api.UpdateService` — namespace `update`. Read-only view of system update progress and state, written by the on-device `strux-client`. See [Updates](/guide/updates.md) and the [update system concept page](/concepts/update-system.md).
 
 ::: warning Experimental
-A/B (dual-rootfs) updates are experimental. The `UpdateState` fields describing slots and boot tries may change. See [Dual Rootfs](/bsp/concepts/dual-rootfs.html).
+A/B (dual-rootfs) updates are experimental. The `UpdateState` fields describing slots and boot tries may change. See [Dual Rootfs](/bsp/concepts/dual-rootfs.md).
 :::
 
 ```go
@@ -437,7 +437,7 @@ func (rt *Runtime) Off(id uint64)
 
 - `Emit` JSON-encodes the payload and broadcasts it to every connected frontend. Broken connections are dropped silently. If encoding fails, the event is logged and dropped.
 - `On` handlers run in their own goroutine per event, so a slow handler doesn't block the event loop — synchronize shared state yourself.
-- The frontend counterpart is `strux.ipc.on()` / `strux.ipc.off()` / `strux.ipc.send()` — see [Events in the Frontend API reference](/reference/frontend-api.html#events-strux-ipc).
+- The frontend counterpart is `strux.ipc.on()` / `strux.ipc.off()` / `strux.ipc.send()` — see [Events in the Frontend API reference](/reference/frontend-api.md#events-strux-ipc).
 
 A common pattern from a real project (the same OS image rendering two browser views) is relaying events between frontends:
 
@@ -467,7 +467,7 @@ type EventHandler struct {
 
 ## Provider registration (BSP extensions)
 
-These functions let a BSP package supply the hardware-specific implementation behind the Display backlight, Network, and WiFi services. They are meant to be called from a BSP runtime extension's `init()` function — see [Runtime Extensions](/bsp/guide/runtime-extensions.html) for the full workflow and the [extension system concept page](/bsp/concepts/extension-system.html) for how extensions are wired into the build.
+These functions let a BSP package supply the hardware-specific implementation behind the Display backlight, Network, and WiFi services. They are meant to be called from a BSP runtime extension's `init()` function — see [Runtime Extensions](/bsp/guide/runtime-extensions.md) for the full workflow and the [extension system concept page](/bsp/concepts/extension-system.md) for how extensions are wired into the build.
 
 ```go
 func RegisterDisplayProvider(provider DisplayProvider)
@@ -527,7 +527,7 @@ func RegisterExtension(namespace, subNamespace string, instance interface{}) err
 func (rt *Runtime) RegisterExtension(namespace, subNamespace string, instance interface{}) error
 ```
 
-`RegisterCustomExtension("gpio", &GPIO{})` makes the methods of `GPIO` callable as `window.strux.gpio.<Method>()` in the frontend. Registration fails (error or panic) when the namespace or sub-namespace is empty, the instance is nil, or the pair is already registered. Method call semantics are the same as for app methods. See [Runtime Extensions](/bsp/guide/runtime-extensions.html) for how `strux types` picks these up and generates frontend types for them.
+`RegisterCustomExtension("gpio", &GPIO{})` makes the methods of `GPIO` callable as `window.strux.gpio.<Method>()` in the frontend. Registration fails (error or panic) when the namespace or sub-namespace is empty, the instance is nil, or the pair is already registered. Method call semantics are the same as for app methods. See [Runtime Extensions](/bsp/guide/runtime-extensions.md) for how `strux types` picks these up and generates frontend types for them.
 
 ## Lower-level exports
 
@@ -539,7 +539,7 @@ You will rarely need these, but they are part of the public API:
 | `(rt) Start() error` | Starts the IPC listener on `/tmp/strux-ipc.sock`. Called for you by `Init`/`Start`. |
 | `(rt) GetMethodInfo() []MethodInfo` | Metadata (name, parameter count, parameter kinds) for the app struct's top-level bound methods. |
 | `(rt) GetFieldInfo() []FieldInfo` | Metadata (name, kind) for the app struct's top-level bound primitive fields. |
-| `(rt) GenerateTypeScript(outputPath string) error` | Writes a TypeScript declaration file for the current bindings. The `strux types` command (which uses static analysis and produces richer types) is the recommended way to generate frontend types — see the [Frontend API reference](/reference/frontend-api.html#how-the-typed-api-is-generated). |
+| `(rt) GenerateTypeScript(outputPath string) error` | Writes a TypeScript declaration file for the current bindings. The `strux types` command (which uses static analysis and produces richer types) is the recommended way to generate frontend types — see the [Frontend API reference](/reference/frontend-api.md#how-the-typed-api-is-generated). |
 | `Message`, `Response`, `MethodInfo`, `FieldInfo`, `ChannelHandshake` | Wire-format types for the JSON-RPC style IPC protocol. |
 | `Registry` | The extension registry used internally by the Runtime. |
 | Type aliases | All capability data types (`NetworkInterface`, `WiFiStatus`, `CapabilityInfo`, …) are aliased from `pkg/runtime/api` into the `runtime` package, so user code only needs the one import. |

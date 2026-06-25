@@ -39,7 +39,7 @@ The updater that applies a bundle is shipped by Strux and compiled into every im
 
 ## The bundle: `.struxb`
 
-An update is distributed as a signed bundle, produced by [`strux update bundle`](/reference/cli.html#strux-update-bundle) (or automatically when `update.auto_bundle` is set — see [Updates](/guide/updates.html)). It is a gzip-compressed tar archive containing:
+An update is distributed as a signed bundle, produced by [`strux update bundle`](/reference/cli.md#strux-update-bundle) (or automatically when `update.auto_bundle` is set — see [Updates](/guide/updates.md)). It is a gzip-compressed tar archive containing:
 
 - `manifest.json` — metadata: schema (`dev.strux.update.bundle.v1`), target BSP, version, and a `payload` block describing the rootfs image with its size and SHA-256.
 - `manifest.sig` — an RSA-PSS / SHA-512 signature over `manifest.json`, base64-encoded.
@@ -47,7 +47,7 @@ An update is distributed as a signed bundle, produced by [`strux update bundle`]
 
 The payload is a **full rootfs**, not a delta. The signature covers the manifest, and the manifest pins the payload's SHA-256 — so verifying the manifest signature and then checking the payload hash proves the whole bundle is authentic and intact.
 
-Bundles are signed with a 4096-bit RSA key you generate with [`strux update gen-keypair`](/reference/cli.html#strux-update-gen-keypair). The private key (`strux-update.key`) signs; the public key (`strux-update.pub`) is embedded in the image and used on-device to verify. See [Updates](/guide/updates.html) for the signing workflow.
+Bundles are signed with a 4096-bit RSA key you generate with [`strux update gen-keypair`](/reference/cli.md#strux-update-gen-keypair). The private key (`strux-update.key`) signs; the public key (`strux-update.pub`) is embedded in the image and used on-device to verify. See [Updates](/guide/updates.md) for the signing workflow.
 
 ## The on-device contract
 
@@ -137,18 +137,18 @@ To support A/B updates on a board, a BSP needs all of the following, gated on up
 3. **A U-Boot boot script** that reads `BOOTENV.TXT` from `strux-data`, selects active-vs-pending with the tries/fallback logic, loads the kernel from the chosen slot's partlabel, and sets the `strux.slot=` / `strux.data=` bootargs.
 4. **A boot-config step** that installs `/etc/strux/update.pub` from the project key and adds the `strux-data` mount to `fstab`.
 
-The real Rockchip BSPs under `test/bsp/` (notably `hd215-rk3576`) implement all four and are the reference to copy from — see [BSP Examples](/bsp/guide/examples.html).
+The real Rockchip BSPs under `test/bsp/` (notably `hd215-rk3576`) implement all four and are the reference to copy from — see [BSP Examples](/bsp/guide/examples.md).
 
 ## Current limitations
 
 Because the system is experimental, note what it does **not** do yet in v0.3.0:
 
 - **Full images only** — there are no delta/incremental updates; each bundle carries a complete rootfs.
-- **No built-in update server or scheduling** — bundles are delivered out of band (today, pushed via the dev server with [`strux update send`](/reference/cli.html#strux-update-send)); there's no OTA check-in/availability protocol.
+- **No built-in update server or scheduling** — bundles are delivered out of band (today, pushed via the dev server with [`strux update send`](/reference/cli.md#strux-update-send)); there's no OTA check-in/availability protocol.
 - **Limited field testing** — the boot-validation and fallback paths are implemented but new; validate them on your hardware before relying on them in production.
 
 ## Where to go next
 
-- [Updates](/guide/updates.html) — generating keys, building, and sending bundles.
-- [BSP Examples](/bsp/guide/examples.html) — the reference A/B BSP to copy from.
-- [bsp.yaml reference](/bsp/reference/bsp-yaml.html) — bootloader and script configuration.
+- [Updates](/guide/updates.md) — generating keys, building, and sending bundles.
+- [BSP Examples](/bsp/guide/examples.md) — the reference A/B BSP to copy from.
+- [bsp.yaml reference](/bsp/reference/bsp-yaml.md) — bootloader and script configuration.

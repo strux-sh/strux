@@ -1,6 +1,6 @@
 # Update System
 
-This page explains how Strux OTA updates work internally: the `.struxb` bundle format, the signing and verification model, and how a device installs an update and recovers from a bad one. For the step-by-step workflow, see the [Updates guide](/guide/updates.html).
+This page explains how Strux OTA updates work internally: the `.struxb` bundle format, the signing and verification model, and how a device installs an update and recovers from a bad one. For the step-by-step workflow, see the [Updates guide](/guide/updates.md).
 
 ::: warning Experimental
 Right now, System Updates are an experimental feature. We have major plans regarding this feature, so stay tuned!
@@ -92,7 +92,7 @@ The on-device Strux client receives an update either as a URL to download or a l
 5. **Arm the bootloader.** The client writes the boot environment on the shared data partition: the idle slot becomes *pending* with `strux_tries=3`, and the generation counter increments. The environment is written redundantly (`BOOTENV.TXT` and `BOOTBAK.TXT`) so a power cut mid-write can't lose the boot state.
 6. **Reboot.** On each boot attempt, the bootloader decrements the try counter *before* booting the pending slot. When the new OS comes up and the Strux client starts, it marks the slot active and clears the pending state. If the counter reaches zero without that ever happening, the bootloader boots the old slot — automatic rollback.
 
-Throughout the install, the client writes progress to `/run/strux/update-progress.json` and persists slot state to `/strux-data/strux/update-state.json`. The Go runtime exposes both to your app under the `update` API namespace (progress and state queries), so your frontend can render an update screen — see the [Go runtime reference](/reference/go-runtime.html).
+Throughout the install, the client writes progress to `/run/strux/update-progress.json` and persists slot state to `/strux-data/strux/update-state.json`. The Go runtime exposes both to your app under the `update` API namespace (progress and state queries), so your frontend can render an update screen — see the [Go runtime reference](/reference/go-runtime.md).
 
 ## update.enabled and auto_bundle
 
@@ -122,11 +122,11 @@ The dual-rootfs design is **experimental and may change**. However, BSPs targeti
 - **Rootfs configuration:** the image mounts the data partition at `/strux-data` via fstab, installs the update public key at `/etc/strux/update.pub` (the build must fail if `strux-update.pub` is missing), and keeps a migration copy of the boot script at `/etc/strux/boot.scr`. First-boot partition resizing must be disabled — slot boundaries are fixed.
 - **Update payload export:** the `make_image` step must also export the bare rootfs image to `dist/output/<bsp>/rootfs.ext4`, which is what `strux update bundle` signs by default.
 
-For the bootloader scripting, image generation, and a complete worked example, see [Dual Rootfs](/bsp/concepts/dual-rootfs.html) in the BSP docs.
+For the bootloader scripting, image generation, and a complete worked example, see [Dual Rootfs](/bsp/concepts/dual-rootfs.md) in the BSP docs.
 :::
 
 ## Where to go next
 
-- [Updates guide](/guide/updates.html) — the end-to-end workflow with commands.
-- [Dual Rootfs](/bsp/concepts/dual-rootfs.html) — implementing the conventions in a BSP.
-- [Build Pipeline](/concepts/build-pipeline.html) — where image creation and auto-bundling sit in the build.
+- [Updates guide](/guide/updates.md) — the end-to-end workflow with commands.
+- [Dual Rootfs](/bsp/concepts/dual-rootfs.md) — implementing the conventions in a BSP.
+- [Build Pipeline](/concepts/build-pipeline.md) — where image creation and auto-bundling sit in the build.

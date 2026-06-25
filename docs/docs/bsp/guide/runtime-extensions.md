@@ -4,7 +4,7 @@ A runtime extension is a Go package inside your BSP that gives the Strux runtime
 
 ## When you need one
 
-The Strux runtime ships a set of standard APIs under `window.strux.*` (display, network, Wi-Fi, boot, update, and more — see the [Go Runtime reference](/reference/go-runtime.html)). Some of those APIs can't work generically: how you set a backlight or manage Wi-Fi depends on the board and on what's installed in the image. That's where runtime extensions come in. There are two kinds:
+The Strux runtime ships a set of standard APIs under `window.strux.*` (display, network, Wi-Fi, boot, update, and more — see the [Go Runtime reference](/reference/go-runtime.md)). Some of those APIs can't work generically: how you set a backlight or manage Wi-Fi depends on the board and on what's installed in the image. That's where runtime extensions come in. There are two kinds:
 
 1. **A provider for a Strux standard capability.** Strux owns the API shape (`strux.wifi.Scan(...)`, `strux.display.SetBacklight(...)`); your BSP supplies the hardware implementation by satisfying a Go interface. Apps written against the standard API work on every BSP that provides it.
 2. **A custom BSP API.** For hardware Strux doesn't standardize (GPIO, a vendor sensor, a relay board), your BSP registers its own namespace under `window.strux.<name>` with whatever methods it wants.
@@ -202,7 +202,7 @@ value, err := rt.Display().GetBacklight("DSI-1")
 
 ## Where to go next
 
-- [The Extension System](/bsp/concepts/extension-system.html) — how registration, the capability registry, and type generation work under the hood.
-- [bsp.yaml Reference](/bsp/reference/bsp-yaml.html) — every key, including `runtime.extensions` and `compatible_strux_api`.
-- [Writing a BSP](/bsp/guide/writing-a-bsp.html) — the full BSP walkthrough this page slots into.
-- [Backend guide](/guide/backend.html) — how app-level Go methods (as opposed to BSP extensions) are exposed to the frontend.
+- [The Extension System](/bsp/concepts/extension-system.md) — how registration, the capability registry, and type generation work under the hood.
+- [bsp.yaml Reference](/bsp/reference/bsp-yaml.md) — every key, including `runtime.extensions` and `compatible_strux_api`.
+- [Writing a BSP](/bsp/guide/writing-a-bsp.md) — the full BSP walkthrough this page slots into.
+- [Backend guide](/guide/backend.md) — how app-level Go methods (as opposed to BSP extensions) are exposed to the frontend.

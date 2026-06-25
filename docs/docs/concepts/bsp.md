@@ -1,10 +1,10 @@
 # Board Support Packages
 
-A Board Support Package (BSP) is a folder in your project that teaches Strux how to build for one specific piece of hardware. Your app code stays the same across boards; the BSP supplies everything hardware-specific. This page explains what a BSP owns and how your project uses one — if you want to *write* a BSP for a new board, start with the [BSP Development guide](/bsp/guide/introduction.html).
+A Board Support Package (BSP) is a folder in your project that teaches Strux how to build for one specific piece of hardware. Your app code stays the same across boards; the BSP supplies everything hardware-specific. This page explains what a BSP owns and how your project uses one — if you want to *write* a BSP for a new board, start with the [BSP Development guide](/bsp/guide/introduction.md).
 
 ## The mental model
 
-Think of the [build pipeline](/concepts/build-pipeline.html) as a machine with empty slots: which CPU architecture? which kernel? which bootloader? how does the final disk image get assembled? A BSP is the set of answers for one board, packaged as a directory under `bsp/`:
+Think of the [build pipeline](/concepts/build-pipeline.md) as a machine with empty slots: which CPU architecture? which kernel? which bootloader? how does the final disk image get assembled? A BSP is the set of answers for one board, packaged as a directory under `bsp/`:
 
 ```txt
 my-kiosk/
@@ -25,7 +25,7 @@ my-kiosk/
         └── runtime/      # Go runtime extensions
 ```
 
-Everything is driven by the `bsp.yaml` at the root of the folder, validated against a strict schema (see the [bsp.yaml reference](/bsp/reference/bsp-yaml.html)).
+Everything is driven by the `bsp.yaml` at the root of the folder, validated against a strict schema (see the [bsp.yaml reference](/bsp/reference/bsp-yaml.md)).
 
 ## What a BSP owns
 
@@ -34,10 +34,10 @@ Everything is driven by the `bsp.yaml` at the root of the folder, validated agai
 | Architecture | `bsp.arch` | Everything is cross-compiled for this CPU: your Go backend, Cage, Cog, the client. `arm64`, `x86_64`, `armhf`, or `host`. |
 | Kernel | `bsp.boot.kernel` | Stock Debian kernel, or a custom one with its own source, defconfig, fragments, patches, and device tree. |
 | Bootloader | `bsp.boot.bootloader` | Whether one is built at all, which one (U-Boot, GRUB...), and the vendor firmware blobs early boot needs. |
-| Build scripts | `bsp.scripts` | Shell scripts hooked into [pipeline lifecycle steps](/bsp/concepts/lifecycle-scripts.html) — including the mandatory `make_image` step that produces the bootable image, and `flash_script` used by `strux flash`. |
+| Build scripts | `bsp.scripts` | Shell scripts hooked into [pipeline lifecycle steps](/bsp/concepts/lifecycle-scripts.md) — including the mandatory `make_image` step that produces the bootable image, and `flash_script` used by `strux flash`. |
 | Packages & overlay | `bsp.rootfs` | Board-specific Debian packages (Wi-Fi firmware, ALSA, Bluetooth...) and files overlaid onto the filesystem. Your project's own `rootfs` section in `strux.yaml` is applied on top. |
-| Runtime extensions | `bsp.runtime.extensions` | Go packages compiled into your backend that add board-specific APIs (e.g. Wi-Fi management on a board that has Wi-Fi). Your frontend sees them as part of the same typed `strux` API. See [Runtime Extensions](/bsp/guide/runtime-extensions.html). |
-| Display & compositor | `bsp.display`, `bsp.cage` | The panel's native resolution, compositor environment variables, and cursor hiding. See [Display Stack](/concepts/display-stack.html). |
+| Runtime extensions | `bsp.runtime.extensions` | Go packages compiled into your backend that add board-specific APIs (e.g. Wi-Fi management on a board that has Wi-Fi). Your frontend sees them as part of the same typed `strux` API. See [Runtime Extensions](/bsp/guide/runtime-extensions.md). |
+| Display & compositor | `bsp.display`, `bsp.cage` | The panel's native resolution, compositor environment variables, and cursor hiding. See [Display Stack](/concepts/display-stack.md). |
 | Defaults | `bsp.hostname` | Device hostname (your `strux.yaml` can override it). |
 
 A BSP also declares which Strux API versions it has been tested with (`bsp.runtime.compatible_strux_api`); the CLI checks this against your project's runtime version at build time and refuses mismatches with a clear error.
@@ -68,7 +68,7 @@ dist/cache/qemu/
 dist/output/qemu/
 ```
 
-Nothing is shared between boards except the built frontend (`dist/cache/frontend/`), which is plain files and architecture-independent. The practical upshot: switching boards never invalidates anything, and you can keep a fast QEMU loop going while hardware images build on the side. See [Caching](/concepts/caching.html).
+Nothing is shared between boards except the built frontend (`dist/cache/frontend/`), which is plain files and architecture-independent. The practical upshot: switching boards never invalidates anything, and you can keep a fast QEMU loop going while hardware images build on the side. See [Caching](/concepts/caching.md).
 
 ## Why the qemu BSP must stay
 
@@ -90,7 +90,7 @@ We're constantly working to add new boards and to support new BSPs, and you're a
 
 ## Where to go next
 
-- [Writing a BSP](/bsp/guide/writing-a-bsp.html) — build support for a new board, step by step.
-- [bsp.yaml reference](/bsp/reference/bsp-yaml.html) — every key, exhaustively.
-- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) — how BSP scripts hook into the build.
-- [Flashing](/guide/flashing.html) — getting a built image onto the board.
+- [Writing a BSP](/bsp/guide/writing-a-bsp.md) — build support for a new board, step by step.
+- [bsp.yaml reference](/bsp/reference/bsp-yaml.md) — every key, exhaustively.
+- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) — how BSP scripts hook into the build.
+- [Flashing](/guide/flashing.md) — getting a built image onto the board.

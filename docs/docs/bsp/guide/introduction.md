@@ -72,16 +72,16 @@ What each section does:
 | `hostname` | yes | The device's network hostname. |
 | `display` | no | `resolution: "WIDTHxHEIGHT"` — the panel's native mode. Exposed to BSP scripts as `DISPLAY_WIDTH`/`DISPLAY_HEIGHT`. |
 | `cage` | no | Compositor tuning: `env` (a list of `NAME=value` strings written to the device's cage environment file) and `hide_cursor` (sets `STRUX_HIDE_CURSOR=1` for touch-only devices). |
-| `scripts` | no | Lifecycle scripts that hook into (or replace) build steps. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html). |
-| `boot.kernel` | no | Custom kernel configuration. `custom_kernel: false` uses the stock Debian kernel from the rootfs. See [Custom Kernels](/bsp/guide/kernel.html). |
-| `boot.bootloader` | no | Bootloader configuration. `enabled: false` means no bootloader is built (fine for QEMU). See [Bootloaders](/bsp/guide/bootloader.html). |
+| `scripts` | no | Lifecycle scripts that hook into (or replace) build steps. See [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md). |
+| `boot.kernel` | no | Custom kernel configuration. `custom_kernel: false` uses the stock Debian kernel from the rootfs. See [Custom Kernels](/bsp/guide/kernel.md). |
+| `boot.bootloader` | no | Bootloader configuration. `enabled: false` means no bootloader is built (fine for QEMU). See [Bootloaders](/bsp/guide/bootloader.md). |
 | `rootfs` | no | `overlay` (a folder copied verbatim into the root filesystem) and `packages` (extra Debian packages to install). |
-| `runtime` | no | `extensions` (board-specific Go APIs added to the Strux runtime) and `compatible_strux_api` (the Strux API versions this BSP has been tested with). See [Runtime Extensions](/bsp/guide/runtime-extensions.html). |
+| `runtime` | no | `extensions` (board-specific Go APIs added to the Strux runtime) and `compatible_strux_api` (the Strux API versions this BSP has been tested with). See [Runtime Extensions](/bsp/guide/runtime-extensions.md). |
 
-The full key-by-key reference, with every field and type, is at [bsp.yaml Reference](/bsp/reference/bsp-yaml.html).
+The full key-by-key reference, with every field and type, is at [bsp.yaml Reference](/bsp/reference/bsp-yaml.md).
 
 ::: tip A note on `cage.env`
-The values in the `qemu` BSP — `WLR_DRM_NO_MODIFIERS=1`, `WLR_NO_HARDWARE_CURSORS=1` — are wlroots display-stack workarounds that real boards often need too. The `ht109-rk3576s` tablet BSP uses `STRUX_OUTPUT_TRANSFORM=90` here to rotate a portrait panel into landscape. See [Display Stack](/concepts/display-stack.html).
+The values in the `qemu` BSP — `WLR_DRM_NO_MODIFIERS=1`, `WLR_NO_HARDWARE_CURSORS=1` — are wlroots display-stack workarounds that real boards often need too. The `ht109-rk3576s` tablet BSP uses `STRUX_OUTPUT_TRANSFORM=90` here to rotate a portrait panel into landscape. See [Display Stack](/concepts/display-stack.md).
 :::
 
 ## How a BSP plugs into the build pipeline
@@ -90,29 +90,29 @@ The values in the `qemu` BSP — `WLR_DRM_NO_MODIFIERS=1`, `WLR_NO_HARDWARE_CURS
 
 1. **Configuration.** `arch` selects the cross-compiler; `rootfs.packages` and `rootfs.overlay` feed the rootfs steps; `boot.kernel` and `boot.bootloader` configure their steps.
 2. **Conditional steps.** The kernel step only runs when `boot.kernel.custom_kernel: true`, and the bootloader step only runs when `boot.bootloader.enabled: true`. A QEMU-only BSP skips both.
-3. **Lifecycle scripts.** Every entry in `scripts` declares a `location` and a `step` — a hook like `before_rootfs`, `after_bootloader`, or `make_image`. Strux runs the script inside Docker at that point in the pipeline, with environment variables describing the build (`BSP_NAME`, `TARGET_ARCH`, `PROJECT_DIST_CACHE_FOLDER`, and more — see [Environment Variables](/bsp/reference/environment-variables.html)). Three special steps *replace* built-in behavior instead of hooking around it: `custom_kernel`, `custom_bootloader`, and `make_image`.
+3. **Lifecycle scripts.** Every entry in `scripts` declares a `location` and a `step` — a hook like `before_rootfs`, `after_bootloader`, or `make_image`. Strux runs the script inside Docker at that point in the pipeline, with environment variables describing the build (`BSP_NAME`, `TARGET_ARCH`, `PROJECT_DIST_CACHE_FOLDER`, and more — see [Environment Variables](/bsp/reference/environment-variables.md)). Three special steps *replace* built-in behavior instead of hooking around it: `custom_kernel`, `custom_bootloader`, and `make_image`.
 
 The `make_image` step deserves emphasis: **Strux builds a root filesystem tarball, but the BSP turns it into a bootable disk image.** Only the BSP knows the board's partition layout, where the bootloader lives, and what the flashing tool expects. Every BSP needs at least one `make_image` script.
 
-Scripts participate in the [build cache](/concepts/caching.html): declare `cached_generated_artifacts` and `depends_on` on a script, and Strux skips it when its outputs exist and no dependency has changed. The path shorthand (`cache/` → `dist/cache/{bsp}/`, `output/` → `dist/output/{bsp}/`, `./` → the BSP folder) is documented in [Path Resolution](/bsp/reference/path-resolution.html).
+Scripts participate in the [build cache](/concepts/caching.md): declare `cached_generated_artifacts` and `depends_on` on a script, and Strux skips it when its outputs exist and no dependency has changed. The path shorthand (`cache/` → `dist/cache/{bsp}/`, `output/` → `dist/output/{bsp}/`, `./` → the BSP folder) is documented in [Path Resolution](/bsp/reference/path-resolution.md).
 
 ## The recommended path
 
 Don't write a BSP from a blank file. The path that works:
 
 1. **Start from the qemu BSP.** Copy `bsp/qemu/` to `bsp/<your-board>/`, rename it, and get `strux build <your-board>` producing an image with no custom kernel and no bootloader. This proves the pipeline, your packages, and your overlay before any hardware is involved.
-2. **Add the kernel.** Switch on `custom_kernel`, point `source` at the kernel tree your board needs (often a vendor fork), and get it compiling with the right device tree. See [Custom Kernels](/bsp/guide/kernel.html).
-3. **Add the bootloader.** Enable the bootloader, supply the defconfig, patches, and any vendor boot blobs. See [Bootloaders](/bsp/guide/bootloader.html).
-4. **Make it flashable.** Write the `make_image` script for the board's partition layout, then a `flash_script` so `strux flash` works. See [Flash Scripts](/bsp/guide/flash-scripts.html).
+2. **Add the kernel.** Switch on `custom_kernel`, point `source` at the kernel tree your board needs (often a vendor fork), and get it compiling with the right device tree. See [Custom Kernels](/bsp/guide/kernel.md).
+3. **Add the bootloader.** Enable the bootloader, supply the defconfig, patches, and any vendor boot blobs. See [Bootloaders](/bsp/guide/bootloader.md).
+4. **Make it flashable.** Write the `make_image` script for the board's partition layout, then a `flash_script` so `strux flash` works. See [Flash Scripts](/bsp/guide/flash-scripts.md).
 
-The [Writing a BSP](/bsp/guide/writing-a-bsp.html) guide walks this exact path with real values.
+The [Writing a BSP](/bsp/guide/writing-a-bsp.md) guide walks this exact path with real values.
 
 ## Where to go next
 
-- [Writing a BSP](/bsp/guide/writing-a-bsp.html) — the from-scratch walkthrough.
-- [Custom Kernels](/bsp/guide/kernel.html) — sources, defconfigs, fragments, patches, device trees.
-- [Bootloaders](/bsp/guide/bootloader.html) — U-Boot builds, boot methods, vendor blobs.
-- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) — every hook, in pipeline order.
-- [Runtime Extensions](/bsp/guide/runtime-extensions.html) — exposing board hardware (WiFi, sensors) to the app.
-- [Example BSPs](/bsp/guide/examples.html) — the real BSPs these docs draw from.
-- [bsp.yaml Reference](/bsp/reference/bsp-yaml.html) — every key, exhaustively.
+- [Writing a BSP](/bsp/guide/writing-a-bsp.md) — the from-scratch walkthrough.
+- [Custom Kernels](/bsp/guide/kernel.md) — sources, defconfigs, fragments, patches, device trees.
+- [Bootloaders](/bsp/guide/bootloader.md) — U-Boot builds, boot methods, vendor blobs.
+- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) — every hook, in pipeline order.
+- [Runtime Extensions](/bsp/guide/runtime-extensions.md) — exposing board hardware (WiFi, sensors) to the app.
+- [Example BSPs](/bsp/guide/examples.md) — the real BSPs these docs draw from.
+- [bsp.yaml Reference](/bsp/reference/bsp-yaml.md) — every key, exhaustively.

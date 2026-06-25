@@ -73,7 +73,7 @@ strux.ipc.send("hello", { from: "frontend" })
 unsubscribe()
 ```
 
-The template's `main.go` includes the matching Go side (`rt.On` / `rt.Emit`) — see [Backend](/guide/backend.html#events).
+The template's `main.go` includes the matching Go side (`rt.On` / `rt.Emit`) — see [Backend](/guide/backend.md#events).
 
 ## System APIs: window.strux
 
@@ -85,7 +85,7 @@ const info = await strux.project.Info() // name, version, BSP, arch, build time
 const nets = await strux.wifi.Scan(iface)
 ```
 
-These are documented in the [Backend guide](/guide/backend.html#the-built-in-strux-services) and the [Frontend API reference](/reference/frontend-api.html).
+These are documented in the [Backend guide](/guide/backend.md#the-built-in-strux-services) and the [Frontend API reference](/reference/frontend-api.md).
 
 ## Generated types: strux.d.ts
 
@@ -111,7 +111,7 @@ It's also regenerated automatically when a project is scaffolded and at the star
 
 ## The development loop
 
-`strux dev` starts a Vite dev server (inside Docker, on port 5173) and points the device's browser at it. Edit anything under `frontend/` and the page hot-reloads in the QEMU window — or on a real device on your network — instantly. See [Dev Mode](/guide/dev-mode.html) for the full tour, including the WebKit inspector for debugging the page running on the device.
+`strux dev` starts a Vite dev server (inside Docker, on port 5173) and points the device's browser at it. Edit anything under `frontend/` and the page hot-reloads in the QEMU window — or on a real device on your network — instantly. See [Dev Mode](/guide/dev-mode.md) for the full tour, including the WebKit inspector for debugging the page running on the device.
 
 ## Production serving
 
@@ -119,6 +119,6 @@ In a built image, your frontend is bundled by Vite and served by your own Go bac
 
 ## Where to go next
 
-- [Backend](/guide/backend.html) — the Go side of everything on this page.
-- [Dev Mode](/guide/dev-mode.html) — remote devices, the inspector, USB networking.
-- [Frontend API reference](/reference/frontend-api.html) — every injected global, exhaustively.
+- [Backend](/guide/backend.md) — the Go side of everything on this page.
+- [Dev Mode](/guide/dev-mode.md) — remote devices, the inspector, USB networking.
+- [Frontend API reference](/reference/frontend-api.md) — every injected global, exhaustively.

@@ -3,7 +3,7 @@
 A kiosk in the field needs a way to receive new software without someone driving out with an SD card. Strux ships an over-the-air (OTA) update system: you build a new image, sign it into a bundle, and push it to devices — which install it onto a spare copy of the OS and roll back automatically if it doesn't boot. This page walks through the whole workflow.
 
 ::: warning Experimental
-The update system is built on an A/B dual-rootfs layout that is **experimental and may change**. It also requires a BSP that implements the dual-rootfs partition conventions — the bundled QEMU BSP does not, so you need an update-capable BSP for your hardware. See [Update System](/concepts/update-system.html) for how it works and [Dual Rootfs](/bsp/concepts/dual-rootfs.html) for the BSP side. We're currently working on a native way to automatically push updates to devices and help you manage fleets of devices. If you're interested in this, please email [Strux Support](mailto:support@medeirosconsulting.ca).
+The update system is built on an A/B dual-rootfs layout that is **experimental and may change**. It also requires a BSP that implements the dual-rootfs partition conventions — the bundled QEMU BSP does not, so you need an update-capable BSP for your hardware. See [Update System](/concepts/update-system.md) for how it works and [Dual Rootfs](/bsp/concepts/dual-rootfs.md) for the BSP side. We're currently working on a native way to automatically push updates to devices and help you manage fleets of devices. If you're interested in this, please email [Strux Support](mailto:support@medeirosconsulting.ca).
 :::
 
 ## How it fits together
@@ -94,7 +94,7 @@ strux update send
 | `--server <url>` | Dev server URL. Defaults to `STRUX_DEV_SERVER_URL` or `http://127.0.0.1:8000`. |
 | `--key <key>` | Auth key. Defaults to `dev.server.client_key` from `strux.yaml`. |
 
-The dev server offers the bundle to the connected device over a one-time download URL; the device streams, verifies, and installs it, reporting progress back into the [dev mode](/guide/dev-mode.html) TUI. The command currently targets a single connected device — sending with multiple devices connected is not yet supported.
+The dev server offers the bundle to the connected device over a one-time download URL; the device streams, verifies, and installs it, reporting progress back into the [dev mode](/guide/dev-mode.md) TUI. The command currently targets a single connected device — sending with multiple devices connected is not yet supported.
 
 A `.struxb` bundle is just a file, and the device verifies it cryptographically regardless of where it came from — the dev server is simply the built-in delivery channel today.
 
@@ -110,10 +110,10 @@ You can also send updates to devices if they are connected to the ```strux dev -
 4. The bootloader environment is updated: the new slot is marked *pending* with a budget of 3 boot attempts, and the device reboots.
 5. If the new OS boots and the Strux client starts, the slot is marked *active* and the update is complete. If it never comes up, the bootloader exhausts the try counter and falls back to the previous OS automatically.
 
-Your frontend can observe all of this: the Go runtime exposes update progress and slot state under the `update` namespace of the generated API — see the [Go runtime reference](/reference/go-runtime.html).
+Your frontend can observe all of this: the Go runtime exposes update progress and slot state under the `update` namespace of the generated API — see the [Go runtime reference](/reference/go-runtime.md).
 
 ## Where to go next
 
-- [Update System](/concepts/update-system.html) — the bundle format, signing model, and A/B mechanics in depth.
-- [Dual Rootfs](/bsp/concepts/dual-rootfs.html) — what a BSP must implement to support updates.
-- [Flashing](/guide/flashing.html) — initial installation on new hardware.
+- [Update System](/concepts/update-system.md) — the bundle format, signing model, and A/B mechanics in depth.
+- [Dual Rootfs](/bsp/concepts/dual-rootfs.md) — what a BSP must implement to support updates.
+- [Flashing](/guide/flashing.md) — initial installation on new hardware.

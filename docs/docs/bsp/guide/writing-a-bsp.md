@@ -4,8 +4,8 @@ This guide walks you from an empty folder to a BSP that builds a flashable image
 
 ## Prerequisites
 
-- A working Strux project — if you don't have one, do [Getting Started](/guide/getting-started.html) first.
-- Read the [BSP introduction](/bsp/guide/introduction.html) so the vocabulary here (lifecycle steps, path shorthand) is familiar.
+- A working Strux project — if you don't have one, do [Getting Started](/guide/getting-started.md) first.
+- Read the [BSP introduction](/bsp/guide/introduction.md) so the vocabulary here (lifecycle steps, path shorthand) is familiar.
 - For the hardware layers: your board's documentation, and ideally a vendor Linux image that already boots — it tells you which kernel tree, device tree, and firmware blobs the board needs.
 
 ## 1. Start minimal
@@ -64,7 +64,7 @@ cp -a "$ROOTFS_DIR"/* /tmp/ext4mount/
 umount /tmp/ext4mount
 ```
 
-The script runs inside the `strux-builder` Docker container with your project mounted at `/project`. Strux injects environment variables so you never hard-code paths: `PROJECT_DIST_CACHE_FOLDER` is this BSP's cache (`dist/cache/<bsp>/`), `PROJECT_DIST_OUTPUT_FOLDER` is its output (`dist/output/<bsp>/`). Lines printed as `STRUX_PROGRESS: ...` show up as live status in the CLI. The full variable list is in [Environment Variables](/bsp/reference/environment-variables.html).
+The script runs inside the `strux-builder` Docker container with your project mounted at `/project`. Strux injects environment variables so you never hard-code paths: `PROJECT_DIST_CACHE_FOLDER` is this BSP's cache (`dist/cache/<bsp>/`), `PROJECT_DIST_OUTPUT_FOLDER` is its output (`dist/output/<bsp>/`). Lines printed as `STRUX_PROGRESS: ...` show up as live status in the CLI. The full variable list is in [Environment Variables](/bsp/reference/environment-variables.md).
 
 ### Build it
 
@@ -72,7 +72,7 @@ The script runs inside the `strux-builder` Docker container with your project mo
 strux build hd215-rk3576
 ```
 
-The first build is slow (it compiles the browser stack); after that the [cache](/concepts/caching.html) keeps rebuilds to seconds. When it finishes you have an image in `dist/output/hd215-rk3576/`. It won't boot the board yet — there's no board kernel and no bootloader — but the pipeline, your scripts, and the rootfs are now proven.
+The first build is slow (it compiles the browser stack); after that the [cache](/concepts/caching.md) keeps rebuilds to seconds. When it finishes you have an image in `dist/output/hd215-rk3576/`. It won't boot the board yet — there's no board kernel and no bootloader — but the pipeline, your scripts, and the rootfs are now proven.
 
 ## 2. Add packages
 
@@ -117,11 +117,11 @@ overlay/
 └── usr/lib/firmware/aic8800/...             # Vendor WiFi firmware files
 ```
 
-Note that the project also has its own overlay folder for app-level files; the BSP overlay is specifically for board-level files. See [Customizing the OS](/guide/customizing-the-os.html).
+Note that the project also has its own overlay folder for app-level files; the BSP overlay is specifically for board-level files. See [Customizing the OS](/guide/customizing-the-os.md).
 
 ## 4. Add lifecycle scripts
 
-`make_image` is just one of many hooks. Any script entry names a `step`, and Strux runs it at that point in the pipeline — `before_build`, `after_frontend`, `before_rootfs`, `after_bootloader`, and so on. The full list with execution order is in [Build Steps](/bsp/reference/build-steps.html), and the mechanics in [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html).
+`make_image` is just one of many hooks. Any script entry names a `step`, and Strux runs it at that point in the pipeline — `before_build`, `after_frontend`, `before_rootfs`, `after_bootloader`, and so on. The full list with execution order is in [Build Steps](/bsp/reference/build-steps.md), and the mechanics in [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md).
 
 The important feature to learn early is **script caching**. By default a script runs on every build. Declare what it produces and what it reads, and Strux skips it when nothing changed:
 
@@ -148,7 +148,7 @@ The rules, as implemented:
 
 - A script with no `cached_generated_artifacts` **always runs** — `depends_on` alone never enables skipping. The `make_image` example above is like that on purpose; if your script's output is expensive, declare its artifacts.
 - With `cached_generated_artifacts`, the script is **skipped** when every listed artifact exists, the script file itself is unchanged, and every `depends_on` hash is unchanged. `--clean` forces a run.
-- Paths resolve by prefix: `cache/...` → `dist/cache/<bsp>/...`, `output/...` → `dist/output/<bsp>/...`, `./...` → the BSP folder, anything else → `dist/`. Details in [Path Resolution](/bsp/reference/path-resolution.html).
+- Paths resolve by prefix: `cache/...` → `dist/cache/<bsp>/...`, `output/...` → `dist/output/<bsp>/...`, `./...` → the BSP folder, anything else → `dist/`. Details in [Path Resolution](/bsp/reference/path-resolution.md).
 
 `depends_on` can point at directories (like `./drivers/` above) — the whole tree is hashed.
 
@@ -175,12 +175,12 @@ Up to now the image uses the stock Debian kernel from the rootfs. Real boards al
 ```
 
 ::: tip What's a defconfig? What's a device tree?
-A **defconfig** is a named preset of kernel build options — `rockchip_linux_defconfig` is a file the Rockchip kernel tree ships in its `configs/` system that enables everything Rockchip SoCs need. A **device tree** (`.dts`) is a text file describing the board's hardware — which peripherals exist, at which addresses, on which pins — that the kernel reads at boot instead of probing. Both get a full treatment in [Custom Kernels](/bsp/guide/kernel.html).
+A **defconfig** is a named preset of kernel build options — `rockchip_linux_defconfig` is a file the Rockchip kernel tree ships in its `configs/` system that enables everything Rockchip SoCs need. A **device tree** (`.dts`) is a text file describing the board's hardware — which peripherals exist, at which addresses, on which pins — that the kernel reads at boot instead of probing. Both get a full treatment in [Custom Kernels](/bsp/guide/kernel.md).
 :::
 
 This single block makes the kernel step fetch the source (a git URL with an optional `#branch`, `#tag`, or `#commit` pin), apply your patches, configure with the defconfig plus your fragments, build the kernel image, modules, and device tree blob, and install everything to `dist/cache/<bsp>/kernel/`. Your `make_image` script picks the artifacts up from there.
 
-Build again and watch the kernel step run. Kernel iteration (menuconfig, fragments, cleaning) is covered in [Custom Kernels](/bsp/guide/kernel.html).
+Build again and watch the kernel step run. Kernel iteration (menuconfig, fragments, cleaning) is covered in [Custom Kernels](/bsp/guide/kernel.md).
 
 ## 6. Add a bootloader
 
@@ -211,18 +211,18 @@ The last layer is the **bootloader** — the program the board's ROM loads at po
           required: true
 ```
 
-New concepts here — `boot_method`, `boot_config`, and the vendor `blobs` (firmware binaries the SoC needs before U-Boot can even run) — are explained in [Bootloaders](/bsp/guide/bootloader.html). Boards whose vendor U-Boot needs a non-standard build (the Rockchip trees do) replace the built-in build with a `custom_bootloader` script instead of `type: u-boot`; the real `hd215-rk3576` BSP does exactly that, and the bootloader guide shows how.
+New concepts here — `boot_method`, `boot_config`, and the vendor `blobs` (firmware binaries the SoC needs before U-Boot can even run) — are explained in [Bootloaders](/bsp/guide/bootloader.md). Boards whose vendor U-Boot needs a non-standard build (the Rockchip trees do) replace the built-in build with a `custom_bootloader` script instead of `type: u-boot`; the real `hd215-rk3576` BSP does exactly that, and the bootloader guide shows how.
 
 With the bootloader built, your `make_image` script grows up too: instead of a bare ext4 file, it assembles a real partition table with the bootloader at the right offsets. The hardware BSPs use `genimage` (available in the builder container) with a config in `image/`, sized from the rootfs and driven by the artifacts in `cache/bootloader/`. Study `bsp/hd215-rk3576/scripts/make-image.sh` and `image/hd215-rk3576.genimage.cfg` as the reference.
 
 ## 7. Flash and iterate
 
-Add `flash_script_tool` and `flash_script` entries so `strux flash` can write the image to the board — see [Flash Scripts](/bsp/guide/flash-scripts.html). From there, bring-up is iterative: tweak the device tree or a kernel option, rebuild (the cache means only the kernel step reruns), reflash, watch the serial console.
+Add `flash_script_tool` and `flash_script` entries so `strux flash` can write the image to the board — see [Flash Scripts](/bsp/guide/flash-scripts.md). From there, bring-up is iterative: tweak the device tree or a kernel option, rebuild (the cache means only the kernel step reruns), reflash, watch the serial console.
 
 ## Where to go next
 
-- [Custom Kernels](/bsp/guide/kernel.html) — the kernel block in full depth.
-- [Bootloaders](/bsp/guide/bootloader.html) — types, boot methods, blobs, U-Boot device trees.
-- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.html) — every hook and how caching decides to skip.
-- [Runtime Extensions](/bsp/guide/runtime-extensions.html) — give your app APIs for the board's hardware.
-- [Example BSPs](/bsp/guide/examples.html) — the qemu, RK3576, and RK3288 BSPs annotated.
+- [Custom Kernels](/bsp/guide/kernel.md) — the kernel block in full depth.
+- [Bootloaders](/bsp/guide/bootloader.md) — types, boot methods, blobs, U-Boot device trees.
+- [Lifecycle Scripts](/bsp/concepts/lifecycle-scripts.md) — every hook and how caching decides to skip.
+- [Runtime Extensions](/bsp/guide/runtime-extensions.md) — give your app APIs for the board's hardware.
+- [Example BSPs](/bsp/guide/examples.md) — the qemu, RK3576, and RK3288 BSPs annotated.

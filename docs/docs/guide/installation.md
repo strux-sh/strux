@@ -1,6 +1,6 @@
 # Installation
 
-This page gets the `strux` CLI installed on your machine, along with the tools it needs. Five minutes, then you're ready for [Getting Started](/guide/getting-started.html).
+This page gets the `strux` CLI installed on your machine, along with the tools it needs. Five minutes, then you're ready for [Getting Started](/guide/getting-started.md).
 
 ## Prerequisites
 
@@ -90,6 +90,6 @@ You won't normally need either — if the registry pull fails (offline, rate-lim
 
 ## Where to go next
 
-- [Getting Started](/guide/getting-started.html) — scaffold a project and boot it in QEMU.
-- [Project Structure](/guide/project-structure.html) — what `strux init` actually creates.
-- [CLI Reference](/reference/cli.html) — every command and flag.
+- [Getting Started](/guide/getting-started.md) — scaffold a project and boot it in QEMU.
+- [Project Structure](/guide/project-structure.md) — what `strux init` actually creates.
+- [CLI Reference](/reference/cli.md) — every command and flag.

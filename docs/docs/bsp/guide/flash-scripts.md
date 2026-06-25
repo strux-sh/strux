@@ -16,9 +16,9 @@ When you run it, Strux:
 3. Runs every script registered with `step: flash_script_tool`, in order — a preparation hook for fetching or locating flashing tools.
 4. Runs every script registered with `step: flash_script`, in order — the actual flashing.
 
-If the BSP defines no `flash_script`, the command fails with `Not Available for this BSP` — the qemu BSP, for example, has nothing to flash (you [run it in QEMU](/guide/running-qemu.html) instead).
+If the BSP defines no `flash_script`, the command fails with `Not Available for this BSP` — the qemu BSP, for example, has nothing to flash (you [run it in QEMU](/guide/running-qemu.md) instead).
 
-Each script is executed with `/bin/bash` **on the host**, with the flash workspace as its working directory. Unlike [build-time lifecycle scripts](/bsp/concepts/lifecycle-scripts.html), there is no Docker container and no caching — flash scripts run every time, and all the path environment variables contain real host paths instead of `/project/...` container paths.
+Each script is executed with `/bin/bash` **on the host**, with the flash workspace as its working directory. Unlike [build-time lifecycle scripts](/bsp/concepts/lifecycle-scripts.md), there is no Docker container and no caching — flash scripts run every time, and all the path environment variables contain real host paths instead of `/project/...` container paths.
 
 ::: tip Host tools are your responsibility
 Because flash scripts run outside Docker, any tool they call (`rkdeveloptool`, `dd`, vendor flashers) must be installed on the developer's machine. Good flash scripts check for their tools and print an actionable error — that's exactly what the `flash_script_tool` hook is for.
@@ -36,7 +36,7 @@ The same context variables as build scripts (`BSP_NAME`, `HOST_ARCH`, `TARGET_AR
 | `FLASH_DIR` / `PROJECT_DIST_FLASH_FOLDER` | `dist/flash/{bsp}/` — the workspace, also the working directory |
 | `BSP_FOLDER` | `bsp/{bsp}/` — your blobs, configs, and scripts |
 
-The full list is in the [environment variables reference](/bsp/reference/environment-variables.html).
+The full list is in the [environment variables reference](/bsp/reference/environment-variables.md).
 
 Output is streamed through the same progress system as the build: `STRUX_PROGRESS: message` lines update the status, and `STRUX_PROGRESS_BAR: message (42%)` lines render a progress bar. Run with the global `--verbose` flag to see raw output instead.
 
@@ -112,6 +112,6 @@ A flash script runs with your user's privileges on your real machine, and writin
 
 ## Where to go next
 
-- [Flashing guide](/guide/flashing.html) — the app-developer view of `strux flash`.
-- [Lifecycle scripts](/bsp/concepts/lifecycle-scripts.html) — how the build-time scripts differ from flash scripts.
-- [BSP examples](/bsp/guide/examples.html) — the HD215 and HT109 BSPs both ship complete flash scripts to copy.
+- [Flashing guide](/guide/flashing.md) — the app-developer view of `strux flash`.
+- [Lifecycle scripts](/bsp/concepts/lifecycle-scripts.md) — how the build-time scripts differ from flash scripts.
+- [BSP examples](/bsp/guide/examples.md) — the HD215 and HT109 BSPs both ship complete flash scripts to copy.

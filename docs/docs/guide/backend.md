@@ -106,7 +106,7 @@ rt.On("video:play", func(data any) {
 })
 ```
 
-The frontend side is `strux.ipc.send` / `strux.ipc.on` — see the [Frontend guide](/guide/frontend.html#events).
+The frontend side is `strux.ipc.send` / `strux.ipc.on` — see the [Frontend guide](/guide/frontend.md#events).
 
 ## The built-in Strux services
 
@@ -123,13 +123,13 @@ Beyond your own app, the runtime registers system services that the frontend rea
 | WiFi | `strux.wifi` | Scan, connect, known networks, IP configuration |
 | Capabilities | `strux.capabilities` | `List()` and `Supports(name)` — discover what this device implements |
 
-Display, Network, and WiFi are **capability-based**: the service is the stable API, but the implementation comes from the BSP, which registers a provider (`runtime.RegisterDisplayProvider`, `RegisterNetworkProvider`, `RegisterWiFiProvider`). On hardware whose BSP hasn't registered a provider, those calls fail — so check `strux.capabilities.Supports("wifi")` before building UI around them. See [Runtime Extensions](/bsp/guide/runtime-extensions.html) for the BSP side.
+Display, Network, and WiFi are **capability-based**: the service is the stable API, but the implementation comes from the BSP, which registers a provider (`runtime.RegisterDisplayProvider`, `RegisterNetworkProvider`, `RegisterWiFiProvider`). On hardware whose BSP hasn't registered a provider, those calls fail — so check `strux.capabilities.Supports("wifi")` before building UI around them. See [Runtime Extensions](/bsp/guide/runtime-extensions.md) for the BSP side.
 
 ::: warning Experimental: the update system
-`strux.update` reports the state of Strux's A/B dual-rootfs update mechanism, which is experimental in v0.3.0 — the design may change. See [Updates](/guide/updates.html) and [Dual Rootfs](/bsp/concepts/dual-rootfs.html).
+`strux.update` reports the state of Strux's A/B dual-rootfs update mechanism, which is experimental in v0.3.0 — the design may change. See [Updates](/guide/updates.md) and [Dual Rootfs](/bsp/concepts/dual-rootfs.md).
 :::
 
-BSPs can also add entirely custom APIs under `window.strux.<name>` via `runtime.RegisterCustomExtension` — the [extension system](/bsp/concepts/extension-system.html) covers this.
+BSPs can also add entirely custom APIs under `window.strux.<name>` via `runtime.RegisterCustomExtension` — the [extension system](/bsp/concepts/extension-system.md) covers this.
 
 ## How the typed frontend API is generated
 
@@ -148,10 +148,10 @@ strux types
 
 ## Developing the backend
 
-In [dev mode](/guide/dev-mode.html), saving a Go file triggers a recompile, and the new binary is pushed to the running device or VM in seconds — no image rebuild. `log.Printf` output from your app streams straight into the dev TUI.
+In [dev mode](/guide/dev-mode.md), saving a Go file triggers a recompile, and the new binary is pushed to the running device or VM in seconds — no image rebuild. `log.Printf` output from your app streams straight into the dev TUI.
 
 ## Where to go next
 
-- [Frontend](/guide/frontend.html) — calling all of this from the browser.
-- [Go runtime reference](/reference/go-runtime.html) — the full `pkg/runtime` API.
-- [Runtime Extensions](/bsp/guide/runtime-extensions.html) — implementing Display/Network/WiFi providers or custom APIs in a BSP.
+- [Frontend](/guide/frontend.md) — calling all of this from the browser.
+- [Go runtime reference](/reference/go-runtime.md) — the full `pkg/runtime` API.
+- [Runtime Extensions](/bsp/guide/runtime-extensions.md) — implementing Display/Network/WiFi providers or custom APIs in a BSP.
