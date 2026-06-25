@@ -424,6 +424,9 @@ progress "Copying Systemd Services..."
 # Copy the Strux Service
 cp "$PROJECT_DIR/dist/artifacts/systemd/strux.service" "$ROOTFS_DIR/etc/systemd/system/strux.service"
 
+# Copy the USB debug Ethernet service (dev-mode only; gated by ConditionPathExists)
+cp "$PROJECT_DIR/dist/artifacts/systemd/strux-usbnet.service" "$ROOTFS_DIR/etc/systemd/system/strux-usbnet.service"
+
 # Copy the Network Service Unit
 cp "$PROJECT_DIR/dist/artifacts/systemd/strux-network.service" "$ROOTFS_DIR/etc/systemd/system/strux-network.service"
 
@@ -614,6 +617,10 @@ progress "Enabling systemd services..."
 run_in_chroot "systemctl enable seatd.service || true"
 run_in_chroot "systemctl enable dbus.service || true"
 run_in_chroot "systemctl enable strux.service || true"
+# USB debug Ethernet: enabled unconditionally, but its ConditionPathExists on
+# /strux/.dev-env.json means it only actually starts in dev mode. Runs as its
+# own service so it survives `systemctl stop strux`.
+run_in_chroot "systemctl enable strux-usbnet.service || true"
 run_in_chroot "systemctl enable strux-network.service || true"
 
 

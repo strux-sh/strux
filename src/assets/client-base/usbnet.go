@@ -14,8 +14,10 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
@@ -64,6 +66,43 @@ type USBNetManager struct {
 
 func NewUSBNetManager() *USBNetManager {
 	return &USBNetManager{logger: NewLogger("USBNet")}
+}
+
+// RunUSBNetDaemon is the entry point for `client --usbnet`, run by the
+// standalone strux-usbnet.service. It brings up the USB debug Ethernet gadget
+// and serves DHCP for the lifetime of the process - intentionally decoupled
+// from the main Strux service so the debug link survives `systemctl stop strux`
+// and application crashes. It tears the gadget down and exits only on
+// SIGTERM/SIGINT, i.e. when strux-usbnet itself is stopped (which is what
+// disabling dev mode does).
+func RunUSBNetDaemon() {
+	logger := NewLogger("USBNet")
+
+	config, err := LoadConfig("/strux/.dev-env.json")
+	if err != nil {
+		logger.Info("Dev mode not active (%v); USB debug Ethernet not started", err)
+		return
+	}
+	if !config.USB.IsEnabled() {
+		logger.Info("USB debug Ethernet disabled by config; nothing to do")
+		return
+	}
+
+	manager := NewUSBNetManager()
+	netConfig, err := manager.Setup(config.USB)
+	if err != nil {
+		logger.Error("USB debug Ethernet setup failed: %v", err)
+		os.Exit(1)
+	}
+
+	logger.Info("USB debug Ethernet active; serving until stopped")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	<-sigCh
+
+	manager.Cleanup(netConfig)
+	logger.Info("USB debug Ethernet torn down")
 }
 
 func (m *USBNetManager) Cleanup(config usbNetConfig) {

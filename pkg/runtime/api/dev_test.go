@@ -79,11 +79,16 @@ func TestDevServiceApplySetEnabledAndReadState(t *testing.T) {
 func TestDevServiceApplyAndRestartSchedulesRestart(t *testing.T) {
 	tempDir := t.TempDir()
 	restarted := make(chan struct{}, 1)
+	usbStates := make(chan bool, 1)
 	methods := &DevService{
 		activeConfigPath:   filepath.Join(tempDir, ".dev-env.json"),
 		disabledConfigPath: filepath.Join(tempDir, ".dev-env.json.disabled"),
 		restart: func() error {
 			restarted <- struct{}{}
+			return nil
+		},
+		setUSBNet: func(enabled bool) error {
+			usbStates <- enabled
 			return nil
 		},
 	}
@@ -99,6 +104,16 @@ func TestDevServiceApplyAndRestartSchedulesRestart(t *testing.T) {
 	case <-restarted:
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected restart callback to be invoked")
+	}
+
+	// The USB debug service should be synced to the enabled state.
+	select {
+	case enabled := <-usbStates:
+		if !enabled {
+			t.Fatal("expected USB debug service to be started when dev mode enabled")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected USB debug sync to be invoked")
 	}
 }
 

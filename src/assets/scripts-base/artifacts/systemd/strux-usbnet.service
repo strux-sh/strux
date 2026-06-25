@@ -1,0 +1,19 @@
+[Unit]
+Description=Strux USB Debug Ethernet
+# Dev mode only: the active dev config must be present. Production images never
+# expose the gadget.
+ConditionPathExists=/strux/.dev-env.json
+After=sys-kernel-config.mount
+# Bring the link up before the kiosk/dev client tries to discover over it, but
+# do NOT bind the lifecycle to strux.service - this must survive
+# `systemctl stop strux` and app crashes so the debug link stays alive.
+Before=strux.service
+
+[Service]
+Type=simple
+ExecStart=/strux/client --usbnet
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

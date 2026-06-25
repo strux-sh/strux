@@ -28,6 +28,14 @@ var devConnectImage []byte
 const devConnectImagePath = "/tmp/strux-dev-connect.png"
 
 func main() {
+	// `client --usbnet` runs the standalone USB debug Ethernet daemon
+	// (strux-usbnet.service), independent of the main kiosk/dev client so the
+	// debug link survives `systemctl stop strux` and app crashes.
+	if len(os.Args) > 1 && os.Args[1] == "--usbnet" {
+		RunUSBNetDaemon()
+		return
+	}
+
 	logger := NewLogger("Main")
 	logger.Info("Starting Strux Client (v%s)...", Version)
 
@@ -68,23 +76,16 @@ func main() {
 		devStatusCageStarted = true
 	}
 
-	usbDevEnabled := false
-	usbManager := NewUSBNetManager()
-	var usbNetConfig usbNetConfig
-	defer func() {
-		if usbDevEnabled {
-			usbManager.Cleanup(usbNetConfig)
-		}
-	}()
-	if config.USB.IsEnabled() {
-		logger.Info("Configuring USB debug Ethernet...")
-		var err error
-		usbNetConfig, err = usbManager.Setup(config.USB)
-		if err != nil {
-			logger.Warn("USB debug Ethernet setup failed: %v", err)
-			logger.Warn("Continuing with non-USB dev discovery")
+	// The USB debug gadget itself is owned by the standalone strux-usbnet.service
+	// (so it survives `systemctl stop strux`). Here we only prefer the USB host
+	// for dev-server discovery - a pure function of the configured subnet, with
+	// no gadget side effects.
+	usbDevEnabled := config.USB.IsEnabled()
+	if usbDevEnabled {
+		if usbNetConfig, err := fixedUSBNetConfig(config.USB); err != nil {
+			logger.Warn("USB debug Ethernet config invalid: %v", err)
+			usbDevEnabled = false
 		} else {
-			usbDevEnabled = true
 			preferUSBDevHost(config, usbNetConfig)
 		}
 	} else {

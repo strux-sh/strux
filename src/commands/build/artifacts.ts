@@ -40,6 +40,8 @@ import runCogScript from "../../assets/scripts-base/artifacts/scripts/strux-run-
 // @ts-ignore
 import systemdStruxService from "../../assets/scripts-base/artifacts/systemd/strux.service" with { type: "text" }
 // @ts-ignore
+import systemdUsbnetService from "../../assets/scripts-base/artifacts/systemd/strux-usbnet.service" with { type: "text" }
+// @ts-ignore
 import systemdNetworkService from "../../assets/scripts-base/artifacts/systemd/strux-network.service" with { type: "text" }
 // @ts-ignore
 import systemdEthernetNetwork from "../../assets/scripts-base/artifacts/systemd/20-ethernet.network" with { type: "text" }
@@ -223,6 +225,9 @@ export async function copySystemdServices(): Promise<void> {
 
     if (!fileExists(join(systemdDir, "strux.service"))) {
         await Bun.write(join(systemdDir, "strux.service"), systemdStruxService)
+    }
+    if (!fileExists(join(systemdDir, "strux-usbnet.service"))) {
+        await Bun.write(join(systemdDir, "strux-usbnet.service"), systemdUsbnetService)
     }
     if (!fileExists(join(systemdDir, "strux-network.service"))) {
         await Bun.write(join(systemdDir, "strux-network.service"), systemdNetworkService)

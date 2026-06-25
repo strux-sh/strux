@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0
+
+### Minor Changes
+
+- The USB debug Ethernet gadget now runs as a standalone `strux-usbnet.service` instead of being set up inside the main Strux client process. Previously the gadget and its DHCP responder lived in the dev-mode client and were torn down by a `defer Cleanup()` on exit, so `systemctl stop strux` — or any client crash — dropped the USB link and killed an in-progress SSH session. The gadget setup and DHCP responder now run in their own process (`client --usbnet`), launched by a dedicated systemd unit that is intentionally not lifecycle-bound to `strux.service`, so the debug network survives stopping or restarting the kiosk and reconnects cleanly. The service is gated to dev mode with `ConditionPathExists=/strux/.dev-env.json` (production images never expose the gadget), and the `strux.dev` runtime API now starts/stops it as dev mode is toggled at runtime (via `RestartService`/`ApplyAndRestart`), so its lifecycle tracks dev-mode state without a reflash. The main client no longer touches the gadget — it only prefers the USB host for dev-server discovery — which also removes the previous double-setup path.
+
 ## v0.3.0
 
 ### New: Revamped Dev TUI
