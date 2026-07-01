@@ -10,6 +10,10 @@
     {
       "branch": "feature/v0.3.0",
       "path": "/strux/preview/v0.3.0/"
+    },
+    {
+      "branch": "feature/v0.4.0",
+      "path": "/strux/preview/v0.4.0/"
     }
   ]
 }
