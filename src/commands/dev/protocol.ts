@@ -145,11 +145,22 @@ const PROTOCOLS: Record<string, ProtocolMapping> = {
 
     },
 
+    // v0.4.0 — same wire format as v0.3.0 (canonical). Declared so v0.4.0 devices
+    // are recognized as first-class rather than falling back to the latest entry.
+    "0.4.0": {
+
+        send: {},
+        receive: {},
+        transformReceive: {},
+        transformSend: {},
+
+    },
+
 }
 
 
 // The latest protocol version
-export const LATEST_PROTOCOL_VERSION = "0.3.0"
+export const LATEST_PROTOCOL_VERSION = "0.4.0"
 
 // Fallback when no version is sent (legacy clients)
 export const FALLBACK_PROTOCOL_VERSION = "0.2.0"

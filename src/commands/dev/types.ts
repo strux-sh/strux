@@ -31,13 +31,17 @@ interface ClientMessageComponentArchiveAck { type: "component-archive-ack", payl
 
 // Device Information
 interface DeviceInfoInspectorPort { path: string, port: number }
-interface DeviceInfoOutputInfo { name: string, label?: string }
+export interface DeviceInfoOutputInfo { name: string, label?: string }
 interface ClientMessageDeviceInfo { type: "device-info", payload: { ip: string, inspectorPorts: DeviceInfoInspectorPort[], outputs?: DeviceInfoOutputInfo[], version?: string }}
 interface ClientMessageDeviceInfoRequested { type: "device-info-requested" }
 
 // Screen
 interface ClientMessageScreenRequest { type: "screen-request", payload: { outputName: string, serverHostURL: string }}
+interface ClientMessageScreenStop { type: "screen-stop", payload: { outputName: string }}
 interface ClientMessageScreenPicture { type: "screen-picture", payload: { outputName: string }}
+interface ClientMessageScreenReady { type: "screen-ready", payload: { outputName: string, width: number, height: number, encoder: string, fps: number }}
+interface ClientMessageScreenStopped { type: "screen-stopped", payload: { outputName: string }}
+interface ClientMessageScreenError { type: "screen-error", payload: { outputName: string, error: string }}
 interface ClientMessageScreenPictureReceived { type: "screen-picture-received", payload: { outputName: string, data: string, width: number, height: number }}
 
 // Update
@@ -71,6 +75,7 @@ export type ClientMessageSendable = |
     ClientMessageComponentArchive |
     ClientMessageDeviceInfoRequested |
     ClientMessageScreenRequest |
+    ClientMessageScreenStop |
     ClientMessageUpdate |
     ClientMessageSystemUpdate |
     ClientMessageUpdateStatus |
@@ -97,22 +102,100 @@ export type ClientMessageReceivable = |
     ClientMessageUpdateCheckRequest |
     ClientMessageSSHOutput |
     ClientMessageSSHExitReceived |
+    ClientMessageScreenReady |
+    ClientMessageScreenStopped |
+    ClientMessageScreenError |
     ClientMessageScreenPictureReceived
 
 
 // ------------------
-// Screen Websocket Server Messages
+// Screen Websocket Server Messages  (device <-> dev server, /ws/screen)
+//
+// device -> server:  binary H.264 frames (ArrayBuffer)
+// server -> device:  input-injection events (JSON), relayed from the web-ui.
+//                    Lights up once the device-side wlr virtual-input client
+//                    (Phase 2) parses them; harmless until then.
+//
+// Pointer coordinates are normalized 0..1 within the named output. Button
+// codes are Linux evdev codes (BTN_LEFT=0x110, ...). Keyboard codes are evdev
+// keycodes (evdev = xkb - 8). All events are keyed by outputName so each
+// display gets its own virtual pointer/keyboard target.
 // -----------------
 type ScreenMessageScreenFrame = ArrayBuffer
-interface ScreenMessageScreenRegister { type: "screen-register", payload: { outputName: string }}
-interface ScreenMessageKeyboardInput { type: "screen-keyboard-input", payload: { outputName: string, data: string }}
-interface ScreenMessageMouseInput { type: "screen-mouse-input", payload: { outputName: string, data: string }}
 
-export type ScreenMessageSendable = |
-    ScreenMessageKeyboardInput |
-    ScreenMessageMouseInput
+interface ScreenMessageInputPointerMotion { type: "input-pointer-motion", payload: { outputName: string, x: number, y: number }}
+interface ScreenMessageInputPointerButton { type: "input-pointer-button", payload: { outputName: string, button: number, pressed: boolean }}
+interface ScreenMessageInputPointerAxis { type: "input-pointer-axis", payload: { outputName: string, axis: "vertical" | "horizontal", value: number }}
+interface ScreenMessageInputKeyboardKey { type: "input-keyboard-key", payload: { outputName: string, keycode: number, pressed: boolean }}
+interface ScreenMessageInputKeyboardModifiers { type: "input-keyboard-modifiers", payload: { outputName: string, depressed: number, latched: number, locked: number, group: number }}
+
+export type ScreenInputMessage =
+    ScreenMessageInputPointerMotion |
+    ScreenMessageInputPointerButton |
+    ScreenMessageInputPointerAxis |
+    ScreenMessageInputKeyboardKey |
+    ScreenMessageInputKeyboardModifiers
+
+export type ScreenMessageSendable =
+    ScreenInputMessage
 
 
 export type ScreenMessageReceivable = |
-    ScreenMessageScreenFrame |
-    ScreenMessageScreenRegister
+    ScreenMessageScreenFrame
+
+
+// ------------------
+// Web UI Websocket Server Messages  (browser <-> dev server, /devtool/ws)
+//
+// The Vue dev tool connects here. The dev server is the only hub: it relays
+// frames + device events down to the browser, and browser commands + input
+// back up to the device. The browser never connects to the device directly.
+//
+// Binary H.264 frames are pushed to the browser out-of-band (broadcastBinary),
+// so they are not part of the typed union below.
+// -----------------
+
+// Dashboard data shapes (server -> browser)
+export type DevBuildState = "building" | "idle"
+export interface DeviceStatus { connected: boolean, ip?: string, version?: string, arch?: string, bspName?: string }
+export interface DashboardLogLine { source: string, line: string, timestamp: string }
+
+// server -> browser
+interface WebUIMessageOutputsAvailable { type: "outputs-available", payload: { outputs: DeviceInfoOutputInfo[] }}
+interface WebUIMessageScreenReady { type: "screen-ready", payload: { outputName: string, width: number, height: number, encoder: string, fps: number }}
+interface WebUIMessageScreenStopped { type: "screen-stopped", payload: { outputName: string }}
+interface WebUIMessageScreenError { type: "screen-error", payload: { outputName: string, error: string }}
+interface WebUIMessageScreenshotResult { type: "screen-screenshot-result", payload: { outputName: string, data: string, width: number, height: number }}
+interface WebUIMessageDeviceDisconnected { type: "device-disconnected" }
+interface WebUIMessageDeviceStatus { type: "device-status", payload: DeviceStatus }
+interface WebUIMessageLogLine { type: "log-line", payload: DashboardLogLine }
+interface WebUIMessageLogBacklog { type: "log-backlog", payload: { lines: DashboardLogLine[] }}
+interface WebUIMessageBuildStatus { type: "build-status", payload: { state: DevBuildState, label?: string }}
+
+// browser -> server
+interface WebUIMessageStartStream { type: "start-stream", payload: { outputName: string }}
+interface WebUIMessageStopStream { type: "stop-stream", payload: { outputName: string }}
+interface WebUIMessageScreenshot { type: "screenshot", payload: { outputName: string }}
+interface WebUIMessageDeviceReboot { type: "device-reboot" }
+interface WebUIMessageDeviceRestartStrux { type: "device-restart-strux" }
+
+export type WebUIMessageSendable = |
+    WebUIMessageOutputsAvailable |
+    WebUIMessageScreenReady |
+    WebUIMessageScreenStopped |
+    WebUIMessageScreenError |
+    WebUIMessageScreenshotResult |
+    WebUIMessageDeviceDisconnected |
+    WebUIMessageDeviceStatus |
+    WebUIMessageLogLine |
+    WebUIMessageLogBacklog |
+    WebUIMessageBuildStatus
+
+
+export type WebUIMessageReceivable = |
+    WebUIMessageStartStream |
+    WebUIMessageStopStream |
+    WebUIMessageScreenshot |
+    WebUIMessageDeviceReboot |
+    WebUIMessageDeviceRestartStrux |
+    ScreenInputMessage

@@ -5,6 +5,149 @@
 export const STRUX_RUNTIME_TYPES = {
   "extensions": {
     "strux": {
+      "audio": {
+        "methods": [
+          {
+            "name": "GetState",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "AudioState",
+                "tsType": "StruxRuntime.AudioState"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "ListOutputs",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "[]AudioOutput",
+                "tsType": "StruxRuntime.AudioOutput[]"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "SetVolume",
+            "params": [
+              {
+                "name": "percent",
+                "goType": "int",
+                "tsType": "number"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "SetMuted",
+            "params": [
+              {
+                "name": "muted",
+                "goType": "bool",
+                "tsType": "boolean"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "SetOutput",
+            "params": [
+              {
+                "name": "id",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "SetAutoSwitch",
+            "params": [
+              {
+                "name": "enabled",
+                "goType": "bool",
+                "tsType": "boolean"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "AutoSwitch",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "bool",
+                "tsType": "boolean"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "ListInputs",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "[]AudioInput",
+                "tsType": "StruxRuntime.AudioInput[]"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "SetInput",
+            "params": [
+              {
+                "name": "id",
+                "goType": "string",
+                "tsType": "string"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "GetCaptureState",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "CaptureState",
+                "tsType": "StruxRuntime.CaptureState"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "SetInputVolume",
+            "params": [
+              {
+                "name": "percent",
+                "goType": "int",
+                "tsType": "number"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          },
+          {
+            "name": "SetInputMuted",
+            "params": [
+              {
+                "name": "muted",
+                "goType": "bool",
+                "tsType": "boolean"
+              }
+            ],
+            "returnTypes": [],
+            "hasError": true
+          }
+        ]
+      },
       "boot": {
         "methods": [
           {
@@ -705,6 +848,90 @@ export const STRUX_RUNTIME_TYPES = {
     }
   },
   "structs": {
+    "AudioInput": {
+      "fields": [
+        {
+          "name": "id",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "kind",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "label",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "available",
+          "goType": "bool",
+          "tsType": "boolean"
+        }
+      ]
+    },
+    "AudioOutput": {
+      "fields": [
+        {
+          "name": "id",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "kind",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "label",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "available",
+          "goType": "bool",
+          "tsType": "boolean"
+        }
+      ]
+    },
+    "AudioState": {
+      "fields": [
+        {
+          "name": "volume",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "muted",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "activeOutput",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "outputs",
+          "goType": "[]AudioOutput",
+          "tsType": "AudioOutput[]"
+        },
+        {
+          "name": "autoSwitch",
+          "goType": "*bool",
+          "tsType": "boolean",
+          "optional": true
+        },
+        {
+          "name": "capture",
+          "goType": "*CaptureState",
+          "tsType": "CaptureState",
+          "optional": true
+        }
+      ]
+    },
     "CapabilityInfo": {
       "fields": [
         {
@@ -736,6 +963,35 @@ export const STRUX_RUNTIME_TYPES = {
           "name": "methods",
           "goType": "[]MethodSpec",
           "tsType": "MethodSpec[]"
+        },
+        {
+          "name": "events",
+          "goType": "[]EventSpec",
+          "tsType": "EventSpec[]"
+        },
+        {
+          "name": "features",
+          "goType": "[]FeatureInfo",
+          "tsType": "FeatureInfo[]"
+        }
+      ]
+    },
+    "CaptureState": {
+      "fields": [
+        {
+          "name": "volume",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "muted",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "activeInput",
+          "goType": "string",
+          "tsType": "string"
         }
       ]
     },
@@ -986,6 +1242,54 @@ export const STRUX_RUNTIME_TYPES = {
           "name": "transform",
           "goType": "*OutputTransform",
           "tsType": "string"
+        }
+      ]
+    },
+    "EventSpec": {
+      "fields": [
+        {
+          "name": "name",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "description",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "payload",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "FeatureInfo": {
+      "fields": [
+        {
+          "name": "name",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "description",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "available",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "methods",
+          "goType": "[]MethodSpec",
+          "tsType": "MethodSpec[]"
+        },
+        {
+          "name": "events",
+          "goType": "[]EventSpec",
+          "tsType": "EventSpec[]"
         }
       ]
     },

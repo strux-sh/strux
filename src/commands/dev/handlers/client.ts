@@ -9,7 +9,7 @@ import { join } from "path"
 import { Settings } from "../../../settings"
 import { Logger } from "../../../utils/log"
 import { DevServer } from "../index"
-import type { ClientMessageSendable, ClientMessageReceivable } from "../types"
+import type { ClientMessageSendable, ClientMessageReceivable, WebUIMessageSendable, WebUIMessageReceivable } from "../types"
 import type { Socket } from "../socket-manager"
 import type { ResourceName } from "../ui/App"
 
@@ -17,6 +17,9 @@ import type { ResourceName } from "../ui/App"
 export function registerClientHandlers(client: Socket<ClientMessageSendable, ClientMessageReceivable>): void {
 
     const dev = DevServer.getInstance()
+
+    // The web-ui relay: device screen events are forwarded down to viewers here.
+    const webui = () => dev.sockets.get<WebUIMessageSendable, WebUIMessageReceivable>("webui")
     let lastLoggedUpdateStatus = ""
     let lastLoggedUpdateBucket = -1
 
@@ -24,6 +27,7 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
     // Connection lifecycle
     client.onConnect((_ws) => {
         Logger.info("Client connected")
+        dev.setDeviceStatus({ connected: true, bspName: Settings.bspName ?? undefined, arch: Settings.targetArch })
         dev.ui.store.updateStatus("device", "connected")
         dev.ui.store.updateStatus("device:app", "running")
         dev.ui.store.updateStatus("device:cage", "running")
@@ -47,6 +51,11 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
         dev.ui.store.updateStatus("device:client", "stopped")
         dev.ui.store.setDeviceIP(undefined)
         dev.ui.store.clearSystemUpdateProgress()
+
+        // Tell viewers the device is gone and drop the cached outputs.
+        dev.deviceOutputs = []
+        dev.setDeviceStatus({ connected: false, ip: undefined, version: undefined })
+        webui().broadcast({ type: "device-disconnected" })
     })
 
 
@@ -68,6 +77,7 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
             message: payload.line,
             timestamp: Date.now(),
         })
+        dev.pushDashboardLog({ source: payload.type, line: payload.line, timestamp: payload.timestamp })
     })
 
 
@@ -79,6 +89,19 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
             inspectorPorts: payload.inspectorPorts,
             outputs: payload.outputs,
             version: payload.version,
+        })
+
+        // Cache outputs and push them to any connected viewers.
+        dev.deviceOutputs = payload.outputs ?? []
+        webui().broadcast({ type: "outputs-available", payload: { outputs: dev.deviceOutputs } })
+
+        // Update the dashboard device card.
+        dev.setDeviceStatus({
+            connected: true,
+            ip: payload.ip,
+            version: payload.version,
+            bspName: Settings.bspName ?? undefined,
+            arch: Settings.targetArch,
         })
     })
 
@@ -176,9 +199,23 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
     })
 
 
-    // Screen
+    // Screen — forward device stream events down to the web-ui viewers.
+    client.on("screen-ready", (payload, _ws) => {
+        webui().broadcast({ type: "screen-ready", payload })
+    })
+
+    client.on("screen-stopped", (payload, _ws) => {
+        webui().broadcast({ type: "screen-stopped", payload })
+    })
+
+    client.on("screen-error", (payload, _ws) => {
+        Logger.warning(`Screen error on ${payload.outputName}: ${payload.error}`)
+        webui().broadcast({ type: "screen-error", payload })
+    })
+
     client.on("screen-picture-received", (payload, _ws) => {
-        // TODO: Forward screenshot to UI
+        // Device emits "screen-picture-received"; viewers expect "screen-screenshot-result".
+        webui().broadcast({ type: "screen-screenshot-result", payload })
     })
 
 

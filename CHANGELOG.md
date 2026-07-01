@@ -2,9 +2,43 @@
 
 ## v0.4.0
 
+### Breaking Changes
+
+- **`dist/artifacts/` is now fully derived build state, regenerated from the embedded assets on every build.** Previously these files (init/lifecycle scripts, systemd units, plymouth theme, and the cage/client/wpe/screen source trees) were written **write-once** and then treated as user-editable. That model was the source of a whole class of silent breakage: a CLI fix to `strux.sh`, or a newly added file (e.g. `strux-usbnet.service` in this release), would never reach an existing project because the stale local copy shadowed it — and the separate "restore artifacts" path enumerated the set independently, so the two drifted. The directory is now wiped and rewritten from a single manifest each build, so it always matches the running CLI. **Any manual edits to `dist/artifacts/` will be overwritten** — move customization to the overlay mechanism (`overlay/`, `bsp/<bsp>/overlay/`) or `strux.yaml`. A future `eject`/`integrate` flow will support source customization via generated patches.
+
+### Major Changes
+
+#### New: Runtime Capability Extension System
+
+The Go runtime now has a first-class system for BSPs to plug board-specific implementations into standard Strux APIs, exposed to the frontend as `window.strux.<namespace>.*`. Each capability is three pieces: a **Contract** (the interface a BSP implements), a **Capability** (the registration socket — one provider per board), and a **Service** (the app-facing surface that validates input and returns a clean "unsupported" error when no BSP provides the capability). Network, Wi-Fi, and display use this system, and a new **`strux.audio`** capability (master volume, mute, and output routing, with optional auto-switching and microphone capture) ships as the worked example.
+
+**Typed events:** capabilities push live updates to the frontend over a per-service channel (e.g. `strux.audio.on("changed", …)`), separate from the app's own `strux.ipc` bus. The event surface is a typed Go interface, so a BSP can only emit declared events with the correct payload, and events are now described in `strux.capabilities` alongside methods.
+
+**Two lifecycle hooks** drive a capability that owns hardware or a background loop:
+- `Start(ctx, events) error` — one-time setup, then the change-monitor loop until the context is cancelled. Returning an error before then signals a setup failure (the app keeps running).
+- `Stop(ctx) error` — deadline-bounded teardown on shutdown, e.g. muting amplifiers before power is cut. The runtime tears services down in reverse registration order within a shared grace period.
+
+See `pkg/runtime/README.md` for the implementer's guide.
+
+#### New: Optional Capability Features
+
+A capability can now declare **optional features** — named method groups a BSP *may* implement on top of the mandatory contract, detected at runtime instead of forced on every board. A provider opts in simply by satisfying the feature's Go interface (no registration call, no flag); the framework reports per-feature availability in `strux.capabilities` (each feature carries an `available` flag computed from the active provider), and a call to a feature the board doesn't implement returns a structured "unsupported feature" error, distinct from "capability absent". This lets one API stay agnostic across boards with very different hardware without BSPs stubbing controls they can't back.
+
+`strux.audio` is the worked example: master volume, mute, and output routing are mandatory, while **auto-switching** (automatic speaker/headphone routing on jack insertion) and **capture** (microphone enumeration, selection, volume, and mute) are optional features a board advertises only if its hardware supports them. Feature-specific state is composed into the audio snapshot by the framework — on both the pulled state and the pushed `changed` event — and omitted entirely on boards that lack the feature, so the frontend can show or hide controls from one consistent payload. See the "Optional features" section of `pkg/runtime/README.md` for the implementer's checklist.
+
+#### New: BSP ↔ Strux Version Compatibility
+
+The CLI and runtime ship in tandem, and the build now keeps them in lockstep:
+- On every build, the project's `go.mod` Strux runtime version is pinned to the running CLI's version (logged when it changes), so a project always compiles against the runtime matching its CLI.
+- A new per-extension `compatible_strux_api` key in `bsp.yaml` gates an individual runtime extension to specific Strux API versions (e.g. `compatible_strux_api: ["0.4"]`). Extensions incompatible with the runtime being built are skipped — and the decision is logged — instead of failing to compile. This lets one BSP carry version-specific implementations of a capability (e.g. `runtime/v0.3/audio` and `runtime/v0.4/audio`, selected automatically by version) and support multiple Strux releases from a single source tree.
+
 ### Minor Changes
 
 - The USB debug Ethernet gadget now runs as a standalone `strux-usbnet.service` instead of being set up inside the main Strux client process. Previously the gadget and its DHCP responder lived in the dev-mode client and were torn down by a `defer Cleanup()` on exit, so `systemctl stop strux` — or any client crash — dropped the USB link and killed an in-progress SSH session. The gadget setup and DHCP responder now run in their own process (`client --usbnet`), launched by a dedicated systemd unit that is intentionally not lifecycle-bound to `strux.service`, so the debug network survives stopping or restarting the kiosk and reconnects cleanly. The service is gated to dev mode with `ConditionPathExists=/strux/.dev-env.json` (production images never expose the gadget), and the `strux.dev` runtime API now starts/stops it as dev mode is toggled at runtime (via `RestartService`/`ApplyAndRestart`), so its lifecycle tracks dev-mode state without a reflash. The main client no longer touches the gadget — it only prefers the USB host for dev-server discovery — which also removes the previous double-setup path.
+
+### Bug Fixes
+
+- `strux dev` no longer falls back to production mode when the versioned builder image isn't published. The Vite dev server container was launched directly from `ghcr.io/strux-sh/strux-builder:<version>`, so on an unreleased version (e.g. a `0.4.0` dev build, before the image is pushed to GHCR) `docker run` failed with "image not found", nothing bound port `5173`, and the on-device client hit `connection refused` on the dev server — timing out and falling back to production while sitting on the dev connection splash. Vite now prepares the image the same way the build pipeline does (`Runner.prepareDockerImage()`: pull and tag as `strux-builder`, or build locally from the embedded Dockerfile when the version isn't published) and runs the local `strux-builder` tag, so dev mode works on unreleased versions without a published builder image.
 
 ## v0.3.0
 

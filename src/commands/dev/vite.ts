@@ -7,6 +7,7 @@
  */
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
+import { Runner } from "../../utils/run"
 import type { Subprocess } from "bun"
 
 
@@ -24,12 +25,18 @@ export class ViteManager {
 
     private process: Subprocess | null = null
     private containerName = "strux-vite-dev"
+    private stopping = false
 
     onOutput: ((line: string) => void) | null = null
+    // Fired when the Vite process exits without an explicit stop() — e.g. the
+    // container fails to launch or the dev server crashes. Lets the TUI flip the
+    // Vite status to "error" instead of leaving it green.
+    onExit: ((code: number | null) => void) | null = null
 
 
     async start(): Promise<void> {
 
+        this.stopping = false
         Logger.info("Starting Vite dev server...")
 
         // Clean up any leftover container from a previous crash
@@ -54,10 +61,32 @@ export class ViteManager {
         // Stream stdout/stderr
         this.streamOutput()
 
+        // Watch for an unexpected exit (e.g. the builder image is missing, the
+        // container fails to launch, or the dev server crashes) so the TUI can
+        // show it failed rather than leaving the status green.
+        this.watchExit()
+
+    }
+
+
+    private watchExit(): void {
+
+        const proc = this.process
+        if (!proc) return
+
+        void proc.exited.then((code) => {
+            if (this.stopping) return
+            this.process = null
+            this.emit(`Vite dev server exited unexpectedly (exit code ${code})`)
+            this.onExit?.(code)
+        })
+
     }
 
 
     stop(): void {
+
+        this.stopping = true
 
         if (this.process) {
 
@@ -93,6 +122,13 @@ export class ViteManager {
 
         const projectPath = process.cwd()
 
+        // Ensure the local "strux-builder" image exists before running it. The
+        // dev startup does not otherwise prepare it before Vite starts, and
+        // (unlike a versioned GHCR tag) a local tag is never auto-pulled by
+        // `docker run`. prepareDockerImage pulls+tags the published image, or
+        // builds it from the Dockerfile when the version isn't published.
+        await Runner.prepareDockerImage()
+
         this.process = Bun.spawn([
             "docker", "run", "--rm",
             "--name", this.containerName,
@@ -102,7 +138,12 @@ export class ViteManager {
             "-e", "CHOKIDAR_USEPOLLING=true",
             "-e", "CHOKIDAR_INTERVAL=100",
             "-e", "FORCE_COLOR=1",
-            Settings.builderImage,
+            // Use the locally-prepared builder tag (Runner.prepareDockerImage pulls
+            // the versioned GHCR image and tags it "strux-builder", or builds it
+            // from the Dockerfile when the version isn't published — e.g. an
+            // unreleased dev version). Running Settings.builderImage directly would
+            // try to pull ghcr.io/…:<version> and fail for unpublished versions.
+            "strux-builder",
             "/bin/bash", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5173",
         ], {
             stdio: ["pipe", "pipe", "pipe"],

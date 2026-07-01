@@ -16,7 +16,7 @@ import { directoryExists, fileExists } from "../../utils/path"
 import { build as buildCommand } from "../build"
 import { runFlashScripts, type FlashOutputSource } from "../flash"
 import { compileApplication, compileCage, compileFrontend, compileWPE, compileScreen, buildStruxClient } from "../build/steps"
-import { forceRestoreAllArtifacts } from "../build/artifacts"
+import { regenerateArtifacts } from "../build/artifacts"
 import { Runner } from "../../utils/run"
 import { loadBuildCacheManifest, shouldRebuildStep, updateStepCache } from "../build/cache"
 import { Socket, SocketManager } from "./socket-manager"
@@ -28,7 +28,15 @@ import { DevUI } from "./ui"
 import { SSHManager } from "./ssh"
 import { registerClientHandlers } from "./handlers/client"
 import { registerScreenHandlers } from "./handlers/screen"
-import type { ClientMessageSendable, ClientMessageReceivable, ScreenMessageSendable, ScreenMessageReceivable } from "./types"
+import { registerWebUIHandlers } from "./handlers/webui"
+import type { ClientMessageSendable, ClientMessageReceivable, ScreenMessageSendable, ScreenMessageReceivable, WebUIMessageSendable, WebUIMessageReceivable, DeviceInfoOutputInfo, DeviceStatus, DashboardLogLine, DevBuildState } from "./types"
+
+
+const DEV_UI_NOT_BUILT_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>STRUX dev</title></head>` +
+    `<body style="margin:0;font-family:ui-monospace,monospace;background:#0a0a1e;color:#eeeef6;display:flex;` +
+    `align-items:center;justify-content:center;height:100vh"><div style="text-align:center">` +
+    `<h2 style="color:#8b5cf6;letter-spacing:.2em">STRUX // DEV UI NOT BUILT</h2>` +
+    `<p style="color:#a0a0cc">Run <code style="color:#34ffaa">bun run build:web-ui</code> and reload.</p></div></body></html>`
 
 
 export class DevServer {
@@ -45,6 +53,14 @@ export class DevServer {
         this.ui.store.setSSHSessionIds(this.ssh.getActiveSessions())
     })
     clientKey = ""
+    // Latest outputs reported by the device; replayed to web-ui viewers on connect.
+    deviceOutputs: DeviceInfoOutputInfo[] = []
+    // Dashboard state mirrored to web-ui viewers (also snapshotted on connect).
+    deviceStatus: DeviceStatus = { connected: false }
+    buildState: { state: DevBuildState, label?: string } = { state: "idle" }
+    dashboardLogs: DashboardLogLine[] = []
+    private static readonly MAX_DASHBOARD_LOGS = 300
+    private webUiHtmlCache: string | null = null
     private componentAckWaiters = new Map<string, {
         resolve: () => void
         reject: (error: Error) => void
@@ -202,20 +218,31 @@ export class DevServer {
         // Set up websocket servers
         const client = this.sockets.create<ClientMessageSendable, ClientMessageReceivable>("client", { path: "/client", aliases: ["/ws"] })
         const screen = this.sockets.create<ScreenMessageSendable, ScreenMessageReceivable>("screen", { path: "/screen", auth: false, aliases: ["/ws/screen"] })
+        const webui = this.sockets.create<WebUIMessageSendable, WebUIMessageReceivable>("webui", { path: "/devtool/ws", auth: false })
         this.sockets.setHTTPRouteHandler((req) => this.handleHTTPRoute(req))
 
         // Register handlers
         registerClientHandlers(client)
         registerScreenHandlers(screen)
+        registerWebUIHandlers(webui)
 
-        // Start the server
+        // Start the server FIRST so the device can connect immediately.
         const serverPort = Settings.main?.dev?.server?.fallback_hosts?.[0]?.port ?? 8000
         this.sockets.listen({ port: serverPort, authKey: this.clientKey })
         Logger.info(`Dev server listening on port ${serverPort}`)
+        Logger.info(`Dev tool: http://localhost:${serverPort}/screen`)
+
+        // Build the dev UI in the background — never block device connections on it.
+        this.ensureWebUIBuilt().catch(() => { /* best-effort */ })
 
         // Wire subsystem output to TUI tabs
         this.vite.onOutput = (line) => {
             this.ui.store.appendLog("vite", { level: "info", message: line, timestamp: Date.now() })
+        }
+        this.vite.onExit = () => {
+            // Vite died (e.g. the builder image is missing / container failed to
+            // launch) — surface it as a failure instead of a green "running" icon.
+            this.ui.store.updateStatus("vite", "error")
         }
         this.qemu.onOutput = (line) => {
             this.ui.store.appendLog("qemu", { level: "info", message: line, timestamp: Date.now() })
@@ -226,6 +253,7 @@ export class DevServer {
         this.watcher.onStatusChange = (status) => {
             this.ui.store.updateStatus("watcher", status === "building" ? "running" : "idle")
             this.ui.store.setBuildStatus(status === "building" ? "building" : "idle")
+            this.setBuildState(status === "building" ? "building" : "idle", status === "building" ? "Rebuilding" : undefined)
         }
         this.watcher.onFileChanged = (path) => {
             this.ui.store.markFileChanged(path)
@@ -355,10 +383,7 @@ export class DevServer {
             if (action === "restore") {
 
                 Logger.info("Restoring all artifacts to built-in versions...")
-                const { rm } = await import("fs/promises")
-                const artifactsDir = join(Settings.projectPath, "dist", "artifacts")
-                try { await rm(artifactsDir, { recursive: true, force: true }) } catch { /* may not exist */ }
-                await forceRestoreAllArtifacts()
+                await regenerateArtifacts()
                 Logger.success("All artifacts restored to built-in versions")
                 this.ui.store.flashConfigSuccess("All artifacts restored to built-in versions")
 
@@ -389,6 +414,10 @@ export class DevServer {
 
                     Runner.skipChown = true
                     try {
+                        // Source dirs (client/cage/wpe/screen) are derived — refresh
+                        // them from embedded before compiling, since this path runs
+                        // outside the full build pipeline that normally does it.
+                        await regenerateArtifacts()
                         await compileFrontend()
                         await compileApplication()
                         await compileCage()
@@ -562,9 +591,89 @@ export class DevServer {
     }
 
 
+    // --- Dashboard data relay (web-ui) ---
+    // State updates are cached (for the on-connect snapshot) and broadcast to
+    // viewers. Null-safe: callable before the webui socket exists (e.g. during
+    // the initial build) — it just updates the cache with no live viewers.
+
+    private webuiSocket(): Socket<WebUIMessageSendable, WebUIMessageReceivable> | null {
+        try {
+            return this.sockets.get<WebUIMessageSendable, WebUIMessageReceivable>("webui")
+        } catch {
+            return null
+        }
+    }
+
+    setDeviceStatus(patch: Partial<DeviceStatus>): void {
+        this.deviceStatus = { ...this.deviceStatus, ...patch }
+        this.webuiSocket()?.broadcast({ type: "device-status", payload: this.deviceStatus })
+    }
+
+    pushDashboardLog(entry: DashboardLogLine): void {
+        this.dashboardLogs.push(entry)
+        if (this.dashboardLogs.length > DevServer.MAX_DASHBOARD_LOGS) this.dashboardLogs.shift()
+        this.webuiSocket()?.broadcast({ type: "log-line", payload: entry })
+    }
+
+    setBuildState(state: DevBuildState, label?: string): void {
+        this.buildState = { state, label }
+        this.webuiSocket()?.broadcast({ type: "build-status", payload: this.buildState })
+    }
+
+
+    // Load the embedded single-file dev tool. Embedded at compile time in the
+    // binary; read from disk (or a friendly placeholder) when run from source.
+    private async loadWebUIHtml(): Promise<string> {
+
+        if (this.webUiHtmlCache) return this.webUiHtmlCache
+
+        try {
+            const mod = await import("./web-ui-asset")
+            this.webUiHtmlCache = mod.default
+            return this.webUiHtmlCache
+        } catch { /* not embedded / dist not built */ }
+
+        try {
+            const file = Bun.file(join(import.meta.dir, "../../web-ui/dist/index.html"))
+            if (await file.exists()) {
+                this.webUiHtmlCache = await file.text()
+                return this.webUiHtmlCache
+            }
+        } catch { /* fall through to placeholder */ }
+
+        return DEV_UI_NOT_BUILT_HTML
+    }
+
+
+    // Build the dev UI on first run from source if it hasn't been built yet.
+    // No-op in the compiled binary (no web-ui source dir on disk).
+    private async ensureWebUIBuilt(): Promise<void> {
+
+        const webUiDir = join(import.meta.dir, "../../web-ui")
+        if (!directoryExists(webUiDir)) return
+        if (fileExists(join(webUiDir, "dist", "index.html"))) return
+
+        Logger.info("Building dev UI (first run)...")
+        try {
+            await Bun.$`bun run build-only`.cwd(webUiDir).quiet()
+            Logger.success("Dev UI built")
+        } catch {
+            Logger.warning("Could not build dev UI automatically — run 'bun run build:web-ui'")
+        }
+
+    }
+
+
     private async handleHTTPRoute(req: Request): Promise<Response | null> {
 
         const url = new URL(req.url)
+
+        // Serve the single-file dev tool for its client-side routes.
+        if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/screen")) {
+            const html = await this.loadWebUIHtml()
+            return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } })
+        }
+
         if (url.pathname === "/__strux/dev/system-update") {
             if (req.method !== "POST") {
                 return new Response("Method not allowed", { status: 405 })

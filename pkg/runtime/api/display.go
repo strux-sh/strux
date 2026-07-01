@@ -94,14 +94,14 @@ type DisplayApplyOptions struct {
 	DryRun bool `json:"dryRun,omitempty"`
 }
 
-// DisplayProvider supplies BSP-specific backlight control. Other display APIs are
+// DisplayContract supplies BSP-specific backlight control. Other display APIs are
 // implemented by the runtime and do not use this hook.
-type DisplayProvider interface {
+type DisplayContract interface {
 	GetBacklight(displayName string) (int, error)
 	SetBacklight(displayName string, value int) error
 }
 
-var Display = DefineCapability[DisplayProvider](CapabilitySpec{
+var Display = DefineCapability[DisplayContract](CapabilitySpec{
 	Name:        CapabilityDisplay,
 	Namespace:   DisplayNamespace,
 	Description: "BSP backlight integration. Standard display listing and configuration are provided by the runtime.",
@@ -121,12 +121,18 @@ var Display = DefineCapability[DisplayProvider](CapabilitySpec{
 	},
 })
 
-func RegisterDisplayProvider(provider DisplayProvider) {
+func RegisterDisplayProvider(provider DisplayContract) {
 	Display.RegisterOrPanic(provider)
 }
 
 // DisplayService exposes Strux-standard display tooling to kiosk apps through the IPC bridge.
+// Most methods are runtime-provided (wlr-randr); GetBacklight/SetBacklight delegate to the BSP.
 type DisplayService struct{}
+
+// Compile-time guarantee that the service covers the BSP-backed contract
+// (backlight): add a method to DisplayContract and forget it here → the build
+// fails. The service also carries the runtime-provided display methods on top.
+var _ DisplayContract = DisplayService{}
 
 // List returns all logical displays and their current configuration.
 func (DisplayService) List() ([]DisplayOutput, error) {
@@ -204,9 +210,9 @@ func (DisplayService) SetTransform(output string, transform OutputTransform, opt
 }
 
 func (DisplayService) GetBacklight(outputName string) (int, error) {
-	provider, ok := Display.Provider()
-	if !ok {
-		return 0, UnsupportedError{Capability: CapabilityDisplay}
+	provider, err := providerOf(Display)
+	if err != nil {
+		return 0, err
 	}
 	return provider.GetBacklight(outputName)
 }
@@ -216,9 +222,9 @@ func (DisplayService) SetBacklight(outputName string, value int) error {
 		return fmt.Errorf("backlight value must be between 0 and 100")
 	}
 
-	provider, ok := Display.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityDisplay}
+	provider, err := providerOf(Display)
+	if err != nil {
+		return err
 	}
 	return provider.SetBacklight(outputName, value)
 }

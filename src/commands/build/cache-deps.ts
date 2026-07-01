@@ -244,7 +244,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
     "rootfs-post": {
         files: [
             "dist/artifacts/logo.png",
-            "dist/cache/{bsp}/.dev-env.json"
+            "dist/cache/{bsp}/.dev-env.json",
+            "dist/cache/{bsp}/.dev-env.json.disabled"
         ],
         directories: [
             // User project overlays

@@ -19,7 +19,7 @@ import { compileApplication, compileCage, compileWPE, compileScreen, buildStruxC
 import { Runner } from "../../utils/run"
 import { build as buildCommand } from "../build"
 import { loadBuildCacheManifest, shouldRebuildStep, updateStepCache } from "../build/cache"
-import { forceRestoreAllArtifacts } from "../build/artifacts"
+import { regenerateArtifacts } from "../build/artifacts"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { createDevServer, stopDevServer, type DevServer } from "./server"
 import { run as runQEMU } from "../run"
@@ -553,17 +553,8 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rebu
         if (action === "restore") {
             Logger.info("Restoring all artifacts to built-in versions...")
 
-            // Remove the entire dist/artifacts/ directory
-            const artifactsDir = join(Settings.projectPath, "dist", "artifacts")
-            const { rm } = await import("fs/promises")
-            try {
-                await rm(artifactsDir, { recursive: true, force: true })
-            } catch {
-                // Directory may not exist
-            }
-
-            // Force-write all embedded files
-            await forceRestoreAllArtifacts()
+            // Wipe + rewrite dist/artifacts/ from the embedded set.
+            await regenerateArtifacts()
 
             Logger.success("All artifacts restored to built-in versions")
             devUI.flashConfigSuccess("All artifacts restored to built-in versions")

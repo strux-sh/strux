@@ -76,6 +76,65 @@ func (s *SampleMethods) Apply(config Config) (State, error) { return State{}, ni
 	}
 }
 
+func TestStruxOptionalTagMarksFieldOptional(t *testing.T) {
+	tempDir := t.TempDir()
+	// `feature` is tagged strux:"optional"; `plain` is a pointer WITHOUT the tag
+	// and must stay required — pointer-ness alone does not imply optional.
+	source := `package extension
+
+type SampleExtension struct{}
+
+func (s *SampleExtension) Namespace() string { return "strux" }
+func (s *SampleExtension) SubNamespace() string { return "sample" }
+
+type State struct {
+	Always  string  ` + "`json:\"always\"`" + `
+	Feature *bool   ` + "`json:\"feature,omitempty\" strux:\"optional\"`" + `
+	Plain   *string ` + "`json:\"plain,omitempty\"`" + `
+}
+
+type SampleMethods struct{}
+
+func (s *SampleMethods) Get() (State, error) { return State{}, nil }
+`
+
+	path := filepath.Join(tempDir, "sample.go")
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	runtimeTypes, err := parseExtensions(tempDir)
+	if err != nil {
+		t.Fatalf("parseExtensions failed: %v", err)
+	}
+
+	byName := map[string]FieldDef{}
+	for _, f := range runtimeTypes.Structs["State"].Fields {
+		byName[f.Name] = f
+	}
+
+	if byName["always"].Optional {
+		t.Error("untagged non-pointer field should not be optional")
+	}
+	if !byName["feature"].Optional {
+		t.Error("field tagged strux:\"optional\" should be optional")
+	}
+	if byName["plain"].Optional {
+		t.Error("untagged pointer field should NOT be optional (pointer-ness alone is not a contract)")
+	}
+
+	dts := generateTypeScriptDeclarations(runtimeTypes, false)
+	if !strings.Contains(dts, "feature?: boolean") {
+		t.Errorf("expected tagged field rendered as `feature?: boolean`, got:\n%s", dts)
+	}
+	if !strings.Contains(dts, "plain: string;") {
+		t.Errorf("expected untagged pointer rendered as `plain: string;`, got:\n%s", dts)
+	}
+	if !strings.Contains(dts, "always: string;") {
+		t.Errorf("expected non-pointer field rendered as `always: string;`, got:\n%s", dts)
+	}
+}
+
 func TestParseExtensionsCollectsRuntimeRegistrations(t *testing.T) {
 	tempDir := t.TempDir()
 	source := `package board

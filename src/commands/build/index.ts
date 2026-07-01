@@ -16,6 +16,7 @@ import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
+import { getIncludedBSPRuntimeExtensions, syncStruxRuntimeVersion } from "../../utils/bsp-runtime"
 import { type ScriptStep } from "../../types/bsp-yaml"
 import { type ProjectScriptStep } from "../../types/main-yaml"
 
@@ -47,7 +48,7 @@ import {
     updateDevEnvConfig,
     writeDisplayConfig
 } from "./steps"
-import { copyAllInitialArtifacts } from "./artifacts"
+import { regenerateArtifacts } from "./artifacts"
 
 // BSP Script Execution
 import { runScriptsForStep } from "./bsp-scripts"
@@ -55,12 +56,21 @@ import { runScriptsForStep } from "./bsp-scripts"
 // Project Script Execution
 import { runProjectScriptsForStep } from "./project-scripts"
 
+// A runtime extension actually compiled into this build (after version gating),
+// recorded so a build artifact carries a manifest of what the image provides.
+export interface BuildRuntimeExtension {
+    importPath: string
+    implements?: string[]
+    compatibleApi?: string[]
+}
+
 export interface BuildMetadata {
     buildMode: "dev" | "production"
     buildTime: string
     bspName: string
     struxVersion: string
     projectVersion: string
+    runtimeExtensions: BuildRuntimeExtension[]
 }
 
 export interface BuildLogger {
@@ -157,7 +167,7 @@ export const realBuildDeps: BuildDeps = {
     files: {
         fileExists,
         prepareBuildDirectories,
-        prepareInitialArtifacts: copyAllInitialArtifacts,
+        prepareInitialArtifacts: regenerateArtifacts,
         writeBuildMetadata,
     },
     cache: {
@@ -221,6 +231,18 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
     const bspYamlPath = join(Settings.projectPath, "bsp", bspName, "bsp.yaml")
     if (!deps.files.fileExists(bspYamlPath)) {
         return deps.logger.errorWithExit(`BSP ${bspName} not found. Please create it first.`)
+    }
+
+    // Pin the project's go.mod Strux runtime version to this CLI's version, so the
+    // runtime compiled into the project always matches the CLI (they ship in
+    // tandem). Skipped under --local-runtime, where the runtime is a local checkout
+    // rather than a published release. Runs before the BSP compatibility check
+    // below so that check reads the corrected version.
+    if (!Settings.localRuntime) {
+        const sync = syncStruxRuntimeVersion()
+        if (sync.changed) {
+            Logger.info(`Pinned Strux runtime in go.mod: ${sync.from} → ${sync.to} (matching CLI v${Settings.struxVersion})`)
+        }
     }
 
     // Load and validate the BSP YAML configuration
@@ -499,7 +521,12 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
             buildTime: deps.now().toISOString(),
             bspName,
             struxVersion: Settings.struxVersion,
-            projectVersion: Settings.projectVersion
+            projectVersion: Settings.projectVersion,
+            runtimeExtensions: getIncludedBSPRuntimeExtensions().map((extension) => ({
+                importPath: extension.importPath,
+                implements: extension.implements,
+                compatibleApi: extension.compatibleApi
+            }))
         } satisfies BuildMetadata
         await deps.files.writeBuildMetadata(bspName, buildMetadata)
 

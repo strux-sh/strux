@@ -42,10 +42,24 @@ func newEventState() *eventState {
 	}
 }
 
-// Emit sends an event to all connected JavaScript frontends
+// Emit sends an application event to all connected JavaScript frontends,
+// received via window.strux.ipc.on(). This is the app developer's event bus.
 func (rt *Runtime) Emit(event string, data interface{}) {
+	rt.emitTyped("event", event, data)
+}
+
+// emitSystem sends a framework/service event to all connected frontends. These
+// are delivered to the per-service window.strux.<service>.on() listeners and
+// stay separate from the app-facing Emit / strux.ipc bus.
+func (rt *Runtime) emitSystem(event string, data interface{}) {
+	rt.emitTyped("system-event", event, data)
+}
+
+// emitTyped marshals and broadcasts an event of the given wire type to all
+// connected JavaScript frontends.
+func (rt *Runtime) emitTyped(msgType, event string, data interface{}) {
 	msg := EventMessage{
-		Type:  "event",
+		Type:  msgType,
 		Event: event,
 		Data:  data,
 	}

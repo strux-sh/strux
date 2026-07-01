@@ -173,6 +173,16 @@ const RootFSSchema = z.object({
     packages: z.array(z.string()).optional(),
 })
 
+// A single "implements" entry: the reserved word "custom" (a custom extension,
+// not a standard capability), or a "<capability>" / "<capability>/<feature>"
+// identifier such as "audio" or "audio/capture".
+const RUNTIME_IMPLEMENTS_RE = /^[A-Za-z][A-Za-z0-9-]*(\/[A-Za-z][A-Za-z0-9-]*)?$/
+
+function normalizeStringList(value: string | string[] | undefined): string[] {
+    if (value === undefined) return []
+    return Array.isArray(value) ? value : [value]
+}
+
 const RuntimeExtensionSchema = z.object({
     // Local path to the Go package that registers extension methods. Relative paths
     // are resolved from the BSP directory.
@@ -180,9 +190,31 @@ const RuntimeExtensionSchema = z.object({
     // Optional explicit Go import path. If omitted for an in-project path, Strux
     // derives it from the app module path in go.mod.
     import: z.string().optional(),
+    // Optional Strux API version(s) this extension is compatible with, as
+    // major.minor keys (e.g. "0.4" or ["0.3", "0.4"]). When set, the extension is
+    // compiled in only when the runtime being built against matches one of them;
+    // otherwise it is skipped (and logged). Lets one BSP carry version-specific
+    // implementations of a capability — e.g. runtime/v0.3/audio vs runtime/v0.4/audio.
+    compatible_strux_api: z.union([z.string(), z.array(z.string())]).optional(),
+    // Optional declaration of what this extension provides: standard capabilities
+    // and optional features as "<capability>" / "<capability>/<feature>" (e.g.
+    // "audio", "audio/capture"), or the reserved word "custom" for a custom
+    // extension. Used to catch two extensions implementing the same capability and
+    // to surface what each provides at build time.
+    implements: z.union([z.string(), z.array(z.string())]).optional(),
 }).refine(
     (data) => Boolean(data.path ?? data.import),
     "runtime extension requires either path or import"
+).refine(
+    (data) => {
+        const list = normalizeStringList(data.implements)
+        if (list.length === 0) return true
+        // "custom" is reserved and must stand alone; every other entry is a
+        // "<capability>" or "<capability>/<feature>" identifier.
+        if (list.includes("custom")) return list.length === 1
+        return list.every((entry) => RUNTIME_IMPLEMENTS_RE.test(entry))
+    },
+    "runtime extension \"implements\" entries must be \"custom\" (used alone) or \"<capability>\" / \"<capability>/<feature>\" identifiers (e.g. \"audio\", \"audio/capture\")"
 )
 
 const RuntimeSchema = z.object({
@@ -354,6 +386,9 @@ export class BSPYamlValidator {
     }
 
     private static getProjectStruxRuntimeVersion(): string {
+        // With --local-runtime the runtime is the CLI's own checkout (go.mod is
+        // left unsynced), so the CLI version is authoritative.
+        if (Settings.localRuntime) return Settings.struxVersion
         const goModPath = join(Settings.projectPath, "go.mod")
         if (!fileExists(goModPath)) return Settings.struxVersion
 

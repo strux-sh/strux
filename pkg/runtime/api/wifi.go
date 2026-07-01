@@ -93,8 +93,8 @@ type WiFiIPConfigRequest struct {
 	Config        WiFiIPConfig `json:"config"`
 }
 
-// WiFiProvider supplies BSP-specific Wi-Fi management.
-type WiFiProvider interface {
+// WiFiContract supplies BSP-specific Wi-Fi management.
+type WiFiContract interface {
 	ListInterfaces() ([]WiFiInterface, error)
 	GetDefaultInterface() (WiFiDefaultInterface, error)
 	GetStatus(interfaceName string) (WiFiStatus, error)
@@ -108,7 +108,7 @@ type WiFiProvider interface {
 	ConfigureIP(req WiFiIPConfigRequest) error
 }
 
-var WiFi = DefineCapability[WiFiProvider](CapabilitySpec{
+var WiFi = DefineCapability[WiFiContract](CapabilitySpec{
 	Name:        CapabilityWiFi,
 	Namespace:   WiFiNamespace,
 	Description: "BSP Wi-Fi integration with multi-adapter scanning, connection management, saved profiles, and IP configuration.",
@@ -129,25 +129,29 @@ var WiFi = DefineCapability[WiFiProvider](CapabilitySpec{
 
 var validNetworkInterfaceName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$`)
 
-func RegisterWiFiProvider(provider WiFiProvider) {
+func RegisterWiFiProvider(provider WiFiContract) {
 	WiFi.RegisterOrPanic(provider)
 }
 
 // WiFiService exposes Strux-standard Wi-Fi tooling to kiosk apps through the IPC bridge.
 type WiFiService struct{}
 
+// Compile-time guarantee that the service mirrors the contract: add a method to
+// WiFiContract and forget it here → the build fails.
+var _ WiFiContract = WiFiService{}
+
 func (WiFiService) ListInterfaces() ([]WiFiInterface, error) {
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return nil, UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return nil, err
 	}
 	return provider.ListInterfaces()
 }
 
 func (WiFiService) GetDefaultInterface() (WiFiDefaultInterface, error) {
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return WiFiDefaultInterface{}, UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return WiFiDefaultInterface{}, err
 	}
 	return provider.GetDefaultInterface()
 }
@@ -157,9 +161,9 @@ func (WiFiService) GetStatus(interfaceName string) (WiFiStatus, error) {
 		return WiFiStatus{}, err
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return WiFiStatus{}, UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return WiFiStatus{}, err
 	}
 	return provider.GetStatus(interfaceName)
 }
@@ -169,9 +173,9 @@ func (WiFiService) Scan(interfaceName string) ([]WiFiNetwork, error) {
 		return nil, err
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return nil, UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return nil, err
 	}
 	return provider.Scan(interfaceName)
 }
@@ -181,9 +185,9 @@ func (WiFiService) Connect(req WiFiConnectRequest) error {
 		return err
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return err
 	}
 	return provider.Connect(req)
 }
@@ -196,9 +200,9 @@ func (WiFiService) ConnectKnown(req WiFiKnownNetworkRequest) error {
 		return err
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return err
 	}
 	return provider.ConnectKnown(req)
 }
@@ -208,17 +212,17 @@ func (WiFiService) Disconnect(interfaceName string) error {
 		return err
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return err
 	}
 	return provider.Disconnect(interfaceName)
 }
 
 func (WiFiService) ListKnownNetworks() ([]WiFiKnownNetwork, error) {
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return nil, UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return nil, err
 	}
 	return provider.ListKnownNetworks()
 }
@@ -228,9 +232,9 @@ func (WiFiService) Forget(id string) error {
 		return err
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return err
 	}
 	return provider.Forget(id)
 }
@@ -240,9 +244,9 @@ func (WiFiService) SetKnownNetworkPriority(id string, priority int) error {
 		return err
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return err
 	}
 	return provider.SetKnownNetworkPriority(id, priority)
 }
@@ -258,9 +262,9 @@ func (WiFiService) ConfigureIP(req WiFiIPConfigRequest) error {
 		return fmt.Errorf("static wifi IP address is required")
 	}
 
-	provider, ok := WiFi.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityWiFi}
+	provider, err := providerOf(WiFi)
+	if err != nil {
+		return err
 	}
 	return provider.ConfigureIP(req)
 }

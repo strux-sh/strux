@@ -61,8 +61,8 @@ type NetworkIPConfigRequest struct {
 	Config        NetworkIPConfig `json:"config"`
 }
 
-// NetworkProvider supplies BSP-specific generic network interface management.
-type NetworkProvider interface {
+// NetworkContract supplies BSP-specific generic network interface management.
+type NetworkContract interface {
 	ListInterfaces() ([]NetworkInterface, error)
 	GetDefaultInterface(kind string) (NetworkDefaultInterface, error)
 	GetStatus(interfaceName string) (NetworkStatus, error)
@@ -71,7 +71,7 @@ type NetworkProvider interface {
 	RenewDHCP(interfaceName string) error
 }
 
-var Network = DefineCapability[NetworkProvider](CapabilitySpec{
+var Network = DefineCapability[NetworkContract](CapabilitySpec{
 	Name:        CapabilityNetwork,
 	Namespace:   NetworkNamespace,
 	Description: "BSP network interface integration with link status, DHCP/static IPv4 configuration, and interface controls.",
@@ -85,17 +85,23 @@ var Network = DefineCapability[NetworkProvider](CapabilitySpec{
 	},
 })
 
-func RegisterNetworkProvider(provider NetworkProvider) {
+func RegisterNetworkProvider(provider NetworkContract) {
 	Network.RegisterOrPanic(provider)
 }
 
 // NetworkService exposes Strux-standard network tooling to kiosk apps through the IPC bridge.
+
+// These are the methods that are called directly by the frontend or the runtime.
 type NetworkService struct{}
 
+// Compile-time guarantee that the service mirrors the contract: add a method to
+// NetworkContract and forget it here → the build fails.
+var _ NetworkContract = NetworkService{}
+
 func (NetworkService) ListInterfaces() ([]NetworkInterface, error) {
-	provider, ok := Network.Provider()
-	if !ok {
-		return nil, UnsupportedError{Capability: CapabilityNetwork}
+	provider, err := providerOf(Network)
+	if err != nil {
+		return nil, err
 	}
 	return provider.ListInterfaces()
 }
@@ -105,9 +111,9 @@ func (NetworkService) GetDefaultInterface(kind string) (NetworkDefaultInterface,
 		return NetworkDefaultInterface{}, err
 	}
 
-	provider, ok := Network.Provider()
-	if !ok {
-		return NetworkDefaultInterface{}, UnsupportedError{Capability: CapabilityNetwork}
+	provider, err := providerOf(Network)
+	if err != nil {
+		return NetworkDefaultInterface{}, err
 	}
 	return provider.GetDefaultInterface(kind)
 }
@@ -117,9 +123,9 @@ func (NetworkService) GetStatus(interfaceName string) (NetworkStatus, error) {
 		return NetworkStatus{}, err
 	}
 
-	provider, ok := Network.Provider()
-	if !ok {
-		return NetworkStatus{}, UnsupportedError{Capability: CapabilityNetwork}
+	provider, err := providerOf(Network)
+	if err != nil {
+		return NetworkStatus{}, err
 	}
 	return provider.GetStatus(interfaceName)
 }
@@ -132,9 +138,9 @@ func (NetworkService) ConfigureIP(req NetworkIPConfigRequest) error {
 		return err
 	}
 
-	provider, ok := Network.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityNetwork}
+	provider, err := providerOf(Network)
+	if err != nil {
+		return err
 	}
 	return provider.ConfigureIP(req)
 }
@@ -144,9 +150,9 @@ func (NetworkService) SetEnabled(interfaceName string, enabled bool) error {
 		return err
 	}
 
-	provider, ok := Network.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityNetwork}
+	provider, err := providerOf(Network)
+	if err != nil {
+		return err
 	}
 	return provider.SetEnabled(interfaceName, enabled)
 }
@@ -156,9 +162,9 @@ func (NetworkService) RenewDHCP(interfaceName string) error {
 		return err
 	}
 
-	provider, ok := Network.Provider()
-	if !ok {
-		return UnsupportedError{Capability: CapabilityNetwork}
+	provider, err := providerOf(Network)
+	if err != nil {
+		return err
 	}
 	return provider.RenewDHCP(interfaceName)
 }

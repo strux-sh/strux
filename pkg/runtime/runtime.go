@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -8,24 +9,30 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/strux-dev/strux/pkg/runtime/api"
 )
 
 const socketPath = "/tmp/strux-ipc.sock"
 
+// shutdownGracePeriod bounds how long the runtime waits for all service teardown
+// hooks (e.g. audio muting amplifiers) to complete during Stop.
+const shutdownGracePeriod = 5 * time.Second
+
 const CapabilityDisplay = api.CapabilityDisplay
 const CapabilityNetwork = api.CapabilityNetwork
 const CapabilityWiFi = api.CapabilityWiFi
+const CapabilityAudio = api.CapabilityAudio
 
-type DisplayProvider = api.DisplayProvider
-type NetworkProvider = api.NetworkProvider
+type DisplayContract = api.DisplayContract
+type NetworkContract = api.NetworkContract
 type NetworkDefaultInterface = api.NetworkDefaultInterface
 type NetworkInterface = api.NetworkInterface
 type NetworkIPConfig = api.NetworkIPConfig
 type NetworkStatus = api.NetworkStatus
 type NetworkIPConfigRequest = api.NetworkIPConfigRequest
-type WiFiProvider = api.WiFiProvider
+type WiFiContract = api.WiFiContract
 type WiFiDefaultInterface = api.WiFiDefaultInterface
 type WiFiInterface = api.WiFiInterface
 type WiFiNetwork = api.WiFiNetwork
@@ -35,8 +42,28 @@ type WiFiKnownNetwork = api.WiFiKnownNetwork
 type WiFiConnectRequest = api.WiFiConnectRequest
 type WiFiKnownNetworkRequest = api.WiFiKnownNetworkRequest
 type WiFiIPConfigRequest = api.WiFiIPConfigRequest
+type AudioContract = api.AudioContract
+type AudioEvents = api.AudioEvents
+type AudioState = api.AudioState
+type AudioOutput = api.AudioOutput
+
+// Optional audio features — a BSP opts in by also satisfying these on its
+// provider (see api/audio.go and the README "Optional features" section).
+type AudioAutoSwitch = api.AudioAutoSwitch
+type AudioCapture = api.AudioCapture
+type AudioInput = api.AudioInput
+type CaptureState = api.CaptureState
+
 type CapabilityInfo = api.CapabilityInfo
 type CapabilityMethodSpec = api.MethodSpec
+type CapabilityFeatureInfo = api.FeatureInfo
+
+// Deprecated: the capability interfaces were renamed *Provider -> *Contract.
+// BSPs implement these implicitly and never name them, so these aliases exist
+// only to keep any code that referenced the old exported names compiling.
+type DisplayProvider = api.DisplayContract
+type NetworkProvider = api.NetworkContract
+type WiFiProvider = api.WiFiContract
 
 // ChannelHandshake is the first message sent by the WPE extension on each socket
 // to identify which channel the connection belongs to.
@@ -69,6 +96,10 @@ type Runtime struct {
 	pkgName    string
 	extensions *Registry
 	events     *eventState
+
+	// serviceInstances are the registered service/extension instances, in
+	// registration order, so Stop can run their teardown hooks at shutdown.
+	serviceInstances []interface{}
 }
 
 type registeredRuntimeExtension struct {
@@ -651,8 +682,21 @@ func (rt *Runtime) setField(fieldName string, value interface{}) error {
 	return fmt.Errorf("field %s not found", targetName)
 }
 
-// Stop shuts down the IPC server
+// Stop gracefully tears down services then shuts down the IPC server.
+//
+// Service teardown runs first: every registered service with a stop() hook is
+// given a chance to release hardware (e.g. AudioService muting amplifiers before
+// power is cut), in reverse registration order, all bounded by a single
+// shutdownGracePeriod deadline shared across them.
 func (rt *Runtime) Stop() {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
+	defer cancel()
+	for i := len(rt.serviceInstances) - 1; i >= 0; i-- {
+		if err := api.StopService(ctx, rt.serviceInstances[i]); err != nil {
+			fmt.Fprintf(os.Stderr, "Strux Runtime: service teardown failed: %v\n", err)
+		}
+	}
+
 	close(rt.stopChan)
 	if rt.listener != nil {
 		rt.listener.Close()
@@ -680,7 +724,18 @@ func RegisterCustomExtension(name string, instance interface{}) {
 }
 
 func (rt *Runtime) registerStruxAPI(namespace string, instance interface{}) error {
-	return rt.extensions.Register("strux", namespace, instance)
+	if err := rt.extensions.Register("strux", namespace, instance); err != nil {
+		return err
+	}
+	// Give the service a namespaced event emitter: Emit("x", d) is delivered to
+	// window.strux.<namespace>.on("x", cb). No-op for services that don't embed
+	// api.Service.
+	api.BindService(instance, "strux."+namespace, rt.emitSystem)
+	// Run the service's lifecycle hook, if any (e.g. AudioService starting its
+	// provider's change loop). No-op for services without a start().
+	api.StartService(instance)
+	rt.serviceInstances = append(rt.serviceInstances, instance)
+	return nil
 }
 
 func (rt *Runtime) registerProcessExtensions() {
@@ -694,7 +749,13 @@ func (rt *Runtime) registerProcessExtensions() {
 				registered.subNamespace,
 				err,
 			)
+			continue
 		}
+		// BSP/process extensions get the same per-service event emitter, keyed by
+		// their <namespace>.<subNamespace> path, plus the lifecycle hook.
+		api.BindService(registered.instance, registered.namespace+"."+registered.subNamespace, rt.emitSystem)
+		api.StartService(registered.instance)
+		rt.serviceInstances = append(rt.serviceInstances, registered.instance)
 	}
 }
 

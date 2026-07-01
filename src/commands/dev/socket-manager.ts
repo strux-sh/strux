@@ -89,47 +89,58 @@ export class Socket<TSend, TReceive> {
     }
 
 
-    // Send a typed message to a specific client
+    // Send a typed message to a specific client.
+    // A failed send (closed/backpressured client) must never throw into the
+    // caller — handlers on OTHER sockets relay through here, and a throw would
+    // tear down an unrelated connection. The dead client is cleaned up on close.
     send(ws: ServerWebSocket<WebSocketData>, message: TSend): void {
 
         const msg = message as any
-        const wireType = toWireType(ws.data.version, msg.type)
-        const wirePayload = transformSentPayload(ws.data.version, msg.type, msg.payload)
-        ws.send(JSON.stringify({ type: wireType, payload: wirePayload }))
+        try {
+            const wireType = toWireType(ws.data.version, msg.type)
+            const wirePayload = transformSentPayload(ws.data.version, msg.type, msg.payload)
+            ws.send(JSON.stringify({ type: wireType, payload: wirePayload }))
+        } catch { /* client gone — removed on close */ }
 
     }
 
 
-    // Send raw binary data to a specific client
+    // Send raw binary data to a specific client.
     sendBinary(ws: ServerWebSocket<WebSocketData>, data: ArrayBuffer | Uint8Array): void {
 
-        ws.send(data)
+        try {
+            ws.send(data)
+        } catch { /* client gone — removed on close */ }
 
     }
 
 
-    // Broadcast a typed message to all connected clients
+    // Broadcast a typed message to all connected clients.
     broadcast(message: TSend): void {
 
         const msg = message as any
 
         this.clients.forEach((ws) => {
 
-            const wireType = toWireType(ws.data.version, msg.type)
-            const wirePayload = transformSentPayload(ws.data.version, msg.type, msg.payload)
-            ws.send(JSON.stringify({ type: wireType, payload: wirePayload }))
+            try {
+                const wireType = toWireType(ws.data.version, msg.type)
+                const wirePayload = transformSentPayload(ws.data.version, msg.type, msg.payload)
+                ws.send(JSON.stringify({ type: wireType, payload: wirePayload }))
+            } catch { /* one bad client must not abort the broadcast */ }
 
         })
 
     }
 
 
-    // Broadcast raw binary data to all connected clients
+    // Broadcast raw binary data to all connected clients.
     broadcastBinary(data: ArrayBuffer | Uint8Array): void {
 
         this.clients.forEach((ws) => {
 
-            ws.send(data)
+            try {
+                ws.send(data)
+            } catch { /* one bad client must not abort the broadcast */ }
 
         })
 
@@ -178,19 +189,34 @@ export class Socket<TSend, TReceive> {
 
     _handleMessage(ws: ServerWebSocket<WebSocketData>, raw: string | Buffer | ArrayBuffer): void {
 
-        if (typeof raw !== "string") {
+        // A parse error or a throwing handler must NEVER propagate to Bun's
+        // message callback — doing so can tear down this client's connection.
+        // (e.g. a device log-line handler that relays to a dead web-ui viewer.)
+        try {
 
-            const buffer = raw instanceof ArrayBuffer ? raw : raw.buffer as ArrayBuffer
-            this.binaryHandler?.(buffer, ws)
-            return
+            if (typeof raw !== "string") {
+
+                // A Bun Buffer may be a view into a larger pooled ArrayBuffer; slice
+                // to this message's exact bytes so we never relay trailing garbage.
+                const buffer = raw instanceof ArrayBuffer
+                    ? raw
+                    : raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength)
+                this.binaryHandler?.(buffer, ws)
+                return
+
+            }
+
+            const message = JSON.parse(raw) as { type: string, payload?: unknown }
+            const canonicalType = toCanonicalType(ws.data.version, message.type)
+            const payload = transformReceivedPayload(ws.data.version, canonicalType, message.payload)
+            const handler = this.handlers.get(canonicalType)
+            handler?.(payload as any, ws)
+
+        } catch (err) {
+
+            console.error(`Socket "${this.name}" message handler error:`, err)
 
         }
-
-        const message = JSON.parse(raw) as { type: string, payload?: unknown }
-        const canonicalType = toCanonicalType(ws.data.version, message.type)
-        const payload = transformReceivedPayload(ws.data.version, canonicalType, message.payload)
-        const handler = this.handlers.get(canonicalType)
-        handler?.(payload as any, ws)
 
     }
 
@@ -208,7 +234,7 @@ interface SocketConfig {
     aliases?: string[]
 }
 
-type HTTPRouteHandler = (req: Request) => Response | Promise<Response> | null | undefined
+type HTTPRouteHandler = (req: Request) => Response | null | undefined | Promise<Response | null | undefined>
 
 export class SocketManager {
 

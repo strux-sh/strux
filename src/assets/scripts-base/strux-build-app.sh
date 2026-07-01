@@ -20,6 +20,12 @@ mkdir -p "$CACHE_DIR/app"
 
 cd "$PROJECT_DIR"
 
+# Ignore any go.work in the project. A developer may keep a gitignored go.work
+# on the host (so their editor resolves the local strux runtime), but it points
+# at host paths that don't exist in this container. The build relies on go.mod
+# (plus the injected /strux-runtime replace below), so go.work must be off here.
+export GOWORK=off
+
 # ============================================================================
 # CONFIGURATION READING FROM YAML FILES
 # ============================================================================
@@ -132,6 +138,15 @@ if [ "${USE_LOCAL_RUNTIME:-}" = "1" ] && [ -d "/strux-runtime" ]; then
     trap restore_gomod EXIT
 
     go mod edit -replace "github.com/strux-dev/strux=/strux-runtime"
+else
+    # Published-runtime path: the CLI pins go.mod's strux runtime version to its
+    # own version on the host (syncStruxRuntimeVersion). If that just changed the
+    # version, go.sum won't yet have the new module hash, so reconcile it here
+    # where Go is available. Cached/no-op when already in sync.
+    if grep -q "github.com/strux-dev/strux " "$PROJECT_DIR/go.mod" 2>/dev/null; then
+        progress "Resolving Strux runtime module..."
+        GOTOOLCHAIN=local go mod download github.com/strux-dev/strux
+    fi
 fi
 
 # Set up Go private module environment (if needed)

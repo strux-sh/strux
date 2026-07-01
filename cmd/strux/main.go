@@ -35,11 +35,18 @@ type StructDef struct {
 	Methods []MethodDef `json:"methods,omitempty"`
 }
 
-// FieldDef describes a struct field
+// FieldDef describes a struct field.
+//
+// Optional marks a field that may be absent from the payload — rendered as a TS
+// optional member `name?: T`. It is carried only for the framework's committed
+// runtime types (which arrive already classified via the runtime JSON, set from
+// a `strux:"optional"` tag at generation time). App- and extension-introspected
+// structs keep their prior rendering and never set it.
 type FieldDef struct {
-	Name   string `json:"name"`
-	GoType string `json:"goType"`
-	TSType string `json:"tsType"`
+	Name     string `json:"name"`
+	GoType   string `json:"goType"`
+	TSType   string `json:"tsType"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 // MethodDef describes a method
@@ -247,6 +254,12 @@ func introspectData(filePath string) (IntrospectionOutput, error) {
 							// Only process exported fields
 							if isExported(fieldName) {
 								goType := exprToString(field.Type)
+								// App-owned structs intentionally keep their prior
+								// rendering: a pointer field is NOT marked optional/
+								// nullable here. The app developer owns these types and
+								// their nullability; forcing null-checks across their own
+								// model would be churn. Optionality is reserved for the
+								// runtime API surface (framework + BSP extensions).
 								fields = append(fields, FieldDef{
 									Name:   fieldName,
 									GoType: goType,
@@ -672,6 +685,10 @@ func extractRuntimeStructFields(structType *ast.StructType, knownStructs map[str
 			if fieldName == "-" {
 				continue
 			}
+			// Locally-introspected runtime extension structs keep their prior
+			// rendering (pointers stripped, non-optional). Optional/Nullable is
+			// carried only for the framework's committed runtime types, which
+			// arrive already classified via the runtime JSON (readRuntimeTypes).
 			fields = append(fields, FieldDef{
 				Name:   fieldName,
 				GoType: goType,
@@ -680,6 +697,15 @@ func extractRuntimeStructFields(structType *ast.StructType, knownStructs map[str
 		}
 	}
 	return fields
+}
+
+// formatFieldDTS renders a struct field as a TypeScript interface member,
+// honoring Optional (name?: T).
+func formatFieldDTS(field FieldDef) string {
+	if field.Optional {
+		return fmt.Sprintf("%s?: %s", field.Name, field.TSType)
+	}
+	return fmt.Sprintf("%s: %s", field.Name, field.TSType)
 }
 
 func jsonFieldName(field *ast.Field) (string, bool) {
@@ -954,7 +980,7 @@ func generateRuntimeGlobalLines(runtimeTypes RuntimeTypes) []string {
 			}
 			lines = append(lines, fmt.Sprintf("  interface %s {", name))
 			for _, field := range runtimeTypes.Structs[name].Fields {
-				lines = append(lines, fmt.Sprintf("    %s: %s;", field.Name, field.TSType))
+				lines = append(lines, fmt.Sprintf("    %s;", formatFieldDTS(field)))
 			}
 			lines = append(lines, "  }")
 		}
@@ -1018,7 +1044,7 @@ func generateAppGlobalLines(introspection IntrospectionOutput) []string {
 		}
 		lines = append(lines, fmt.Sprintf("interface %s {", structName))
 		for _, field := range structDef.Fields {
-			lines = append(lines, fmt.Sprintf("  %s: %s;", field.Name, field.TSType))
+			lines = append(lines, fmt.Sprintf("  %s;", formatFieldDTS(field)))
 		}
 		if len(structDef.Fields) > 0 && len(structDef.Methods) > 0 {
 			lines = append(lines, "")
@@ -1035,7 +1061,7 @@ func generateAppGlobalLines(introspection IntrospectionOutput) []string {
 
 	lines = append(lines, fmt.Sprintf("interface %s {", app.Name))
 	for _, field := range app.Fields {
-		lines = append(lines, fmt.Sprintf("  %s: %s;", field.Name, field.TSType))
+		lines = append(lines, fmt.Sprintf("  %s;", formatFieldDTS(field)))
 	}
 	if len(app.Fields) > 0 && len(app.Methods) > 0 {
 		lines = append(lines, "")

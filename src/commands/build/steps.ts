@@ -8,12 +8,11 @@
  */
 
 import { join } from "path"
-import { mkdir } from "node:fs/promises"
+import { mkdir, rename } from "node:fs/promises"
 import { Settings } from "../../settings"
 import { Runner } from "../../utils/run"
 import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
-import { copyClientBaseFiles, copyCageSourceFiles, copyWPEExtensionSourceFiles, copyScreenSourceFiles, copyPatches } from "./artifacts"
 import { generateTypes } from "../types"
 import { getLocalBSPRuntimeExtensionDirs, writeBSPRuntimeExtensionImports } from "../../utils/bsp-runtime"
 import { bundleUpdate } from "../update"
@@ -111,15 +110,7 @@ export async function compileApplication(): Promise<void> {
 export async function compileCage(): Promise<void> {
     const bspName = Settings.bspName!
 
-    // Cage source directory in artifacts
-    const cageSrcPath = join(Settings.projectPath, "dist", "artifacts", "cage")
-
-    // Create directory if it doesn't exist
-    if (!directoryExists(cageSrcPath)) await mkdir(cageSrcPath, { recursive: true })
-
-    // Copy Cage source files if they don't exist (first build)
-    await copyCageSourceFiles(cageSrcPath)
-
+    // Source lives in dist/artifacts/cage — regenerated from embedded each build.
     await Runner.runScriptInDocker(scriptBuildCage, {
         message: "Compiling Cage...",
         messageOnError: "Failed to compile Cage. Please check the build logs for more information.",
@@ -134,16 +125,7 @@ export async function compileCage(): Promise<void> {
 export async function compileWPE(): Promise<void> {
     const bspName = Settings.bspName!
 
-    // WPE extension source directory in artifacts
-    const wpeExtSrcPath = join(Settings.projectPath, "dist", "artifacts", "wpe-extension")
-
-    // Create directory if it doesn't exist
-    if (!directoryExists(wpeExtSrcPath)) await mkdir(wpeExtSrcPath, { recursive: true })
-
-    // Copy WPE extension source files if they don't exist (first build)
-    await copyWPEExtensionSourceFiles(wpeExtSrcPath)
-    await copyPatches()
-
+    // Source + patches live under dist/artifacts/ — regenerated from embedded each build.
     await Runner.runScriptInDocker(scriptBuildWPE, {
         message: "Compiling WPE Extension and Cog...",
         messageOnError: "Failed to compile WPE Extension and Cog. Please check the build logs for more information.",
@@ -158,15 +140,7 @@ export async function compileWPE(): Promise<void> {
 export async function compileScreen(): Promise<void> {
     const bspName = Settings.bspName!
 
-    // Screen daemon source directory in artifacts
-    const screenSrcPath = join(Settings.projectPath, "dist", "artifacts", "screen")
-
-    // Create directory if it doesn't exist
-    if (!directoryExists(screenSrcPath)) await mkdir(screenSrcPath, { recursive: true })
-
-    // Copy screen source files if they don't exist (first build)
-    await copyScreenSourceFiles(screenSrcPath)
-
+    // Source lives in dist/artifacts/screen — regenerated from embedded each build.
     await Runner.runScriptInDocker(scriptBuildScreen, {
         message: "Compiling screen capture daemon...",
         messageOnError: "Failed to compile screen daemon. Please check the build logs for more information.",
@@ -271,14 +245,21 @@ export async function updateDevEnvConfig(bspName: string): Promise<void> {
 }
 
 /**
- * Removes the dev client configuration so production builds cannot inherit a
- * previous dev image's mode marker when the client compile step is cached.
+ * Disables dev mode for production builds without destroying the dev config.
+ *
+ * The marker that puts the device into dev mode is the *active* file name
+ * (.dev-env.json); production simply must not ship that name. But the config
+ * itself — crucially the clientKey — must be preserved so the on-device Dev Mode
+ * toggle can re-enable it later (it works by renaming .disabled -> active, see
+ * pkg/runtime/api/dev.go). So we DEMOTE rather than delete: rename the active
+ * config to .dev-env.json.disabled. It is never deleted while present.
  */
 export async function removeDevEnvConfig(bspName: string): Promise<void> {
     const bspCacheDir = join(Settings.projectPath, "dist", "cache", bspName)
     const devEnvPath = join(bspCacheDir, ".dev-env.json")
+    const disabledPath = join(bspCacheDir, ".dev-env.json.disabled")
 
-    if (fileExists(devEnvPath)) await Bun.file(devEnvPath).delete()
+    if (fileExists(devEnvPath)) await rename(devEnvPath, disabledPath)
 }
 
 /**
@@ -288,14 +269,7 @@ export async function removeDevEnvConfig(bspName: string): Promise<void> {
 export async function buildStruxClient(addDevMode = false): Promise<void> {
     const bspName = Settings.bspName!
 
-    // This is a folder - contains the Go source files
-    const clientSrcPath = join(Settings.projectPath, "dist", "artifacts", "client")
-
-    // If it doesn't exist, create the client folder
-    if (!directoryExists(clientSrcPath)) await mkdir(clientSrcPath, { recursive: true })
-
-    // Copy Go client-base files if they don't exist (first build)
-    await copyClientBaseFiles(clientSrcPath)
+    // Client Go source lives in dist/artifacts/client — regenerated from embedded each build.
 
     // Handle dev mode configuration
     if (addDevMode) {

@@ -106,6 +106,11 @@ mkdir -p "$BUILD_TMP"
 # Change to client source directory
 cd "$CLIENT_SOURCE_DIR"
 
+# Ignore any host go.work. go discovers go.work by walking up the tree, so a
+# developer's gitignored /project/go.work would otherwise be picked up here and
+# point at host paths that don't exist in this container.
+export GOWORK=off
+
 # Download Go dependencies
 progress "Downloading Go dependencies..."
 

@@ -3,13 +3,15 @@
  *
  *  Artifact Copying Utilities
  *
- *  Functions for copying bundled assets to dist/artifacts/
- *  These files are written once on first build, then users can modify them.
+ *  Regenerates dist/artifacts/ from the bundled assets. As of v0.4.0 this is
+ *  fully derived build state — wiped and rewritten on every build so it always
+ *  matches the running CLI. Genuine customization lives in overlays and
+ *  strux.yaml, not here (see regenerateArtifacts).
  *
  */
 
-import { join } from "path"
-import { mkdir as mkdirp } from "fs/promises"
+import { dirname, join } from "path"
+import { mkdir as mkdirp, rm } from "fs/promises"
 import { Settings } from "../../settings"
 import { fileExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
@@ -171,70 +173,132 @@ import screenMesonBuild from "../../assets/screen-base/meson.build" with { type:
 // @ts-ignore
 import screenProtocolXml from "../../assets/screen-base/protocols/wlr-screencopy-unstable-v1.xml" with { type: "text" }
 
+// ----------------------------------------------------------------------------
+// Artifact manifest — the SINGLE source of truth for everything written into
+// dist/artifacts/. Add a file here and it is regenerated on every build; there
+// is no second list to keep in sync. The old write-once copies + a separate
+// force-restore list drifting apart is exactly what silently stranded new files
+// like strux-usbnet.service. Paths are relative to dist/artifacts/.
+// ----------------------------------------------------------------------------
+const ARTIFACT_FILES: readonly (readonly [string, string])[] = [
+    // Plymouth boot splash theme
+    ["plymouth/strux.plymouth", artifactPlymouthTheme],
+    ["plymouth/strux.script", artifactPlymouthScript],
+    ["plymouth/plymouthd.conf", artifactPlymouthConf],
+
+    // Init + lifecycle scripts
+    ["scripts/init.sh", initScript],
+    ["scripts/strux-network.sh", initNetworkScript],
+    ["scripts/strux.sh", initStruxScript],
+    ["scripts/strux-run-cog.sh", runCogScript],
+
+    // systemd units
+    ["systemd/strux.service", systemdStruxService],
+    ["systemd/strux-usbnet.service", systemdUsbnetService],
+    ["systemd/strux-network.service", systemdNetworkService],
+    ["systemd/20-ethernet.network", systemdEthernetNetwork],
+
+    // Standalone files
+    ["not-configured.html", notConfiguredHTML],
+    ["Dockerfile", scriptsBaseDockerfile],
+
+    // Go client source
+    ["client/main.go", clientGoMain],
+    ["client/binary.go", clientGoBinary],
+    ["client/cage.go", clientGoCage],
+    ["client/config.go", clientGoConfig],
+    ["client/hosts.go", clientGoHosts],
+    ["client/logger.go", clientGoLogger],
+    ["client/logs.go", clientGoLogs],
+    ["client/socket.go", clientGoSocket],
+    ["client/update.go", clientGoUpdate],
+    ["client/helpers.go", clientGoHelpers],
+    ["client/exec.go", clientGoExec],
+    ["client/screen.go", clientGoScreen],
+    ["client/usbnet.go", clientGoUSBNet],
+    ["client/websocket.go", clientGoWebsocket],
+    ["client/go.mod", clientGoMod],
+    ["client/go.sum", clientGoSum],
+
+    // Cage Wayland compositor source
+    ["cage/cage.c", cageMain],
+    ["cage/output.c", cageOutput],
+    ["cage/output.h", cageOutputH],
+    ["cage/seat.c", cageSeat],
+    ["cage/seat.h", cageSeatH],
+    ["cage/view.c", cageView],
+    ["cage/view.h", cageViewH],
+    ["cage/xdg_shell.c", cageXdgShell],
+    ["cage/xdg_shell.h", cageXdgShellH],
+    ["cage/xwayland.c", cageXwayland],
+    ["cage/xwayland.h", cageXwaylandH],
+    ["cage/idle_inhibit_v1.c", cageIdleInhibit],
+    ["cage/idle_inhibit_v1.h", cageIdleInhibitH],
+    ["cage/splash.c", cageSplash],
+    ["cage/splash.h", cageSplashH],
+    ["cage/server.h", cageServerH],
+    ["cage/config.h.in", cageConfigH],
+    ["cage/meson.build", cageMesonBuild],
+    ["cage/meson_options.txt", cageMesonOptions],
+    ["cage/LICENSE", cageLicense],
+    ["cage/cage.1.scd", cageManPage],
+    ["cage/README.md", cageReadme],
+
+    // WPE WebKit extension source
+    ["wpe-extension/extension.c", wpeExtensionC],
+    ["wpe-extension/CMakeLists.txt", wpeExtensionCMake],
+
+    // Screen capture daemon source
+    ["screen/main.c", screenMainC],
+    ["screen/capture.c", screenCaptureC],
+    ["screen/capture.h", screenCaptureH],
+    ["screen/pipeline.c", screenPipelineC],
+    ["screen/pipeline.h", screenPipelineH],
+    ["screen/meson.build", screenMesonBuild],
+    ["screen/protocols/wlr-screencopy-unstable-v1.xml", screenProtocolXml],
+
+    // Build patches (applied to upstream sources inside the build container)
+    ["patches/cog-autoplay-policy.patch", cogAutoplayPatch],
+]
+
+// Binary artifacts: [dest path relative to dist/artifacts/, embedded file path].
+const ARTIFACT_BINARY_FILES: readonly (readonly [string, string])[] = [
+    ["client/assets/dev-connect.png", clientDevConnectPNG],
+]
+
 /**
- * Copies Plymouth theme files to dist/artifacts/plymouth/ if they don't exist.
- * Files are only written on first build - users can modify them afterwards.
+ * Regenerates dist/artifacts/ from the embedded assets.
+ *
+ * dist/artifacts/ is fully DERIVED build state, never user state: it is wiped
+ * and rewritten on every build so it always matches the running CLI version.
+ * This is a v0.4.0 breaking change from the old write-once model, where a stale
+ * copy could shadow a CLI fix, or a newly added file (e.g. strux-usbnet.service)
+ * could silently never appear. Genuine customization belongs in overlays
+ * (overlay/, bsp/<bsp>/overlay/) and strux.yaml — not here.
  */
-export async function copyPlymouthArtifacts(): Promise<void> {
-    const plymouthDir = join(Settings.projectPath, "dist", "artifacts", "plymouth")
-
-    if (!fileExists(join(plymouthDir, "strux.plymouth"))) {
-        await Bun.write(join(plymouthDir, "strux.plymouth"), artifactPlymouthTheme)
-    }
-    if (!fileExists(join(plymouthDir, "strux.script"))) {
-        await Bun.write(join(plymouthDir, "strux.script"), artifactPlymouthScript)
-    }
-    if (!fileExists(join(plymouthDir, "plymouthd.conf"))) {
-        await Bun.write(join(plymouthDir, "plymouthd.conf"), artifactPlymouthConf)
-    }
-}
-
-/**
- * Copies init scripts to dist/artifacts/scripts/ if they don't exist.
- * Files are only written on first build - users can modify them afterwards.
- */
-export async function copyInitScripts(): Promise<void> {
-    const scriptsDir = join(Settings.projectPath, "dist", "artifacts", "scripts")
-
-    if (!fileExists(join(scriptsDir, "init.sh"))) {
-        await Bun.write(join(scriptsDir, "init.sh"), initScript)
-    }
-    if (!fileExists(join(scriptsDir, "strux-network.sh"))) {
-        await Bun.write(join(scriptsDir, "strux-network.sh"), initNetworkScript)
-    }
-    if (!fileExists(join(scriptsDir, "strux.sh"))) {
-        await Bun.write(join(scriptsDir, "strux.sh"), initStruxScript)
-    }
-    if (!fileExists(join(scriptsDir, "strux-run-cog.sh"))) {
-        await Bun.write(join(scriptsDir, "strux-run-cog.sh"), runCogScript)
-    }
-
-    // Not-configured HTML page for unconfigured monitor outputs
+export async function regenerateArtifacts(): Promise<void> {
     const artifactsDir = join(Settings.projectPath, "dist", "artifacts")
-    if (!fileExists(join(artifactsDir, "not-configured.html"))) {
-        await Bun.write(join(artifactsDir, "not-configured.html"), notConfiguredHTML)
-    }
-}
 
-/**
- * Copies systemd service files to dist/artifacts/systemd/ if they don't exist.
- * Files are only written on first build - users can modify them afterwards.
- */
-export async function copySystemdServices(): Promise<void> {
-    const systemdDir = join(Settings.projectPath, "dist", "artifacts", "systemd")
+    // Wipe first so renamed/removed framework files never linger across versions.
+    await rm(artifactsDir, { recursive: true, force: true })
 
-    if (!fileExists(join(systemdDir, "strux.service"))) {
-        await Bun.write(join(systemdDir, "strux.service"), systemdStruxService)
+    for (const [relativePath, contents] of ARTIFACT_FILES) {
+        const dest = join(artifactsDir, relativePath)
+        await mkdirp(dirname(dest), { recursive: true })
+        await Bun.write(dest, contents)
     }
-    if (!fileExists(join(systemdDir, "strux-usbnet.service"))) {
-        await Bun.write(join(systemdDir, "strux-usbnet.service"), systemdUsbnetService)
+
+    for (const [relativePath, sourcePath] of ARTIFACT_BINARY_FILES) {
+        const dest = join(artifactsDir, relativePath)
+        await mkdirp(dirname(dest), { recursive: true })
+        await Bun.write(dest, Bun.file(sourcePath))
     }
-    if (!fileExists(join(systemdDir, "strux-network.service"))) {
-        await Bun.write(join(systemdDir, "strux-network.service"), systemdNetworkService)
-    }
-    if (!fileExists(join(systemdDir, "20-ethernet.network"))) {
-        await Bun.write(join(systemdDir, "20-ethernet.network"), systemdEthernetNetwork)
-    }
+
+    // The boot logo comes from strux.yaml (user config), not the embedded set —
+    // regenerate it after the wipe so a configured splash survives.
+    await copyBootSplashLogo()
+
+    Logger.success("Artifacts regenerated from built-in versions")
 }
 
 /**
@@ -280,278 +344,4 @@ export async function copyBootSplashLogo(): Promise<void> {
     await Bun.write(destLogoPath, logoFile)
 
     Logger.success("Custom Boot splash logo copied successfully")
-}
-
-/**
- * Copies Go client base files to dist/artifacts/client/ if they don't exist.
- * Files are only written on first build - users can modify them afterwards.
- */
-async function ensureClientBaseFile(clientSrcPath: string, fileName: string, contents: string, marker: string): Promise<void> {
-    const filePath = join(clientSrcPath, fileName)
-
-    if (!fileExists(filePath)) {
-        await Bun.write(filePath, contents)
-        return
-    }
-
-    const existing = await Bun.file(filePath).text()
-    if (!existing.includes(marker)) {
-        Logger.log(`Refreshing ${fileName} in client base artifacts...`)
-        await Bun.write(filePath, contents)
-    }
-}
-
-export async function copyClientBaseFiles(clientSrcPath: string): Promise<void> {
-    await mkdirp(join(clientSrcPath, "assets"), { recursive: true })
-
-    if (!fileExists(join(clientSrcPath, "main.go"))) {
-        Logger.log("Copying Strux Client (Go) base files...")
-        await Bun.write(join(clientSrcPath, "main.go"), clientGoMain)
-        await Bun.write(join(clientSrcPath, "binary.go"), clientGoBinary)
-        await Bun.write(join(clientSrcPath, "cage.go"), clientGoCage)
-        await Bun.write(join(clientSrcPath, "config.go"), clientGoConfig)
-        await Bun.write(join(clientSrcPath, "hosts.go"), clientGoHosts)
-        await Bun.write(join(clientSrcPath, "logger.go"), clientGoLogger)
-        await Bun.write(join(clientSrcPath, "logs.go"), clientGoLogs)
-        await Bun.write(join(clientSrcPath, "socket.go"), clientGoSocket)
-        await Bun.write(join(clientSrcPath, "update.go"), clientGoUpdate)
-        await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
-        await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
-        await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
-        await Bun.write(join(clientSrcPath, "usbnet.go"), clientGoUSBNet)
-        await Bun.write(join(clientSrcPath, "websocket.go"), clientGoWebsocket)
-        await Bun.write(join(clientSrcPath, "go.mod"), clientGoMod)
-        await Bun.write(join(clientSrcPath, "go.sum"), clientGoSum)
-        await Bun.write(join(clientSrcPath, "assets", "dev-connect.png"), Bun.file(clientDevConnectPNG))
-        return
-    }
-
-    if (!fileExists(join(clientSrcPath, "exec.go"))) {
-        Logger.log("Adding missing exec.go to client base...")
-        await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
-    }
-
-    await ensureClientBaseFile(clientSrcPath, "socket.go", clientGoSocket, "writeUpdateProgress(payload)")
-    await ensureClientBaseFile(clientSrcPath, "update.go", clientGoUpdate, "verifyBundleCompatibility")
-
-    if (!fileExists(join(clientSrcPath, "screen.go"))) {
-        Logger.log("Adding missing screen.go to client base...")
-        await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
-    }
-
-    if (!fileExists(join(clientSrcPath, "usbnet.go"))) {
-        Logger.log("Adding missing usbnet.go to client base...")
-        await Bun.write(join(clientSrcPath, "usbnet.go"), clientGoUSBNet)
-    }
-
-    if (!fileExists(join(clientSrcPath, "assets", "dev-connect.png"))) {
-        Logger.log("Adding missing dev-connect.png to client base assets...")
-        await Bun.write(join(clientSrcPath, "assets", "dev-connect.png"), Bun.file(clientDevConnectPNG))
-    }
-}
-
-/**
- * Copies Cage Wayland compositor source files to dist/artifacts/cage/ if they don't exist.
- * Files are only written on first build - users can modify them afterwards.
- */
-export async function copyCageSourceFiles(cageSrcPath: string): Promise<void> {
-    if (!fileExists(join(cageSrcPath, "cage.c"))) {
-        Logger.log("Copying Cage compositor source files...")
-        // Main source files
-        await Bun.write(join(cageSrcPath, "cage.c"), cageMain)
-        await Bun.write(join(cageSrcPath, "output.c"), cageOutput)
-        await Bun.write(join(cageSrcPath, "output.h"), cageOutputH)
-        await Bun.write(join(cageSrcPath, "seat.c"), cageSeat)
-        await Bun.write(join(cageSrcPath, "seat.h"), cageSeatH)
-        await Bun.write(join(cageSrcPath, "view.c"), cageView)
-        await Bun.write(join(cageSrcPath, "view.h"), cageViewH)
-        await Bun.write(join(cageSrcPath, "xdg_shell.c"), cageXdgShell)
-        await Bun.write(join(cageSrcPath, "xdg_shell.h"), cageXdgShellH)
-        await Bun.write(join(cageSrcPath, "xwayland.c"), cageXwayland)
-        await Bun.write(join(cageSrcPath, "xwayland.h"), cageXwaylandH)
-        await Bun.write(join(cageSrcPath, "idle_inhibit_v1.c"), cageIdleInhibit)
-        await Bun.write(join(cageSrcPath, "idle_inhibit_v1.h"), cageIdleInhibitH)
-        await Bun.write(join(cageSrcPath, "splash.c"), cageSplash)
-        await Bun.write(join(cageSrcPath, "splash.h"), cageSplashH)
-        await Bun.write(join(cageSrcPath, "server.h"), cageServerH)
-        await Bun.write(join(cageSrcPath, "config.h.in"), cageConfigH)
-        // Build files
-        await Bun.write(join(cageSrcPath, "meson.build"), cageMesonBuild)
-        await Bun.write(join(cageSrcPath, "meson_options.txt"), cageMesonOptions)
-        await Bun.write(join(cageSrcPath, "LICENSE"), cageLicense)
-        await Bun.write(join(cageSrcPath, "cage.1.scd"), cageManPage)
-        await Bun.write(join(cageSrcPath, "README.md"), cageReadme)
-    }
-}
-
-/**
- * Copies WPE WebKit extension source files to dist/artifacts/wpe-extension/ if they don't exist.
- * Files are only written on first build - users can modify them afterwards.
- */
-export async function copyWPEExtensionSourceFiles(wpeExtSrcPath: string): Promise<void> {
-    if (!fileExists(join(wpeExtSrcPath, "extension.c"))) {
-        Logger.log("Copying WPE extension source files...")
-        await Bun.write(join(wpeExtSrcPath, "extension.c"), wpeExtensionC)
-        await Bun.write(join(wpeExtSrcPath, "CMakeLists.txt"), wpeExtensionCMake)
-    }
-}
-
-/**
- * Copies screen capture daemon source files to dist/artifacts/screen/ if they don't exist.
- * Files are only written on first build - users can modify them afterwards.
- */
-export async function copyScreenSourceFiles(screenSrcPath: string): Promise<void> {
-    if (!fileExists(join(screenSrcPath, "main.c"))) {
-        Logger.log("Copying screen capture daemon source files...")
-        const { mkdir } = await import("fs/promises")
-        await mkdir(join(screenSrcPath, "protocols"), { recursive: true })
-
-        await Bun.write(join(screenSrcPath, "main.c"), screenMainC)
-        await Bun.write(join(screenSrcPath, "capture.c"), screenCaptureC)
-        await Bun.write(join(screenSrcPath, "capture.h"), screenCaptureH)
-        await Bun.write(join(screenSrcPath, "pipeline.c"), screenPipelineC)
-        await Bun.write(join(screenSrcPath, "pipeline.h"), screenPipelineH)
-        await Bun.write(join(screenSrcPath, "meson.build"), screenMesonBuild)
-        await Bun.write(join(screenSrcPath, "protocols", "wlr-screencopy-unstable-v1.xml"), screenProtocolXml)
-    }
-}
-
-/**
- * Copies patch files to dist/artifacts/patches/.
- * Always overwrites — patches are not user-modifiable.
- */
-export async function copyPatches(): Promise<void> {
-    const patchesDir = join(Settings.projectPath, "dist", "artifacts", "patches")
-
-    const { mkdir } = await import("fs/promises")
-    await mkdir(patchesDir, { recursive: true })
-
-    await Bun.write(join(patchesDir, "cog-autoplay-policy.patch"), cogAutoplayPatch)
-}
-
-/**
- * Copies all initial artifacts needed for the build.
- * This includes init scripts, systemd services, and plymouth files.
- */
-export async function copyAllInitialArtifacts(): Promise<void> {
-    await copyInitScripts()
-    await copySystemdServices()
-    await copyPlymouthArtifacts()
-    await copyBootSplashLogo()
-    await copyPatches()
-}
-
-/**
- * Force-restores ALL artifacts to their built-in versions, overwriting any user modifications.
- * This writes every embedded file regardless of whether it already exists on disk.
- */
-export async function forceRestoreAllArtifacts(): Promise<void> {
-    const artifactsDir = join(Settings.projectPath, "dist", "artifacts")
-    const plymouthDir = join(artifactsDir, "plymouth")
-    const scriptsDir = join(artifactsDir, "scripts")
-    const systemdDir = join(artifactsDir, "systemd")
-    const clientSrcPath = join(artifactsDir, "client")
-    const cageSrcPath = join(artifactsDir, "cage")
-    const wpeExtSrcPath = join(artifactsDir, "wpe-extension")
-    const screenSrcPath = join(artifactsDir, "screen")
-
-    const patchesDir = join(artifactsDir, "patches")
-
-    // Ensure all directories exist
-    const { mkdir } = await import("fs/promises")
-    await Promise.all([
-        mkdir(plymouthDir, { recursive: true }),
-        mkdir(scriptsDir, { recursive: true }),
-        mkdir(systemdDir, { recursive: true }),
-        mkdir(clientSrcPath, { recursive: true }),
-        mkdir(cageSrcPath, { recursive: true }),
-        mkdir(wpeExtSrcPath, { recursive: true }),
-        mkdir(screenSrcPath, { recursive: true }),
-        mkdir(join(screenSrcPath, "protocols"), { recursive: true }),
-        mkdir(patchesDir, { recursive: true }),
-    ])
-
-    // Plymouth
-    await Bun.write(join(plymouthDir, "strux.plymouth"), artifactPlymouthTheme)
-    await Bun.write(join(plymouthDir, "strux.script"), artifactPlymouthScript)
-    await Bun.write(join(plymouthDir, "plymouthd.conf"), artifactPlymouthConf)
-
-    // Init scripts
-    await Bun.write(join(scriptsDir, "init.sh"), initScript)
-    await Bun.write(join(scriptsDir, "strux-network.sh"), initNetworkScript)
-    await Bun.write(join(scriptsDir, "strux.sh"), initStruxScript)
-    await Bun.write(join(scriptsDir, "strux-run-cog.sh"), runCogScript)
-
-    // Not-configured HTML
-    await Bun.write(join(artifactsDir, "not-configured.html"), notConfiguredHTML)
-
-    // Systemd services
-    await Bun.write(join(systemdDir, "strux.service"), systemdStruxService)
-    await Bun.write(join(systemdDir, "strux-network.service"), systemdNetworkService)
-    await Bun.write(join(systemdDir, "20-ethernet.network"), systemdEthernetNetwork)
-
-    // Go client source files
-    await mkdirp(join(clientSrcPath, "assets"), { recursive: true })
-    await Bun.write(join(clientSrcPath, "main.go"), clientGoMain)
-    await Bun.write(join(clientSrcPath, "binary.go"), clientGoBinary)
-    await Bun.write(join(clientSrcPath, "cage.go"), clientGoCage)
-    await Bun.write(join(clientSrcPath, "config.go"), clientGoConfig)
-    await Bun.write(join(clientSrcPath, "hosts.go"), clientGoHosts)
-    await Bun.write(join(clientSrcPath, "logger.go"), clientGoLogger)
-    await Bun.write(join(clientSrcPath, "logs.go"), clientGoLogs)
-    await Bun.write(join(clientSrcPath, "socket.go"), clientGoSocket)
-    await Bun.write(join(clientSrcPath, "update.go"), clientGoUpdate)
-    await Bun.write(join(clientSrcPath, "helpers.go"), clientGoHelpers)
-    await Bun.write(join(clientSrcPath, "exec.go"), clientGoExec)
-    await Bun.write(join(clientSrcPath, "screen.go"), clientGoScreen)
-    await Bun.write(join(clientSrcPath, "usbnet.go"), clientGoUSBNet)
-    await Bun.write(join(clientSrcPath, "websocket.go"), clientGoWebsocket)
-    await Bun.write(join(clientSrcPath, "go.mod"), clientGoMod)
-    await Bun.write(join(clientSrcPath, "go.sum"), clientGoSum)
-    await Bun.write(join(clientSrcPath, "assets", "dev-connect.png"), Bun.file(clientDevConnectPNG))
-
-    // Cage compositor source files
-    await Bun.write(join(cageSrcPath, "cage.c"), cageMain)
-    await Bun.write(join(cageSrcPath, "output.c"), cageOutput)
-    await Bun.write(join(cageSrcPath, "output.h"), cageOutputH)
-    await Bun.write(join(cageSrcPath, "seat.c"), cageSeat)
-    await Bun.write(join(cageSrcPath, "seat.h"), cageSeatH)
-    await Bun.write(join(cageSrcPath, "view.c"), cageView)
-    await Bun.write(join(cageSrcPath, "view.h"), cageViewH)
-    await Bun.write(join(cageSrcPath, "xdg_shell.c"), cageXdgShell)
-    await Bun.write(join(cageSrcPath, "xdg_shell.h"), cageXdgShellH)
-    await Bun.write(join(cageSrcPath, "xwayland.c"), cageXwayland)
-    await Bun.write(join(cageSrcPath, "xwayland.h"), cageXwaylandH)
-    await Bun.write(join(cageSrcPath, "idle_inhibit_v1.c"), cageIdleInhibit)
-    await Bun.write(join(cageSrcPath, "idle_inhibit_v1.h"), cageIdleInhibitH)
-    await Bun.write(join(cageSrcPath, "splash.c"), cageSplash)
-    await Bun.write(join(cageSrcPath, "splash.h"), cageSplashH)
-    await Bun.write(join(cageSrcPath, "server.h"), cageServerH)
-    await Bun.write(join(cageSrcPath, "config.h.in"), cageConfigH)
-    await Bun.write(join(cageSrcPath, "meson.build"), cageMesonBuild)
-    await Bun.write(join(cageSrcPath, "meson_options.txt"), cageMesonOptions)
-    await Bun.write(join(cageSrcPath, "LICENSE"), cageLicense)
-    await Bun.write(join(cageSrcPath, "cage.1.scd"), cageManPage)
-    await Bun.write(join(cageSrcPath, "README.md"), cageReadme)
-
-    // WPE extension source files
-    await Bun.write(join(wpeExtSrcPath, "extension.c"), wpeExtensionC)
-    await Bun.write(join(wpeExtSrcPath, "CMakeLists.txt"), wpeExtensionCMake)
-
-    // Screen capture daemon source files
-    await Bun.write(join(screenSrcPath, "main.c"), screenMainC)
-    await Bun.write(join(screenSrcPath, "capture.c"), screenCaptureC)
-    await Bun.write(join(screenSrcPath, "capture.h"), screenCaptureH)
-    await Bun.write(join(screenSrcPath, "pipeline.c"), screenPipelineC)
-    await Bun.write(join(screenSrcPath, "pipeline.h"), screenPipelineH)
-    await Bun.write(join(screenSrcPath, "meson.build"), screenMesonBuild)
-    await Bun.write(join(screenSrcPath, "protocols", "wlr-screencopy-unstable-v1.xml"), screenProtocolXml)
-
-    // Patches
-    await Bun.write(join(patchesDir, "cog-autoplay-policy.patch"), cogAutoplayPatch)
-
-    // Dockerfile (for --local-builder Docker image builds)
-    await Bun.write(join(artifactsDir, "Dockerfile"), scriptsBaseDockerfile)
-
-    Logger.success("All artifacts restored to built-in versions")
 }

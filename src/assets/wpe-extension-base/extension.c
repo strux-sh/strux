@@ -30,6 +30,10 @@ static GMutex event_mutex;
 
 // Event listeners: event_name (gchar*) -> GPtrArray* of JSCValue* callbacks
 static GHashTable *event_listeners = NULL;
+// System (per-service) event listeners: "<path>:<event>" -> GPtrArray* of
+// JSCValue* callbacks. Fed by "system-event" messages and exposed via
+// window.strux.<service>.on(), kept separate from the app-facing strux.ipc bus.
+static GHashTable *system_event_listeners = NULL;
 static GMutex listeners_mutex;
 
 // Current JS context for event dispatch
@@ -322,6 +326,7 @@ free_event_listeners_array (gpointer data)
 typedef struct {
     gchar *event_name;
     gchar *json_data;
+    gboolean is_system;   // TRUE -> system_event_listeners, FALSE -> event_listeners
 } EventDispatch;
 
 // Dispatch event to JS listeners on the main thread
@@ -338,7 +343,8 @@ dispatch_event_to_js (gpointer user_data)
     }
 
     g_mutex_lock(&listeners_mutex);
-    GPtrArray *callbacks = g_hash_table_lookup(event_listeners, dispatch->event_name);
+    GHashTable *table = dispatch->is_system ? system_event_listeners : event_listeners;
+    GPtrArray *callbacks = g_hash_table_lookup(table, dispatch->event_name);
     if (!callbacks || callbacks->len == 0) {
         g_mutex_unlock(&listeners_mutex);
         g_free(dispatch->event_name);
@@ -453,7 +459,9 @@ event_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_da
         JsonObject *obj = json_node_get_object(root);
 
         const gchar *type = json_object_get_string_member(obj, "type");
-        if (type && g_strcmp0(type, "event") == 0) {
+        gboolean is_event = (type && g_strcmp0(type, "event") == 0);
+        gboolean is_system = (type && g_strcmp0(type, "system-event") == 0);
+        if (is_event || is_system) {
             const gchar *event_name = json_object_get_string_member(obj, "event");
             if (event_name) {
                 // Serialize the "data" field back to JSON string
@@ -466,10 +474,11 @@ event_read_callback (GObject *source_object, GAsyncResult *res, gpointer user_da
                     g_object_unref(gen);
                 }
 
-                // Schedule dispatch on main thread
+                // Schedule dispatch on main thread (to the user or system table)
                 EventDispatch *dispatch = g_new(EventDispatch, 1);
                 dispatch->event_name = g_strdup(event_name);
                 dispatch->json_data = data_json ? data_json : g_strdup("");
+                dispatch->is_system = is_system;
                 g_idle_add(dispatch_event_to_js, dispatch);
             }
         }
@@ -1265,6 +1274,111 @@ ipc_off_callback (GPtrArray *args, gpointer user_data)
     return jsc_value_new_undefined(context);
 }
 
+// strux.<service>.on(event, callback) — subscribe to a system (framework) event.
+// user_data is the service path prefix (e.g. "strux.audio"); it is prepended to
+// the event name to form the system_event_listeners key "strux.audio:<event>".
+// Returns an unsubscribe function.
+static JSCValue*
+namespace_on_callback (GPtrArray *args, gpointer user_data)
+{
+    const gchar *path = user_data ? (const gchar*)user_data : "strux";
+
+    JSCContext *context = NULL;
+    if (args && args->len > 0) {
+        context = jsc_value_get_context(g_ptr_array_index(args, 0));
+    }
+    if (!context) context = jsc_context_get_current();
+
+    if (!args || args->len < 2) {
+        fprintf(stderr, "Strux Extension: %s.on() requires (event, callback)\n", path);
+        return jsc_value_new_undefined(context);
+    }
+
+    JSCValue *event_arg = g_ptr_array_index(args, 0);
+    JSCValue *callback_arg = g_ptr_array_index(args, 1);
+
+    if (!jsc_value_is_string(event_arg) || !jsc_value_is_function(callback_arg)) {
+        fprintf(stderr, "Strux Extension: %s.on() expects (string, function)\n", path);
+        return jsc_value_new_undefined(context);
+    }
+
+    gchar *event_name = jsc_value_to_string(event_arg);
+    gchar *full_key = g_strdup_printf("%s:%s", path, event_name);
+
+    g_mutex_lock(&listeners_mutex);
+    GPtrArray *callbacks = g_hash_table_lookup(system_event_listeners, full_key);
+    if (!callbacks) {
+        callbacks = g_ptr_array_new();
+        g_hash_table_insert(system_event_listeners, g_strdup(full_key), callbacks);
+    }
+    g_ptr_array_add(callbacks, g_object_ref(callback_arg));
+    g_mutex_unlock(&listeners_mutex);
+
+    // Unsubscribe closure: calls <path>.off(eventName, cb)
+    gchar *unsub_code = g_strdup_printf(
+        "(function(eventName, cb) {"
+        "  return function() { %s.off(eventName, cb); };"
+        "})", path);
+    JSCValue *unsub_factory = jsc_context_evaluate(context, unsub_code, -1);
+    g_free(unsub_code);
+
+    JSCValue *unsub_func = jsc_value_function_call(unsub_factory,
+        JSC_TYPE_VALUE, event_arg,
+        JSC_TYPE_VALUE, callback_arg,
+        G_TYPE_NONE);
+
+    g_object_unref(unsub_factory);
+    g_free(full_key);
+    g_free(event_name);
+
+    return unsub_func;
+}
+
+// strux.<service>.off(event, callback) — remove a system event listener.
+static JSCValue*
+namespace_off_callback (GPtrArray *args, gpointer user_data)
+{
+    const gchar *path = user_data ? (const gchar*)user_data : "strux";
+
+    JSCContext *context = NULL;
+    if (args && args->len > 0) {
+        context = jsc_value_get_context(g_ptr_array_index(args, 0));
+    }
+    if (!context) context = jsc_context_get_current();
+
+    if (!args || args->len < 2) {
+        return jsc_value_new_undefined(context);
+    }
+
+    JSCValue *event_arg = g_ptr_array_index(args, 0);
+    JSCValue *callback_arg = g_ptr_array_index(args, 1);
+
+    if (!jsc_value_is_string(event_arg)) {
+        return jsc_value_new_undefined(context);
+    }
+
+    gchar *event_name = jsc_value_to_string(event_arg);
+    gchar *full_key = g_strdup_printf("%s:%s", path, event_name);
+
+    g_mutex_lock(&listeners_mutex);
+    GPtrArray *callbacks = g_hash_table_lookup(system_event_listeners, full_key);
+    if (callbacks) {
+        for (guint i = 0; i < callbacks->len; i++) {
+            JSCValue *cb = g_ptr_array_index(callbacks, i);
+            if (cb == callback_arg) {
+                g_object_unref(cb);
+                g_ptr_array_remove_index(callbacks, i);
+                break;
+            }
+        }
+    }
+    g_mutex_unlock(&listeners_mutex);
+    g_free(full_key);
+    g_free(event_name);
+
+    return jsc_value_new_undefined(context);
+}
+
 // strux.ipc.send(event, data) — send event to Go
 static JSCValue*
 ipc_send_callback (GPtrArray *args, gpointer user_data)
@@ -1728,10 +1842,35 @@ inject_bindings (JSCContext *js_context)
                                 g_object_unref(func);
                             }
                         }
-                        
+
+                        // Attach the per-service system event API (on/off),
+                        // scoped to this namespace's path (window.strux.<ns>.on).
+                        // Reserved names: a service cannot expose "on"/"off".
+                        {
+                            gchar *ns_path = g_strdup_printf("strux.%s", strux_namespace);
+
+                            JSCValue *ns_on = jsc_value_new_function_variadic(
+                                js_context, "on",
+                                G_CALLBACK(namespace_on_callback),
+                                g_strdup(ns_path), (GDestroyNotify)g_free,
+                                JSC_TYPE_VALUE);
+                            jsc_value_object_set_property(namespace_js_obj, "on", ns_on);
+                            g_object_unref(ns_on);
+
+                            JSCValue *ns_off = jsc_value_new_function_variadic(
+                                js_context, "off",
+                                G_CALLBACK(namespace_off_callback),
+                                g_strdup(ns_path), (GDestroyNotify)g_free,
+                                JSC_TYPE_VALUE);
+                            jsc_value_object_set_property(namespace_js_obj, "off", ns_off);
+                            g_object_unref(ns_off);
+
+                            g_free(ns_path);
+                        }
+
                         g_object_unref(namespace_js_obj);
                     }
-                    
+
                     g_object_unref(strux_js_obj);
                 }
 
@@ -2011,6 +2150,10 @@ webkit_web_extension_initialize (WebKitWebProcessExtension *extension)
 
     // Initialize event listeners hash table
     event_listeners = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+        (GDestroyNotify)free_event_listeners_array);
+
+    // Initialize system (per-service) event listeners hash table
+    system_event_listeners = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
         (GDestroyNotify)free_event_listeners_array);
 
     g_signal_connect(extension, "page-created",

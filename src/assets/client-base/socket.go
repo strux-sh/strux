@@ -243,7 +243,7 @@ func (s *SocketClient) Connect(host Host) error {
 	ws := NewWSClient()
 
 	// Set protocol version and client key as query params
-	ws.SetQueryParam("v", "0.3.0")
+	ws.SetQueryParam("v", "0.4.0")
 	if s.clientKey != "" {
 		ws.SetQueryParam("key", s.clientKey)
 	}

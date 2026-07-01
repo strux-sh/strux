@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+
+	"github.com/strux-dev/strux/pkg/runtime/api"
 )
 
 // Registry manages all registered extensions
@@ -77,6 +79,12 @@ func (r *Registry) extractMethods(instance interface{}) []MethodInfo {
 		method := val.Method(i)
 		methodType := method.Type()
 		methodName := typ.Method(i).Name
+
+		// Skip names reserved by the per-service event system (e.g. Emit from
+		// the embedded api.Service) so they aren't exposed as callable methods.
+		if api.IsReservedMethodName(methodName) {
+			continue
+		}
 
 		// Only include exported methods
 		if methodName[0] >= 'A' && methodName[0] <= 'Z' {

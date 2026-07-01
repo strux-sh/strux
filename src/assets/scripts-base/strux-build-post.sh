@@ -387,9 +387,17 @@ if [ -f "$BSP_CACHE/cog" ]; then
     progress "Installed patched Cog binary"
 fi
 
-# If the .dev-env.json file exists, copy it to the rootfs (from BSP-specific cache)
+# Copy the dev config into the rootfs (from BSP-specific cache).
+# - .dev-env.json (active)   -> device boots into dev mode.
+# - .dev-env.json.disabled   -> dev mode off, but the on-device Dev Mode toggle
+#                               can enable it (it renames .disabled -> active).
+# A production build demotes the active config to .disabled rather than deleting
+# it, so the clientKey survives and the toggle keeps working.
 if [ -f "$BSP_CACHE/.dev-env.json" ]; then
     cp "$BSP_CACHE/.dev-env.json" "$ROOTFS_DIR/strux/.dev-env.json"
+fi
+if [ -f "$BSP_CACHE/.dev-env.json.disabled" ]; then
+    cp "$BSP_CACHE/.dev-env.json.disabled" "$ROOTFS_DIR/strux/.dev-env.json.disabled"
 fi
 
 # Copy display configuration JSON (written by TypeScript build pipeline)

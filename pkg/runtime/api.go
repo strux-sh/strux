@@ -47,6 +47,11 @@ func (rt *Runtime) WiFi() *api.WiFiService {
 	return &api.WiFiService{}
 }
 
+// Audio returns Strux-owned audio APIs backed by the active BSP.
+func (rt *Runtime) Audio() *api.AudioService {
+	return &api.AudioService{}
+}
+
 // Capabilities returns Strux-owned capabilities APIs backed by the active BSP.
 func (rt *Runtime) Capabilities() *api.CapabilitiesService {
 	return &api.CapabilitiesService{}
@@ -57,16 +62,20 @@ func (rt *Runtime) Capabilities() *api.CapabilitiesService {
 // ----------------------------------------------------------------------------
 // BSPs Call these to register their implementation of a Strux standard API capability.
 // ----------------------------------------------------------------------------
-func RegisterDisplayProvider(provider DisplayProvider) {
+func RegisterDisplayProvider(provider DisplayContract) {
 	api.RegisterDisplayProvider(provider)
 }
 
-func RegisterNetworkProvider(provider NetworkProvider) {
+func RegisterNetworkProvider(provider NetworkContract) {
 	api.RegisterNetworkProvider(provider)
 }
 
-func RegisterWiFiProvider(provider WiFiProvider) {
+func RegisterWiFiProvider(provider WiFiContract) {
 	api.RegisterWiFiProvider(provider)
+}
+
+func RegisterAudioProvider(provider AudioContract) {
+	api.RegisterAudioProvider(provider)
 }
 
 // ----------------------------------------------------------------------------
@@ -83,6 +92,7 @@ func (rt *Runtime) registerBuiltinExtensions() {
 	rt.registerStruxAPI(api.SystemNamespace, rt.System())
 	rt.registerStruxAPI(api.UpdateNamespace, rt.Update())
 	rt.registerStruxAPI(api.WiFiNamespace, rt.WiFi())
+	rt.registerStruxAPI(api.AudioNamespace, rt.Audio())
 	rt.registerStruxAPI(api.CapabilitiesNamespace, rt.Capabilities())
 
 	// ----------------------------------------------------------------------------

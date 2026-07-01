@@ -41,10 +41,18 @@ type ParamDef struct {
 }
 
 // FieldDef describes an exported field on a generated TypeScript interface.
+//
+// Optional marks a field that may be absent from the payload — rendered as a TS
+// optional member `name?: T`. It is set ONLY for fields explicitly tagged
+// `strux:"optional"`, which is how optional-feature state (e.g.
+// AudioState.AutoSwitch) is modeled: present when the BSP implements the
+// feature, absent otherwise. Plain pointers are NOT made optional — a pointer is
+// an implementation detail, not a contract that the value can be missing.
 type FieldDef struct {
-	Name   string `json:"name"`
-	GoType string `json:"goType"`
-	TSType string `json:"tsType"`
+	Name     string `json:"name"`
+	GoType   string `json:"goType"`
+	TSType   string `json:"tsType"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 // StructDef describes a struct definition.
@@ -332,9 +340,10 @@ func parseExtensionDirs(dirs []string) (RuntimeTypes, error) {
 			fields := make([]FieldDef, 0, len(typeInfo.fields))
 			for _, field := range typeInfo.fields {
 				fields = append(fields, FieldDef{
-					Name:   field.Name,
-					GoType: field.GoType,
-					TSType: goTypeToTS(field.GoType, knownTypes, false),
+					Name:     field.Name,
+					GoType:   field.GoType,
+					TSType:   goTypeToTS(field.GoType, knownTypes, false),
+					Optional: field.Optional,
 				})
 			}
 			runtimeTypes.Structs[name] = StructDef{Fields: fields}
@@ -469,12 +478,34 @@ func extractStructFields(structType *ast.StructType) []FieldDef {
 			}
 
 			fields = append(fields, FieldDef{
-				Name:   fieldName,
-				GoType: goType,
+				Name:     fieldName,
+				GoType:   goType,
+				Optional: fieldIsOptional(field),
 			})
 		}
 	}
 	return fields
+}
+
+// fieldIsOptional reports whether a field is explicitly marked optional for the
+// generated TypeScript via a `strux:"optional"` tag. This is how optional-feature
+// state fields (e.g. AudioState.AutoSwitch) render as `name?: T` — present only
+// when the BSP implements the feature — without making every pointer optional.
+func fieldIsOptional(field *ast.Field) bool {
+	if field.Tag == nil {
+		return false
+	}
+	tagValue := strings.Trim(field.Tag.Value, "`")
+	return slices.Contains(strings.Split(reflect.StructTag(tagValue).Get("strux"), ","), "optional")
+}
+
+// formatFieldDTS renders a struct field as a TypeScript interface member,
+// honoring Optional (name?: T).
+func formatFieldDTS(field FieldDef) string {
+	if field.Optional {
+		return fmt.Sprintf("%s?: %s", field.Name, field.TSType)
+	}
+	return fmt.Sprintf("%s: %s", field.Name, field.TSType)
 }
 
 func jsonFieldName(field *ast.Field) (string, bool) {
@@ -624,7 +655,7 @@ func generateTypeScriptDeclarations(runtimeTypes RuntimeTypes, includeIPC bool) 
 			structDef := runtimeTypes.Structs[name]
 			sb.WriteString(fmt.Sprintf("  interface %s {\n", name))
 			for _, field := range structDef.Fields {
-				sb.WriteString(fmt.Sprintf("    %s: %s;\n", field.Name, field.TSType))
+				sb.WriteString(fmt.Sprintf("    %s;\n", formatFieldDTS(field)))
 			}
 			sb.WriteString("  }\n")
 		}

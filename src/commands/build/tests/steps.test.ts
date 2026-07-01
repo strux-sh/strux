@@ -184,12 +184,18 @@ test("updateDevEnvConfig writes safe defaults when dev settings are omitted", as
     })
 })
 
-test("removeDevEnvConfig deletes stale dev config from the BSP cache", async () => {
+test("removeDevEnvConfig demotes the active dev config to the disabled variant, preserving it", async () => {
     const cacheDir = await configureProjectCache()
     const devEnvPath = join(cacheDir, ".dev-env.json")
-    await writeFile(devEnvPath, "{}")
+    const disabledPath = join(cacheDir, ".dev-env.json.disabled")
+    await writeFile(devEnvPath, '{"clientKey":"ABC"}')
 
     await removeDevEnvConfig("qemu")
 
+    // The active marker is gone (so the device won't boot into dev mode)...
     expect(await Bun.file(devEnvPath).exists()).toBe(false)
+    // ...but the config (and its clientKey) survives as the disabled variant so
+    // the on-device Dev Mode toggle can re-enable it.
+    expect(await Bun.file(disabledPath).exists()).toBe(true)
+    expect(await Bun.file(disabledPath).text()).toBe('{"clientKey":"ABC"}')
 })
