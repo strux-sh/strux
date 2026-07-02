@@ -45,17 +45,21 @@
                             <span class="text-sm truncate">{{ output.label || output.name }}</span>
                         </span>
                         <Button
-                            v-if="!isStreaming(output.name)"
+                            v-if="streamAction(output.name) === 'start'"
                             variant="secondary"
                             size="sm"
                             @click.stop="store.startStream(output.name)"
                         >Stream</Button>
                         <Button
-                            v-else
+                            v-else-if="streamAction(output.name) === 'stop'"
                             variant="ghost"
                             size="sm"
                             @click.stop="store.stopStream(output.name)"
                         >Stop</Button>
+                        <span
+                            v-else
+                            class="text-strux-label font-strux-mono uppercase tracking-strux-label text-strux-text-faint px-1"
+                        >{{ store.streams[output.name]?.status }}…</span>
                     </li>
                 </ul>
             </aside>
@@ -97,6 +101,16 @@
                         <span class="text-xs uppercase tracking-strux-label font-strux-mono">Starting {{ focusedOutput }}…</span>
                     </div>
 
+                    <div v-else-if="focusedStream?.status === 'stopping'" class="flex flex-col items-center gap-3 text-strux-text-dim">
+                        <Spinner label="Stopping stream…" />
+                        <span class="text-xs uppercase tracking-strux-label font-strux-mono">Stopping {{ focusedOutput }}…</span>
+                    </div>
+
+                    <div v-else-if="focusedStream?.status === 'stopped'" class="flex flex-col items-center gap-2 text-strux-text-faint text-sm">
+                        <span>Stream stopped on device.</span>
+                        <Button variant="secondary" size="sm" @click="store.startStream(focusedOutput)">Stream again</Button>
+                    </div>
+
                     <div v-else-if="focusedStream?.status === 'error'" class="text-strux-danger text-sm text-center max-w-md">
                         Stream error on {{ focusedOutput }}:
                         <div class="text-strux-text-dim mt-1">{{ focusedStream?.error }}</div>
@@ -113,10 +127,30 @@
                             muted
                             playsinline
                             tabindex="0"
-                            class="block max-w-full outline-none"
+                            draggable="false"
+                            class="block max-w-full outline-none select-none"
                             :class="inputEnabled ? 'cursor-none' : 'cursor-default'"
                             style="max-height: calc(100vh - 9rem)"
                         />
+                        <!-- Local virtual cursor: frames are captured without the
+                             device cursor, so the viewer draws its own. Position
+                             comes from the input composable, so it always matches
+                             what was sent to the device. -->
+                        <svg
+                            v-if="inputEnabled && pointerPos"
+                            class="absolute pointer-events-none z-10"
+                            :style="{ left: `${pointerPos.x}px`, top: `${pointerPos.y}px` }"
+                            width="18"
+                            height="18"
+                            viewBox="0 0 18 18"
+                        >
+                            <path
+                                d="M2 1 L2 14 L5.5 10.8 L7.8 15.6 L10 14.6 L7.7 9.9 L12.2 9.4 Z"
+                                fill="#fff"
+                                stroke="#000"
+                                stroke-width="1.1"
+                            />
+                        </svg>
                         <span class="absolute top-2 left-2 text-strux-label font-strux-mono bg-black/70 px-2 py-0.5 rounded-strux-sm text-strux-text-dim">{{ focusedOutput }}</span>
                         <span
                             v-if="inputEnabled"
@@ -167,14 +201,17 @@ const connectionVariant = computed(() => {
     return store.deviceConnected ? ("ok" as const) : ("warn" as const)
 })
 
-function isStreaming(name: string): boolean {
-    return store.streams[name]?.status === "streaming"
+function streamAction(name: string): "start" | "stop" | "busy" {
+    const s = store.streams[name]?.status
+    if (s === "streaming") return "stop"
+    if (s === "starting" || s === "stopping") return "busy"
+    return "start"
 }
 
 function dotClass(name: string): string {
     const s = store.streams[name]?.status
     if (s === "streaming") return "bg-strux-ok"
-    if (s === "starting") return "bg-strux-warn animate-pulse"
+    if (s === "starting" || s === "stopping") return "bg-strux-warn animate-pulse"
     if (s === "error") return "bg-strux-danger"
     return "bg-strux-text-faint"
 }
@@ -183,6 +220,7 @@ function focusOutput(name: string): void {
     focusedOutput.value = name
     if (!store.streams[name]) store.startStream(name)
 }
+
 
 // (Re)bind the jMuxer decoder to the single stage <video> as focus changes.
 watch(
@@ -204,7 +242,7 @@ function onEscape(e: KeyboardEvent): void {
     if (e.key === "Escape") inputEnabled.value = false
 }
 
-useInputCapture({
+const { pointerPos } = useInputCapture({
     target: videoRef,
     outputName: () => focusedOutput.value,
     enabled: inputEnabled,

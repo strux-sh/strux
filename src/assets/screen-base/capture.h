@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <wayland-client.h>
 #include "wlr-screencopy-unstable-v1-client-protocol.h"
+#include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
+#include "virtual-keyboard-unstable-v1-client-protocol.h"
 
 struct capture_context {
     /* Wayland globals */
@@ -13,6 +15,12 @@ struct capture_context {
     struct wl_shm *shm;
     struct wl_output *output;
     struct zwlr_screencopy_manager_v1 *screencopy_manager;
+
+    /* Virtual input globals (consumed by input.c) */
+    struct wl_seat *seat;
+    struct zwlr_virtual_pointer_manager_v1 *virtual_pointer_manager;
+    uint32_t virtual_pointer_manager_version;
+    struct zwp_virtual_keyboard_manager_v1 *virtual_keyboard_manager;
 
     /* Target output name */
     const char *output_name;

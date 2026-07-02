@@ -39,7 +39,7 @@ interface ClientMessageDeviceInfoRequested { type: "device-info-requested" }
 interface ClientMessageScreenRequest { type: "screen-request", payload: { outputName: string, serverHostURL: string }}
 interface ClientMessageScreenStop { type: "screen-stop", payload: { outputName: string }}
 interface ClientMessageScreenPicture { type: "screen-picture", payload: { outputName: string }}
-interface ClientMessageScreenReady { type: "screen-ready", payload: { outputName: string, width: number, height: number, encoder: string, fps: number }}
+interface ClientMessageScreenReady { type: "screen-ready", payload: { outputName: string, outputIndex: number, width: number, height: number, encoder: string, fps: number }}
 interface ClientMessageScreenStopped { type: "screen-stopped", payload: { outputName: string }}
 interface ClientMessageScreenError { type: "screen-error", payload: { outputName: string, error: string }}
 interface ClientMessageScreenPictureReceived { type: "screen-picture-received", payload: { outputName: string, data: string, width: number, height: number }}
@@ -162,7 +162,7 @@ export interface DashboardLogLine { source: string, line: string, timestamp: str
 
 // server -> browser
 interface WebUIMessageOutputsAvailable { type: "outputs-available", payload: { outputs: DeviceInfoOutputInfo[] }}
-interface WebUIMessageScreenReady { type: "screen-ready", payload: { outputName: string, width: number, height: number, encoder: string, fps: number }}
+interface WebUIMessageScreenReady { type: "screen-ready", payload: { outputName: string, outputIndex: number, width: number, height: number, encoder: string, fps: number }}
 interface WebUIMessageScreenStopped { type: "screen-stopped", payload: { outputName: string }}
 interface WebUIMessageScreenError { type: "screen-error", payload: { outputName: string, error: string }}
 interface WebUIMessageScreenshotResult { type: "screen-screenshot-result", payload: { outputName: string, data: string, width: number, height: number }}

@@ -41,11 +41,12 @@ type ScreenScreenshotPayload struct {
 
 // ScreenReadyPayload is sent to the server when a stream is ready
 type ScreenReadyPayload struct {
-	OutputName string `json:"outputName"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	Encoder    string `json:"encoder"`
-	FPS        int    `json:"fps"`
+	OutputName  string `json:"outputName"`
+	OutputIndex int    `json:"outputIndex"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	Encoder     string `json:"encoder"`
+	FPS         int    `json:"fps"`
 }
 
 // ScreenStoppedPayload is sent to the server when a stream stops
@@ -94,6 +95,8 @@ type ScreenSession struct {
 	outputIndex uint8
 	process     *exec.Cmd
 	socketConn  net.Conn
+	cmdMu       sync.Mutex // serializes daemon command writes
+	ready       *ScreenReadyPayload // cached so re-attaching viewers get a ready event
 	done        chan struct{}
 }
 
@@ -166,20 +169,72 @@ func (m *ScreenManager) ensureScreenWS() error {
 
 	m.screenWS = conn
 
-	// Start a read loop to handle pings/pongs (we only write on this connection)
+	// Read loop: input events arrive as JSON text messages (server -> device);
+	// everything else on this connection is pings/pongs.
 	go func() {
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			msgType, data, err := conn.ReadMessage()
+			if err != nil {
 				m.screenWSMu.Lock()
 				m.screenWS = nil
 				m.screenWSMu.Unlock()
 				m.logger.Warn("Screen WebSocket closed: %v", err)
 				return
 			}
+			if msgType == websocket.TextMessage {
+				m.handleScreenWSMessage(data)
+			}
 		}
 	}()
 
 	return nil
+}
+
+// handleScreenWSMessage routes viewer input events to the target output's
+// daemon as newline-delimited JSON commands.
+func (m *ScreenManager) handleScreenWSMessage(data []byte) {
+	var msg struct {
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(data, &msg); err != nil {
+		m.logger.Warn("Invalid screen WS message: %v", err)
+		return
+	}
+
+	switch msg.Type {
+	case "input-pointer-motion", "input-pointer-button", "input-pointer-axis",
+		"input-keyboard-key", "input-keyboard-modifiers":
+	default:
+		return
+	}
+
+	outputName, _ := msg.Payload["outputName"].(string)
+	if outputName == "" {
+		return
+	}
+
+	m.mu.Lock()
+	session := m.sessions[outputName]
+	m.mu.Unlock()
+	if session == nil {
+		return
+	}
+
+	// Flatten to the daemon command shape: {"type":..., <payload fields>}
+	cmd := make(map[string]any, len(msg.Payload)+1)
+	for k, v := range msg.Payload {
+		if k != "outputName" {
+			cmd[k] = v
+		}
+	}
+	cmd["type"] = msg.Type
+
+	encoded, err := json.Marshal(cmd)
+	if err != nil {
+		return
+	}
+	m.sendDaemonCommand(session, string(encoded))
 }
 
 // sendFrame sends an encoded H.264 frame over the binary WebSocket
@@ -234,11 +289,22 @@ func (m *ScreenManager) Start(outputName string) error {
 	}
 
 	m.mu.Lock()
-	_, exists := m.sessions[outputName]
+	session, exists := m.sessions[outputName]
+	var ready *ScreenReadyPayload
+	if exists {
+		ready = session.ready
+	}
 	m.mu.Unlock()
 
 	if exists {
-		m.logger.Info("Session already running for %s, WebSocket reconnected", outputName)
+		m.logger.Info("Session already running for %s; reattaching viewer", outputName)
+		// Force a keyframe (the daemon's start handler does this) so the
+		// reattached viewer can begin decoding, and replay the ready event
+		// it never saw.
+		m.sendDaemonCommand(session, `{"type":"start"}`)
+		if ready != nil && m.onReady != nil {
+			m.onReady(*ready)
+		}
 		return nil
 	}
 
@@ -283,7 +349,7 @@ func (m *ScreenManager) Start(outputName string) error {
 	idx := m.outputIndex
 	m.outputIndex++
 
-	session := &ScreenSession{
+	session = &ScreenSession{
 		outputName:  outputName,
 		outputIndex: idx,
 		process:     cmd,
@@ -315,6 +381,10 @@ func (m *ScreenManager) Stop(outputName string) {
 	m.mu.Unlock()
 
 	if !exists {
+		// Acknowledge anyway so viewers waiting on a stop are never stranded
+		if m.onStopped != nil {
+			m.onStopped(ScreenStoppedPayload{OutputName: outputName})
+		}
 		return
 	}
 
@@ -385,6 +455,8 @@ func (m *ScreenManager) sendDaemonCommand(session *ScreenSession, cmd string) {
 	if session.socketConn == nil {
 		return
 	}
+	session.cmdMu.Lock()
+	defer session.cmdMu.Unlock()
 	_, err := session.socketConn.Write([]byte(cmd + "\n"))
 	if err != nil {
 		m.logger.Error("Failed to send command to daemon: %v", err)
@@ -452,14 +524,19 @@ func (m *ScreenManager) handleDaemonControl(session *ScreenSession,
 	case "ready":
 		m.logger.Info("Stream ready for %s: %dx%d@%dfps encoder=%s",
 			session.outputName, msg.Width, msg.Height, msg.FPS, msg.Encoder)
+		payload := ScreenReadyPayload{
+			OutputName:  session.outputName,
+			OutputIndex: int(session.outputIndex),
+			Width:       msg.Width,
+			Height:      msg.Height,
+			Encoder:     msg.Encoder,
+			FPS:         msg.FPS,
+		}
+		m.mu.Lock()
+		session.ready = &payload
+		m.mu.Unlock()
 		if m.onReady != nil {
-			m.onReady(ScreenReadyPayload{
-				OutputName: session.outputName,
-				Width:      msg.Width,
-				Height:     msg.Height,
-				Encoder:    msg.Encoder,
-				FPS:        msg.FPS,
-			})
+			m.onReady(payload)
 		}
 
 	case "error":

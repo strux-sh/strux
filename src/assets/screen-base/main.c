@@ -23,6 +23,7 @@
 #include <gst/gst.h>
 
 #include "capture.h"
+#include "input.h"
 #include "pipeline.h"
 
 /* --- Configuration --- */
@@ -182,7 +183,9 @@ static void socket_accept_client(void)
     }
 }
 
-/* Read control commands from client (non-blocking) */
+/* Read control commands from client (non-blocking). Returns a buffered
+ * command first if one is already complete, so callers can drain the queue
+ * with repeated calls. */
 static char *socket_read_command(void)
 {
     if (client_fd < 0)
@@ -191,30 +194,33 @@ static char *socket_read_command(void)
     static char buf[4096];
     static size_t buf_pos = 0;
 
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(client_fd, &fds);
-    struct timeval tv = {0, 0};
+    /* A complete command may already be buffered from a previous read */
+    char *newline = memchr(buf, '\n', buf_pos);
 
-    if (select(client_fd + 1, &fds, NULL, NULL, &tv) <= 0)
-        return NULL;
+    if (!newline) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(client_fd, &fds);
+        struct timeval tv = {0, 0};
 
-    ssize_t n = read(client_fd, buf + buf_pos, sizeof(buf) - buf_pos - 1);
-    if (n <= 0) {
-        if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
-            fprintf(stderr, "[strux-screen] Client disconnected\n");
-            close(client_fd);
-            client_fd = -1;
-            buf_pos = 0;
+        if (select(client_fd + 1, &fds, NULL, NULL, &tv) <= 0)
+            return NULL;
+
+        ssize_t n = read(client_fd, buf + buf_pos, sizeof(buf) - buf_pos - 1);
+        if (n <= 0) {
+            if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+                fprintf(stderr, "[strux-screen] Client disconnected\n");
+                close(client_fd);
+                client_fd = -1;
+                buf_pos = 0;
+            }
+            return NULL;
         }
-        return NULL;
+
+        buf_pos += n;
+        newline = memchr(buf, '\n', buf_pos);
     }
 
-    buf_pos += n;
-    buf[buf_pos] = '\0';
-
-    /* Look for newline-delimited command */
-    char *newline = strchr(buf, '\n');
     if (newline) {
         *newline = '\0';
         char *cmd = strdup(buf);
@@ -310,6 +316,75 @@ static void on_frame_captured(struct capture_context *ctx, void *data,
 
     size_t size = stride * height;
     pipeline_push_frame(&pipeline, data, size, format);
+}
+
+/* --- Virtual input --- */
+
+static struct input_context input_ctx;
+static bool input_initialized = false;
+
+/* Extract a numeric JSON field ("key" includes quotes and colon, e.g.
+ * "\"x\":"). Good enough for the flat, trusted command messages the client
+ * sends; not a general JSON parser. */
+static double json_number(const char *json, const char *key, double fallback)
+{
+    const char *p = strstr(json, key);
+    if (!p)
+        return fallback;
+    return strtod(p + strlen(key), NULL);
+}
+
+static bool json_true(const char *json, const char *key)
+{
+    const char *p = strstr(json, key);
+    if (!p)
+        return false;
+    p += strlen(key);
+    while (*p == ' ')
+        p++;
+    return strncmp(p, "true", 4) == 0;
+}
+
+static bool handle_input_command(const char *cmd)
+{
+    if (strstr(cmd, "\"input-pointer-motion\"")) {
+        double x = json_number(cmd, "\"x\":", -1.0);
+        double y = json_number(cmd, "\"y\":", -1.0);
+        if (input_initialized && x >= 0.0 && y >= 0.0)
+            input_pointer_motion(&input_ctx, x, y);
+        return true;
+    }
+    if (strstr(cmd, "\"input-pointer-button\"")) {
+        if (input_initialized)
+            input_pointer_button(&input_ctx,
+                                 (uint32_t)json_number(cmd, "\"button\":", 0),
+                                 json_true(cmd, "\"pressed\":"));
+        return true;
+    }
+    if (strstr(cmd, "\"input-pointer-axis\"")) {
+        if (input_initialized)
+            input_pointer_axis(&input_ctx,
+                               strstr(cmd, "\"horizontal\"") != NULL,
+                               json_number(cmd, "\"value\":", 0.0));
+        return true;
+    }
+    if (strstr(cmd, "\"input-keyboard-key\"")) {
+        if (input_initialized)
+            input_keyboard_key(&input_ctx,
+                               (uint32_t)json_number(cmd, "\"keycode\":", 0),
+                               json_true(cmd, "\"pressed\":"));
+        return true;
+    }
+    if (strstr(cmd, "\"input-keyboard-modifiers\"")) {
+        if (input_initialized)
+            input_keyboard_modifiers(&input_ctx,
+                (uint32_t)json_number(cmd, "\"depressed\":", 0),
+                (uint32_t)json_number(cmd, "\"latched\":", 0),
+                (uint32_t)json_number(cmd, "\"locked\":", 0),
+                (uint32_t)json_number(cmd, "\"group\":", 0));
+        return true;
+    }
+    return false;
 }
 
 /* --- Screenshot handling --- */
@@ -465,6 +540,17 @@ int main(int argc, char *argv[])
     fprintf(stderr, "[strux-screen] Capture initialized for output: %s\n",
             config.output_name);
 
+    /* Initialize virtual input injection (non-fatal if unsupported) */
+    if (input_init(&input_ctx, &capture_ctx) == 0) {
+        input_initialized = true;
+        fprintf(stderr, "[strux-screen] Virtual input ready "
+                        "(pointer=%d keyboard=%d)\n",
+                input_ctx.pointer_ok, input_ctx.keyboard_ok);
+    } else {
+        fprintf(stderr, "[strux-screen] Virtual input unavailable; "
+                        "remote input disabled\n");
+    }
+
     /* Initialize Unix socket server */
     if (socket_server_init(config.socket_path) < 0) {
         capture_destroy(&capture_ctx);
@@ -482,10 +568,13 @@ int main(int argc, char *argv[])
         /* Accept new client if none connected */
         socket_accept_client();
 
-        /* Check for commands from client */
-        char *cmd = socket_read_command();
-        if (cmd) {
-            if (strstr(cmd, "\"start\"") || strstr(cmd, "start")) {
+        /* Drain all pending commands (input events arrive faster than the
+         * frame loop iterates) */
+        char *cmd;
+        while ((cmd = socket_read_command()) != NULL) {
+            if (handle_input_command(cmd)) {
+                /* handled */
+            } else if (strstr(cmd, "\"start\"") || strstr(cmd, "start")) {
                 fprintf(stderr, "[strux-screen] Starting stream\n");
                 streaming = true;
                 if (pipeline_initialized)
@@ -519,6 +608,8 @@ int main(int argc, char *argv[])
 
     if (pipeline_initialized)
         pipeline_destroy(&pipeline);
+    if (input_initialized)
+        input_destroy(&input_ctx);
     capture_destroy(&capture_ctx);
     socket_cleanup();
     gst_deinit();

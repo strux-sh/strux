@@ -83,6 +83,18 @@ static void registry_global(void *data, struct wl_registry *registry,
     } else if (strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0) {
         ctx->screencopy_manager = wl_registry_bind(
             registry, name, &zwlr_screencopy_manager_v1_interface, 3);
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
+        ctx->seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+    } else if (strcmp(interface,
+                      zwlr_virtual_pointer_manager_v1_interface.name) == 0) {
+        uint32_t v = version < 2 ? version : 2;
+        ctx->virtual_pointer_manager = wl_registry_bind(
+            registry, name, &zwlr_virtual_pointer_manager_v1_interface, v);
+        ctx->virtual_pointer_manager_version = v;
+    } else if (strcmp(interface,
+                      zwp_virtual_keyboard_manager_v1_interface.name) == 0) {
+        ctx->virtual_keyboard_manager = wl_registry_bind(
+            registry, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
     } else if (strcmp(interface, wl_output_interface.name) == 0) {
         /* Bind each output to check its name */
         struct wl_output *output = wl_registry_bind(
@@ -287,10 +299,11 @@ int capture_frame(struct capture_context *ctx)
     ctx->frame_failed = false;
     ctx->buffer_ready = false;
 
-    /* Request a frame capture */
+    /* Request a frame capture. overlay_cursor=0: the viewer renders its own
+     * local cursor, so keep the captured frames clean. */
     struct zwlr_screencopy_frame_v1 *frame =
         zwlr_screencopy_manager_v1_capture_output(
-            ctx->screencopy_manager, 1, ctx->output);
+            ctx->screencopy_manager, 0, ctx->output);
     zwlr_screencopy_frame_v1_add_listener(frame, &frame_listener, ctx);
 
     /* Wait for buffer info */
@@ -345,6 +358,12 @@ void capture_destroy(struct capture_context *ctx)
 
     if (ctx->screencopy_manager)
         zwlr_screencopy_manager_v1_destroy(ctx->screencopy_manager);
+    if (ctx->virtual_pointer_manager)
+        zwlr_virtual_pointer_manager_v1_destroy(ctx->virtual_pointer_manager);
+    if (ctx->virtual_keyboard_manager)
+        zwp_virtual_keyboard_manager_v1_destroy(ctx->virtual_keyboard_manager);
+    if (ctx->seat)
+        wl_seat_destroy(ctx->seat);
     if (ctx->shm)
         wl_shm_destroy(ctx->shm);
     if (ctx->registry)

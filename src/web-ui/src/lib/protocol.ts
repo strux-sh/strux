@@ -45,7 +45,7 @@ export type DevtoolOutbound =
 // Server -> browser
 export type DevtoolInbound =
   | { type: "outputs-available"; payload: { outputs: OutputInfo[] } }
-  | { type: "screen-ready"; payload: { outputName: string; width: number; height: number; encoder: string; fps: number } }
+  | { type: "screen-ready"; payload: { outputName: string; outputIndex: number; width: number; height: number; encoder: string; fps: number } }
   | { type: "screen-stopped"; payload: { outputName: string } }
   | { type: "screen-error"; payload: { outputName: string; error: string } }
   | { type: "screen-screenshot-result"; payload: { outputName: string; data: string; width: number; height: number } }

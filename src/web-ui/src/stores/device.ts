@@ -10,14 +10,13 @@ import { ref, shallowReactive } from "vue"
 import { DevtoolSocket, type ConnectionStatus } from "@/lib/socket"
 import { parseFrame, type BuildState, type DeviceStatus, type DevtoolInbound, type DevtoolOutbound, type LogLine, type OutputInfo } from "@/lib/protocol"
 
-export type StreamStatus = "starting" | "streaming" | "stopped" | "error"
+export type StreamStatus = "starting" | "streaming" | "stopping" | "stopped" | "error"
 
 export interface StreamState {
   outputName: string
   /**
-   * Browser-side index, assigned in screen-ready order to mirror the device's
-   * Start-order outputIndex in the binary frame header. Robust for sequential
-   * start/stop; TODO: carry outputName in the frame header to make it exact.
+   * The device's outputIndex for this session, reported in screen-ready and
+   * matching the index byte in each binary frame header. -1 until ready.
    */
   index: number
   status: StreamStatus
@@ -52,7 +51,6 @@ export const useDeviceStore = defineStore("device", () => {
 
     let socket: DevtoolSocket | null = null
     let frameSink: FrameSink | null = null
-    let indexCounter = 0
 
     function init(): void {
         if (socket) return
@@ -75,10 +73,9 @@ export const useDeviceStore = defineStore("device", () => {
 
             case "screen-ready": {
                 const p = msg.payload
-                const existing = streams[p.outputName]
                 streams[p.outputName] = {
                     outputName: p.outputName,
-                    index: existing?.index ?? indexCounter++,
+                    index: p.outputIndex,
                     status: "streaming",
                     width: p.width,
                     height: p.height,
@@ -90,7 +87,10 @@ export const useDeviceStore = defineStore("device", () => {
 
             case "screen-stopped": {
                 const stream = streams[msg.payload.outputName]
-                if (stream) stream.status = "stopped"
+                if (stream && stream.status !== "starting") {
+                    stream.status = "stopped"
+                    stream.index = -1
+                }
                 break
             }
 
@@ -135,23 +135,26 @@ export const useDeviceStore = defineStore("device", () => {
     }
 
     function startStream(outputName: string): void {
-        if (!streams[outputName]) {
-            streams[outputName] = {
-                outputName,
-                index: -1,
-                status: "starting",
-                width: 0,
-                height: 0,
-                encoder: "",
-                fps: 0,
-            }
+        // Always reset: a stale entry (stopped/error) must not carry its old
+        // index or status into the new session.
+        streams[outputName] = {
+            outputName,
+            index: -1,
+            status: "starting",
+            width: 0,
+            height: 0,
+            encoder: "",
+            fps: 0,
         }
         send({ type: "start-stream", payload: { outputName } })
     }
 
     function stopStream(outputName: string): void {
+        // Optimistically mark as stopping; the device's screen-stopped event
+        // confirms the daemon actually exited.
+        const stream = streams[outputName]
+        if (stream) stream.status = "stopping"
         send({ type: "stop-stream", payload: { outputName } })
-        delete streams[outputName]
     }
 
     function takeScreenshot(outputName: string): void {

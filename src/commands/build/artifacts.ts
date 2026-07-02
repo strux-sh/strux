@@ -169,9 +169,17 @@ import screenPipelineC from "../../assets/screen-base/pipeline.c" with { type: "
 // @ts-ignore
 import screenPipelineH from "../../assets/screen-base/pipeline.h" with { type: "text" }
 // @ts-ignore
+import screenInputC from "../../assets/screen-base/input.c" with { type: "text" }
+// @ts-ignore
+import screenInputH from "../../assets/screen-base/input.h" with { type: "text" }
+// @ts-ignore
 import screenMesonBuild from "../../assets/screen-base/meson.build" with { type: "text" }
 // @ts-ignore
 import screenProtocolXml from "../../assets/screen-base/protocols/wlr-screencopy-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import screenProtocolVirtualPointerXml from "../../assets/screen-base/protocols/wlr-virtual-pointer-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import screenProtocolVirtualKeyboardXml from "../../assets/screen-base/protocols/virtual-keyboard-unstable-v1.xml" with { type: "text" }
 
 // ----------------------------------------------------------------------------
 // Artifact manifest — the SINGLE source of truth for everything written into
@@ -254,8 +262,12 @@ const ARTIFACT_FILES: readonly (readonly [string, string])[] = [
     ["screen/capture.h", screenCaptureH],
     ["screen/pipeline.c", screenPipelineC],
     ["screen/pipeline.h", screenPipelineH],
+    ["screen/input.c", screenInputC],
+    ["screen/input.h", screenInputH],
     ["screen/meson.build", screenMesonBuild],
     ["screen/protocols/wlr-screencopy-unstable-v1.xml", screenProtocolXml],
+    ["screen/protocols/wlr-virtual-pointer-unstable-v1.xml", screenProtocolVirtualPointerXml],
+    ["screen/protocols/virtual-keyboard-unstable-v1.xml", screenProtocolVirtualKeyboardXml],
 
     // Build patches (applied to upstream sources inside the build container)
     ["patches/cog-autoplay-policy.patch", cogAutoplayPatch],

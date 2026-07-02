@@ -671,7 +671,12 @@ export class DevServer {
         // Serve the single-file dev tool for its client-side routes.
         if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/screen")) {
             const html = await this.loadWebUIHtml()
-            return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } })
+            return new Response(html, { headers: {
+                "content-type": "text/html; charset=utf-8",
+                // Single-file bundle with no hashed filenames: never let the
+                // browser serve a stale UI after a CLI update.
+                "cache-control": "no-cache",
+            } })
         }
 
         if (url.pathname === "/__strux/dev/system-update") {

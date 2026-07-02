@@ -263,6 +263,7 @@ progress "Installing Wayland and WPE WebKit..."
 run_in_chroot "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     libwlroots-0.18 \
     wayland-protocols \
+    xkb-data \
     libwayland-client0 \
     libwayland-server0 \
     libwpewebkit-2.0-1 \

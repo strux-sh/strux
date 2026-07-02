@@ -24,40 +24,48 @@ gst = dependency('gstreamer-1.0')
 gst_app = dependency('gstreamer-app-1.0')
 gst_video = dependency('gstreamer-video-1.0')
 wayland_client = dependency('wayland-client')
+xkbcommon = dependency('xkbcommon')
 math = cc.find_library('m', required: false)
 rt = cc.find_library('rt')  # for shm_open
 
-# Generate screencopy protocol files
+# Generate Wayland protocol files
 wayland_scanner = find_program('wayland-scanner')
 
-screencopy_xml = files('protocols/wlr-screencopy-unstable-v1.xml')
+protocol_xmls = {
+  'wlr-screencopy-unstable-v1': files('protocols/wlr-screencopy-unstable-v1.xml'),
+  'wlr-virtual-pointer-unstable-v1': files('protocols/wlr-virtual-pointer-unstable-v1.xml'),
+  'virtual-keyboard-unstable-v1': files('protocols/virtual-keyboard-unstable-v1.xml'),
+}
 
-screencopy_client_h = custom_target('screencopy-client-header',
-  input: screencopy_xml,
-  output: 'wlr-screencopy-unstable-v1-client-protocol.h',
-  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
-)
-
-screencopy_code = custom_target('screencopy-protocol-code',
-  input: screencopy_xml,
-  output: 'wlr-screencopy-unstable-v1-protocol.c',
-  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
-)
+protocol_sources = []
+foreach name, xml : protocol_xmls
+  protocol_sources += custom_target(name + '-client-header',
+    input: xml,
+    output: name + '-client-protocol.h',
+    command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+  )
+  protocol_sources += custom_target(name + '-protocol-code',
+    input: xml,
+    output: name + '-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  )
+endforeach
 
 executable(
   meson.project_name(),
   [
     'main.c',
     'capture.c',
+    'input.c',
     'pipeline.c',
-    screencopy_client_h,
-    screencopy_code,
+    protocol_sources,
   ],
   dependencies: [
     gst,
     gst_app,
     gst_video,
     wayland_client,
+    xkbcommon,
     math,
     rt,
   ],
