@@ -275,7 +275,7 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
             { file: "strux.yaml", keyPath: "rootfs.packages" },
             { file: "strux.yaml", keyPath: "display" }
         ],
-        dependsOnSteps: ["frontend", "application", "cage", "wpe", "client", "kernel", "rootfs-base"],
+        dependsOnSteps: ["frontend", "application", "cage", "wpe", "client", "kernel", "screen", "rootfs-base"],
         // Only the build script is internal - plymouth/systemd/init are user-modifiable in dist/artifacts/
         internalAssets: ["@build-post-script"],
         // Fallback to internal assets if dist/artifacts/ directories don't exist yet (first build)

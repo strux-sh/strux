@@ -60,6 +60,7 @@ static GstElement *try_create_encoder(const char **name_out)
         const char *factory;
         const char *display_name;
     } encoders[] = {
+        {"mpph264enc",    "Rockchip MPP (hardware)"},
         {"vaapih264enc",  "VA-API (hardware)"},
         {"v4l2h264enc",   "V4L2 (hardware)"},
         {"x264enc",       "x264 (software)"},
@@ -67,13 +68,30 @@ static GstElement *try_create_encoder(const char **name_out)
 
     for (size_t i = 0; i < sizeof(encoders) / sizeof(encoders[0]); i++) {
         GstElement *enc = gst_element_factory_make(encoders[i].factory, "encoder");
+        if (!enc) {
+            fprintf(stderr, "[strux-screen] Encoder %s not available, "
+                            "trying next\n", encoders[i].factory);
+        }
         if (enc) {
             fprintf(stderr, "[strux-screen] Using encoder: %s (%s)\n",
                     encoders[i].factory, encoders[i].display_name);
             *name_out = encoders[i].factory;
 
             /* Configure encoder-specific properties */
-            if (strcmp(encoders[i].factory, "x264enc") == 0) {
+            if (strcmp(encoders[i].factory, "mpph264enc") == 0) {
+                /* Properties vary across gstreamer-rockchip versions; set
+                 * defensively by name. gst_util_set_object_arg converts from
+                 * strings, which also handles enum nicknames like "cbr". */
+                GObjectClass *klass = G_OBJECT_GET_CLASS(enc);
+                if (g_object_class_find_property(klass, "rc-mode"))
+                    gst_util_set_object_arg(G_OBJECT(enc), "rc-mode", "cbr");
+                if (g_object_class_find_property(klass, "bps"))
+                    gst_util_set_object_arg(G_OBJECT(enc), "bps", "2000000");
+                if (g_object_class_find_property(klass, "bps-max"))
+                    gst_util_set_object_arg(G_OBJECT(enc), "bps-max", "2500000");
+                if (g_object_class_find_property(klass, "gop"))
+                    gst_util_set_object_arg(G_OBJECT(enc), "gop", "60");
+            } else if (strcmp(encoders[i].factory, "x264enc") == 0) {
                 g_object_set(enc,
                     "tune", 0x04, /* zerolatency */
                     "speed-preset", 1, /* ultrafast */
@@ -133,6 +151,8 @@ static GstFlowReturn on_new_sample(GstAppSink *appsink, gpointer user_data)
     /* Check if this is a keyframe */
     bool is_keyframe = !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
 
+    /* PTS carries the zero-based capture time (set in pipeline_push_frame);
+     * it travels inside the buffer, so it survives appsrc/appsink drops. */
     uint64_t timestamp_ns = GST_BUFFER_PTS(buffer);
 
     if (ctx->on_encoded_frame) {
@@ -162,12 +182,17 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
     ctx->pipeline = gst_pipeline_new("screen-encode");
     ctx->appsrc = gst_element_factory_make("appsrc", "src");
     GstElement *videoconvert = gst_element_factory_make("videoconvert", "convert");
-    GstElement *capsfilter = gst_element_factory_make("capsfilter", "nv12filter");
     ctx->encoder = try_create_encoder(&ctx->encoder_name);
     GstElement *h264parse = gst_element_factory_make("h264parse", "parse");
     ctx->appsink = gst_element_factory_make("appsink", "sink");
 
-    if (!ctx->pipeline || !ctx->appsrc || !videoconvert || !capsfilter ||
+    /* Re-insert SPS/PPS before every IDR: hardware encoders (MPP) emit the
+     * headers only once, but stream viewers need them in-band to configure
+     * their decoder and to join mid-stream. */
+    if (h264parse)
+        g_object_set(h264parse, "config-interval", -1, NULL);
+
+    if (!ctx->pipeline || !ctx->appsrc || !videoconvert ||
         !ctx->encoder || !h264parse || !ctx->appsink) {
         fprintf(stderr, "[strux-screen] Failed to create pipeline elements\n");
         return -1;
@@ -190,12 +215,10 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
         NULL);
     gst_caps_unref(src_caps);
 
-    /* Configure NV12 caps filter for encoder input */
-    GstCaps *nv12_caps = gst_caps_new_simple("video/x-raw",
-        "format", G_TYPE_STRING, "NV12",
-        NULL);
-    g_object_set(capsfilter, "caps", nv12_caps, NULL);
-    gst_caps_unref(nv12_caps);
+    /* Encoder input format is left to caps negotiation rather than forced:
+     * mpph264enc built with RGA accepts BGRA directly and converts on the 2D
+     * blitter (videoconvert becomes passthrough); software encoders negotiate
+     * a YUV format and videoconvert does the CPU conversion as before. */
 
     /* Configure appsink */
     g_object_set(ctx->appsink,
@@ -219,11 +242,11 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
 
     /* Add elements to pipeline */
     gst_bin_add_many(GST_BIN(ctx->pipeline),
-        ctx->appsrc, videoconvert, capsfilter,
+        ctx->appsrc, videoconvert,
         ctx->encoder, h264parse, ctx->appsink, NULL);
 
     /* Link elements */
-    if (!gst_element_link_many(ctx->appsrc, videoconvert, capsfilter,
+    if (!gst_element_link_many(ctx->appsrc, videoconvert,
                                ctx->encoder, h264parse, ctx->appsink, NULL)) {
         fprintf(stderr, "[strux-screen] Failed to link pipeline elements\n");
         return -1;
@@ -244,7 +267,7 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
 }
 
 int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
-                        size_t size, uint32_t format)
+                        size_t size, uint32_t format, uint64_t capture_ns)
 {
     (void)format; /* Already configured in caps */
 
@@ -254,10 +277,19 @@ int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
 
     gst_buffer_fill(buffer, 0, data, size);
 
-    /* Set timestamp */
+    /* Timestamp with real (zero-based) capture time so downstream viewers can
+     * measure latency; fall back to synthetic pacing if capture time is 0. */
     uint64_t duration = GST_SECOND / ctx->fps;
-    GST_BUFFER_PTS(buffer) = ctx->frame_count * duration;
-    GST_BUFFER_DTS(buffer) = GST_BUFFER_PTS(buffer);
+    uint64_t wire_ts;
+    if (capture_ns != 0) {
+        if (ctx->base_capture_ns == 0)
+            ctx->base_capture_ns = capture_ns;
+        wire_ts = capture_ns - ctx->base_capture_ns;
+    } else {
+        wire_ts = ctx->frame_count * duration;
+    }
+    GST_BUFFER_PTS(buffer) = wire_ts;
+    GST_BUFFER_DTS(buffer) = wire_ts;
     GST_BUFFER_DURATION(buffer) = duration;
     ctx->frame_count++;
 

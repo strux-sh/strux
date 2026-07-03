@@ -1,21 +1,10 @@
 <template>
-    <div class="h-screen flex flex-col bg-strux-bg font-strux-sans">
+    <AppLayout title="Remote Display">
+        <template #header-right>
+            <Badge :variant="connectionVariant">{{ connectionLabel }}</Badge>
+        </template>
 
-        <!-- ═══ Header ═══ -->
-        <header class="flex items-center justify-between px-4 py-2 bg-strux-surface border-b border-strux-divider">
-            <div class="flex items-center gap-3 font-strux-mono">
-                <span class="text-strux-accent font-bold text-base tracking-[0.3em]">STRUX</span>
-                <span class="text-strux-text-faint text-xs">//</span>
-                <span class="text-strux-text-dim text-strux-label uppercase tracking-strux-label">Remote Display</span>
-            </div>
-            <div class="flex items-center gap-3">
-                <Badge :variant="connectionVariant">{{ connectionLabel }}</Badge>
-            </div>
-        </header>
-
-        <!-- ═══ Body ═══ -->
-        <div class="flex-1 flex overflow-hidden">
-
+        <template #content>
             <!-- ─── Output rail ─── -->
             <aside class="w-64 border-r border-strux-divider bg-strux-bg flex flex-col">
                 <div class="px-3 py-2 flex items-center gap-2 border-b border-strux-divider font-strux-mono">
@@ -77,6 +66,10 @@
                     </div>
                     <div class="flex items-center gap-3">
                         <label class="flex items-center gap-2 cursor-pointer select-none">
+                            <Switch v-model="hudEnabled" size="sm" />
+                            <span class="text-xs uppercase tracking-strux-label font-strux-mono" :class="hudEnabled ? 'text-strux-text-dim' : 'text-strux-text-faint'">HUD</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer select-none">
                             <Switch v-model="inputEnabled" :disabled="focusedStream?.status !== 'streaming'" size="sm" />
                             <span class="text-xs uppercase tracking-strux-label font-strux-mono" :class="inputEnabled ? 'text-strux-ok' : 'text-strux-text-faint'">Input</span>
                         </label>
@@ -122,6 +115,7 @@
                         :class="inputEnabled ? 'border-strux-ok ring-2 ring-strux-ok/50' : 'border-strux-divider'"
                     >
                         <video
+                            v-show="!usingCanvas"
                             ref="videoRef"
                             autoplay
                             muted
@@ -129,8 +123,19 @@
                             tabindex="0"
                             draggable="false"
                             class="block max-w-full outline-none select-none"
-                            :class="inputEnabled ? 'cursor-none' : 'cursor-default'"
+                            :class="inputEnabled ? 'cursor-none' : 'cursor-pointer'"
                             style="max-height: calc(100vh - 9rem)"
+                            @click="enableInput"
+                        />
+                        <canvas
+                            v-show="usingCanvas"
+                            ref="canvasRef"
+                            tabindex="0"
+                            draggable="false"
+                            class="block max-w-full outline-none select-none"
+                            :class="inputEnabled ? 'cursor-none' : 'cursor-pointer'"
+                            style="max-height: calc(100vh - 9rem)"
+                            @click="enableInput"
                         />
                         <!-- Local virtual cursor: frames are captured without the
                              device cursor, so the viewer draws its own. Position
@@ -153,32 +158,43 @@
                         </svg>
                         <span class="absolute top-2 left-2 text-strux-label font-strux-mono bg-black/70 px-2 py-0.5 rounded-strux-sm text-strux-text-dim">{{ focusedOutput }}</span>
                         <span
+                            v-if="hudEnabled && focusedStats"
+                            class="absolute bottom-2 left-2 text-strux-label font-strux-mono bg-black/70 px-2 py-0.5 rounded-strux-sm text-strux-text-dim tabular-nums"
+                        >
+                            {{ focusedStats.mode ?? 'sync' }} · {{ focusedStats.fps }}fps · {{ focusedStats.kbps }}kbps<template v-if="focusedStats.queueMs !== null"> · lag +{{ Math.round(focusedStats.queueMs) }}ms</template><template v-if="focusedStats.clock !== null"> · clk {{ focusedStats.clock.toFixed(2) }}x</template><template v-if="focusedStats.decodeQueue > 0"> · q{{ focusedStats.decodeQueue }}</template><template v-if="focusedStats.dropped > 0"> · drop {{ focusedStats.dropped }}</template>
+                        </span>
+                        <span
                             v-if="inputEnabled"
                             class="absolute bottom-2 right-2 text-strux-label font-strux-mono bg-strux-ok/10 text-strux-ok px-2 py-0.5 rounded-strux-sm uppercase tracking-strux-label"
                         >Input captured · Esc to release</span>
+                        <span
+                            v-else-if="focusedStream?.status === 'streaming'"
+                            class="absolute bottom-2 right-2 text-strux-label font-strux-mono bg-black/70 text-strux-text-faint px-2 py-0.5 rounded-strux-sm uppercase tracking-strux-label pointer-events-none"
+                        >Click to control</span>
                     </div>
                 </div>
             </main>
-        </div>
+        </template>
+    </AppLayout>
 
-        <!-- ═══ Screenshot overlay ═══ -->
-        <div
-            v-if="store.screenshot"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 cursor-pointer p-8"
-            @click="store.clearScreenshot()"
+    <!-- ═══ Screenshot overlay ═══ -->
+    <div
+        v-if="store.screenshot"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 cursor-pointer p-8"
+        @click="store.clearScreenshot()"
+    >
+        <img
+            :src="`data:image/jpeg;base64,${store.screenshot.data}`"
+            class="max-w-[90vw] max-h-[90vh] border border-strux-divider rounded-strux-md"
+            alt="Device screenshot"
         >
-            <img
-                :src="`data:image/jpeg;base64,${store.screenshot.data}`"
-                class="max-w-[90vw] max-h-[90vh] border border-strux-divider rounded-strux-md"
-                alt="Device screenshot"
-            >
-        </div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue"
 import { Badge, Button, Spinner, Switch } from "@strux-sh/ui"
+import AppLayout from "@/layout/AppLayout.vue"
 import { useDeviceStore } from "@/stores/device"
 import { useScreenStreams } from "@/composables/useScreenStreams"
 import { useInputCapture } from "@/composables/useInputCapture"
@@ -188,9 +204,18 @@ const streams = useScreenStreams()
 
 const focusedOutput = ref("")
 const videoRef = ref<HTMLVideoElement | null>(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
 const inputEnabled = ref(false)
+const hudEnabled = ref(true)
 
 const focusedStream = computed(() => (focusedOutput.value ? store.streams[focusedOutput.value] : undefined))
+const focusedStats = computed(() => {
+    const index = focusedStream.value?.index
+    return index !== undefined && index >= 0 ? streams.stats[index] : undefined
+})
+const usingCanvas = computed(() => focusedStats.value?.mode === "webcodecs")
+// Input binds to whichever element is actually displaying the stream
+const inputTarget = computed(() => (usingCanvas.value ? canvasRef.value : videoRef.value))
 
 const connectionLabel = computed(() => {
     if (store.status !== "connected") return "Disconnected"
@@ -221,17 +246,25 @@ function focusOutput(name: string): void {
     if (!store.streams[name]) store.startStream(name)
 }
 
+// Clicking the stream captures input (Esc or the switch releases it). The
+// enabling click itself is not forwarded — capture binds on the next event.
+function enableInput(): void {
+    if (!inputEnabled.value && focusedStream.value?.status === "streaming") {
+        inputEnabled.value = true
+    }
+}
 
-// (Re)bind the jMuxer decoder to the single stage <video> as focus changes.
+
+// (Re)bind the decoder to the stage elements as focus changes.
 watch(
     () => [focusedStream.value?.outputName, focusedStream.value?.status, focusedStream.value?.index] as const,
     (_now, prev) => {
-        if (prev && typeof prev[2] === "number" && prev[2] >= 0) streams.unregisterVideo(prev[2])
+        if (prev && typeof prev[2] === "number" && prev[2] >= 0) streams.unregisterStream(prev[2])
         inputEnabled.value = false
         nextTick(() => {
             const s = focusedStream.value
-            if (s && s.status === "streaming" && videoRef.value) {
-                streams.registerVideo(s.index, videoRef.value, s.fps)
+            if (s && s.status === "streaming" && videoRef.value && canvasRef.value) {
+                streams.registerStream(s.index, { video: videoRef.value, canvas: canvasRef.value }, s.fps)
             }
         })
     }
@@ -243,7 +276,7 @@ function onEscape(e: KeyboardEvent): void {
 }
 
 const { pointerPos } = useInputCapture({
-    target: videoRef,
+    target: inputTarget,
     outputName: () => focusedOutput.value,
     enabled: inputEnabled,
     send: store.send,

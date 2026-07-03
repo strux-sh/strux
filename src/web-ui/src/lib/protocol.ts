@@ -58,14 +58,17 @@ export type DevtoolInbound =
 /**
  * Binary frame wire format (device -> server -> browser, relayed verbatim):
  *   [0]      uint8   output index
- *   [1..8]   uint64  timestamp (big-endian) — unused by the viewer
- *   [9]      uint8   keyframe flag           — unused by the viewer
+ *   [1..8]   uint64  capture timestamp, ns (big-endian, zero-based monotonic)
+ *   [9]      uint8   keyframe flag
  *   [10..]   bytes   raw H.264 (Annex-B)
  */
 export const FRAME_HEADER_BYTES = 10
 
 export interface ParsedFrame {
   outputIndex: number
+  /** Device capture time in ms (zero-based monotonic; compare deltas only) */
+  captureMs: number
+  keyframe: boolean
   data: Uint8Array
 }
 
@@ -74,6 +77,8 @@ export function parseFrame(buffer: ArrayBuffer): ParsedFrame | null {
     const view = new DataView(buffer)
     return {
         outputIndex: view.getUint8(0),
+        captureMs: Number(view.getBigUint64(1)) / 1e6,
+        keyframe: view.getUint8(9) === 1,
         data: new Uint8Array(buffer, FRAME_HEADER_BYTES),
     }
 }

@@ -45,3 +45,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 docs/docs/.vuepress/.temp
 docs/docs/.vuepress/.cache
 docs/docs/.vuepress/dist
+
+# BSP overlay build outputs (compiled libs staged by BSP scripts, not sources)
+test/bsp/*/overlay/usr/lib/

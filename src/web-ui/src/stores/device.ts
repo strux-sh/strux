@@ -34,7 +34,7 @@ export interface ScreenshotResult {
   height: number
 }
 
-export type FrameSink = (outputIndex: number, h264: Uint8Array) => void
+export type FrameSink = (outputIndex: number, h264: Uint8Array, captureMs: number, keyframe: boolean) => void
 
 export const useDeviceStore = defineStore("device", () => {
     const status = ref<ConnectionStatus>("connecting")
@@ -59,7 +59,7 @@ export const useDeviceStore = defineStore("device", () => {
         socket.onJson = handleJson
         socket.onBinary = (buf) => {
             const frame = parseFrame(buf)
-            if (frame) frameSink?.(frame.outputIndex, frame.data)
+            if (frame) frameSink?.(frame.outputIndex, frame.data, frame.captureMs, frame.keyframe)
         }
         socket.connect()
     }
@@ -155,6 +155,15 @@ export const useDeviceStore = defineStore("device", () => {
         const stream = streams[outputName]
         if (stream) stream.status = "stopping"
         send({ type: "stop-stream", payload: { outputName } })
+        // Safety net: if the ack is lost (device died mid-stop), don't strand
+        // the viewer in "stopping" forever.
+        setTimeout(() => {
+            const s = streams[outputName]
+            if (s && s === stream && s.status === "stopping") {
+                s.status = "stopped"
+                s.index = -1
+            }
+        }, 5000)
     }
 
     function takeScreenshot(outputName: string): void {

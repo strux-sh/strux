@@ -283,8 +283,6 @@ static void on_frame_captured(struct capture_context *ctx, void *data,
                               uint32_t stride, uint32_t format,
                               uint64_t timestamp_ns)
 {
-    (void)timestamp_ns;
-
     if (!streaming)
         return;
 
@@ -315,7 +313,7 @@ static void on_frame_captured(struct capture_context *ctx, void *data,
     }
 
     size_t size = stride * height;
-    pipeline_push_frame(&pipeline, data, size, format);
+    pipeline_push_frame(&pipeline, data, size, format, timestamp_ns);
 }
 
 /* --- Virtual input --- */

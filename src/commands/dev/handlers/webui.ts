@@ -71,7 +71,12 @@ export function registerWebUIHandlers(webui: Socket<WebUIMessageSendable, WebUIM
     })
 
     webui.on("stop-stream", (payload, _ws) => {
-        if (!client().hasClients()) return
+        if (!client().hasClients()) {
+            // No device to ack the stop — answer directly so the viewer's
+            // "stopping" state can never strand.
+            webui.broadcast({ type: "screen-stopped", payload: { outputName: payload.outputName } })
+            return
+        }
         client().broadcast({ type: "screen-stop", payload: { outputName: payload.outputName } })
     })
 

@@ -1,23 +1,12 @@
 <template>
-    <div class="h-screen flex flex-col bg-strux-bg font-strux-sans">
+    <AppLayout title="Mission Control">
+        <template #header-right>
+            <Badge :variant="buildBadge.variant">{{ buildBadge.label }}</Badge>
+            <Badge :variant="connectionVariant">{{ connectionLabel }}</Badge>
+            <Button variant="primary" size="sm" @click="router.push('/screen')">Remote Display</Button>
+        </template>
 
-        <!-- ═══ Header ═══ -->
-        <header class="flex items-center justify-between px-4 py-2 bg-strux-surface border-b border-strux-divider">
-            <div class="flex items-center gap-3 font-strux-mono">
-                <span class="text-strux-accent font-bold text-base tracking-[0.3em]">STRUX</span>
-                <span class="text-strux-text-faint text-xs">//</span>
-                <span class="text-strux-text-dim text-strux-label uppercase tracking-strux-label">Mission Control</span>
-            </div>
-            <div class="flex items-center gap-3">
-                <Badge :variant="buildBadge.variant">{{ buildBadge.label }}</Badge>
-                <Badge :variant="connectionVariant">{{ connectionLabel }}</Badge>
-                <Button variant="primary" size="sm" @click="router.push('/screen')">Remote Display</Button>
-            </div>
-        </header>
-
-        <!-- ═══ Body ═══ -->
-        <div class="flex-1 flex overflow-hidden">
-
+        <template #content>
             <!-- ─── Left rail: live cards ─── -->
             <aside class="w-[380px] shrink-0 border-r border-strux-divider overflow-auto p-4 space-y-4 reveal">
 
@@ -123,14 +112,15 @@
                     </div>
                 </div>
             </main>
-        </div>
-    </div>
+        </template>
+    </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
 import { Badge, Button, Card, CardHeader, CardTitle, CardContent, CardAction, Spinner } from "@strux-sh/ui"
+import AppLayout from "@/layout/AppLayout.vue"
 import { useDeviceStore } from "@/stores/device"
 
 const store = useDeviceStore()

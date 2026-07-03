@@ -30,6 +30,34 @@ import scriptBuildClient from "../../assets/scripts-base/strux-build-client.sh" 
 import scriptBuildKernel from "../../assets/scripts-base/strux-build-kernel.sh" with { type: "text" }
 // @ts-ignore
 import scriptBuildBootloader from "../../assets/scripts-base/strux-build-bootloader.sh" with { type: "text" }
+// @ts-ignore
+import scriptBuildScreen from "../../assets/scripts-base/strux-build-screen.sh" with { type: "text" }
+
+// ============================================================================
+// Screen Capture Daemon Source Files
+// ============================================================================
+// @ts-ignore
+import screenMainC from "../../assets/screen-base/main.c" with { type: "text" }
+// @ts-ignore
+import screenCaptureC from "../../assets/screen-base/capture.c" with { type: "text" }
+// @ts-ignore
+import screenCaptureH from "../../assets/screen-base/capture.h" with { type: "text" }
+// @ts-ignore
+import screenPipelineC from "../../assets/screen-base/pipeline.c" with { type: "text" }
+// @ts-ignore
+import screenPipelineH from "../../assets/screen-base/pipeline.h" with { type: "text" }
+// @ts-ignore
+import screenInputC from "../../assets/screen-base/input.c" with { type: "text" }
+// @ts-ignore
+import screenInputH from "../../assets/screen-base/input.h" with { type: "text" }
+// @ts-ignore
+import screenMesonBuild from "../../assets/screen-base/meson.build" with { type: "text" }
+// @ts-ignore
+import screenProtocolScreencopy from "../../assets/screen-base/protocols/wlr-screencopy-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import screenProtocolVirtualPointer from "../../assets/screen-base/protocols/wlr-virtual-pointer-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import screenProtocolVirtualKeyboard from "../../assets/screen-base/protocols/virtual-keyboard-unstable-v1.xml" with { type: "text" }
 
 // Go Client-base files
 // @ts-ignore
@@ -181,6 +209,7 @@ export function computeInternalAssetHashes(): Record<string, string> {
         "@build-client-script": hashStrings(scriptBuildClient),
         "@build-kernel-script": hashStrings(scriptBuildKernel),
         "@build-bootloader-script": hashStrings(scriptBuildBootloader),
+        "@build-screen-script": hashStrings(scriptBuildScreen),
         "@cog-autoplay-patch": hashStrings(cogAutoplayPatch),
 
         // Client base (Go sources)
@@ -232,6 +261,21 @@ export function computeInternalAssetHashes(): Record<string, string> {
             wpeExtensionC,
             wpeExtensionCMake,
             cogAutoplayPatch
+        ),
+
+        // Screen capture daemon sources
+        "@screen-sources": hashStrings(
+            screenMainC,
+            screenCaptureC,
+            screenCaptureH,
+            screenPipelineC,
+            screenPipelineH,
+            screenInputC,
+            screenInputH,
+            screenMesonBuild,
+            screenProtocolScreencopy,
+            screenProtocolVirtualPointer,
+            screenProtocolVirtualKeyboard
         ),
 
         // Plymouth theme assets
