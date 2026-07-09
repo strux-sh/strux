@@ -6,6 +6,7 @@
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
+#include <gst/video/video.h>
 
 struct pipeline_context {
     GstElement *pipeline;
@@ -18,9 +19,18 @@ struct pipeline_context {
     int fps;
     const char *encoder_name;
 
+    /* Zero-copy input support */
+    GstAllocator *dmabuf_allocator;
+    GstVideoFormat vformat;
+
     /* Frame counter + first capture timestamp (for zero-based PTS) */
     uint64_t frame_count;
     uint64_t base_capture_ns;
+
+    /* Diagnostics: encoded-output rate + negotiated caps (logged once) */
+    bool caps_logged;
+    uint64_t out_count;
+    int64_t rate_log_us;
 
     /* Callback for encoded frames */
     void (*on_encoded_frame)(const uint8_t *data, size_t size,
@@ -47,6 +57,14 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
  * carried through as the buffer PTS so viewers can measure real latency. */
 int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
                         size_t size, uint32_t format, uint64_t capture_ns);
+
+/* Push a dmabuf-backed frame (zero-copy). The fd is dup'd internally; the
+ * release callback fires (from the streaming thread) once the pipeline is
+ * done with the buffer. Returns -1 without invoking release on failure. */
+int pipeline_push_dmabuf(struct pipeline_context *ctx, int fd, size_t size,
+                         uint32_t stride, uint32_t width, uint32_t height,
+                         uint64_t capture_ns,
+                         void (*release)(void *), void *release_data);
 
 /* Request a keyframe on the next frame */
 void pipeline_force_keyframe(struct pipeline_context *ctx);

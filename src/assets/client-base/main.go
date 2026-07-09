@@ -41,6 +41,12 @@ func main() {
 
 	markCurrentBootGood(logger)
 
+	// Converge the standalone USB debug service with the mode this launch is
+	// about to run in. Every dev-mode transition takes effect through a
+	// strux.service restart, so syncing here covers all toggle paths regardless
+	// of which runtime version the backend app was built against.
+	syncUSBNetService(fileExists("/strux/.dev-env.json"))
+
 	// Check if dev mode config file exists
 	if !fileExists("/strux/.dev-env.json") {
 		logger.Info("Production mode: Launching Cage and Cog")

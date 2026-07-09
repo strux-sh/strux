@@ -23,8 +23,11 @@ cc = meson.get_compiler('c')
 gst = dependency('gstreamer-1.0')
 gst_app = dependency('gstreamer-app-1.0')
 gst_video = dependency('gstreamer-video-1.0')
+gst_allocators = dependency('gstreamer-allocators-1.0')
 wayland_client = dependency('wayland-client')
 xkbcommon = dependency('xkbcommon')
+gbm = dependency('gbm')
+libdrm = dependency('libdrm')
 math = cc.find_library('m', required: false)
 rt = cc.find_library('rt')  # for shm_open
 
@@ -35,6 +38,7 @@ protocol_xmls = {
   'wlr-screencopy-unstable-v1': files('protocols/wlr-screencopy-unstable-v1.xml'),
   'wlr-virtual-pointer-unstable-v1': files('protocols/wlr-virtual-pointer-unstable-v1.xml'),
   'virtual-keyboard-unstable-v1': files('protocols/virtual-keyboard-unstable-v1.xml'),
+  'linux-dmabuf-unstable-v1': files('protocols/linux-dmabuf-unstable-v1.xml'),
 }
 
 protocol_sources = []
@@ -64,8 +68,11 @@ executable(
     gst,
     gst_app,
     gst_video,
+    gst_allocators,
     wayland_client,
     xkbcommon,
+    gbm,
+    libdrm,
     math,
     rt,
   ],

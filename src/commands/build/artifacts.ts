@@ -180,6 +180,8 @@ import screenProtocolXml from "../../assets/screen-base/protocols/wlr-screencopy
 import screenProtocolVirtualPointerXml from "../../assets/screen-base/protocols/wlr-virtual-pointer-unstable-v1.xml" with { type: "text" }
 // @ts-ignore
 import screenProtocolVirtualKeyboardXml from "../../assets/screen-base/protocols/virtual-keyboard-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import screenProtocolLinuxDmabufXml from "../../assets/screen-base/protocols/linux-dmabuf-unstable-v1.xml" with { type: "text" }
 
 // ----------------------------------------------------------------------------
 // Artifact manifest — the SINGLE source of truth for everything written into
@@ -268,6 +270,7 @@ const ARTIFACT_FILES: readonly (readonly [string, string])[] = [
     ["screen/protocols/wlr-screencopy-unstable-v1.xml", screenProtocolXml],
     ["screen/protocols/wlr-virtual-pointer-unstable-v1.xml", screenProtocolVirtualPointerXml],
     ["screen/protocols/virtual-keyboard-unstable-v1.xml", screenProtocolVirtualKeyboardXml],
+    ["screen/protocols/linux-dmabuf-unstable-v1.xml", screenProtocolLinuxDmabufXml],
 
     // Build patches (applied to upstream sources inside the build container)
     ["patches/cog-autoplay-policy.patch", cogAutoplayPatch],

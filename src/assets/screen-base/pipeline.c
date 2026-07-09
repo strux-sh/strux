@@ -9,11 +9,15 @@
  * Also provides JPEG screenshot encoding.
  */
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <gst/video/video.h>
+#include <gst/allocators/gstdmabuf.h>
 
 #include "pipeline.h"
 
@@ -148,6 +152,34 @@ static GstFlowReturn on_new_sample(GstAppSink *appsink, gpointer user_data)
         return GST_FLOW_ERROR;
     }
 
+    /* One-time: log what the encoder actually negotiated. BGRA input means
+     * hardware (RGA) conversion; NV12 means videoconvert is on the CPU. */
+    if (!ctx->caps_logged) {
+        ctx->caps_logged = true;
+        GstPad *sinkpad = gst_element_get_static_pad(ctx->encoder, "sink");
+        if (sinkpad) {
+            GstCaps *caps = gst_pad_get_current_caps(sinkpad);
+            gchar *str = caps ? gst_caps_to_string(caps) : g_strdup("(none)");
+            fprintf(stderr, "[strux-screen] Encoder input caps: %s\n", str);
+            g_free(str);
+            if (caps)
+                gst_caps_unref(caps);
+            gst_object_unref(sinkpad);
+        }
+    }
+
+    /* Encoded-output rate, logged every 5s while streaming */
+    ctx->out_count++;
+    int64_t now_us = g_get_monotonic_time();
+    if (ctx->rate_log_us == 0)
+        ctx->rate_log_us = now_us;
+    if (now_us - ctx->rate_log_us >= 5000000) {
+        fprintf(stderr, "[strux-screen] encode out: %.1f fps\n",
+                ctx->out_count * 1000000.0 / (now_us - ctx->rate_log_us));
+        ctx->out_count = 0;
+        ctx->rate_log_us = now_us;
+    }
+
     /* Check if this is a keyframe */
     bool is_keyframe = !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
 
@@ -177,6 +209,9 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
     const char *gst_format = wl_format_to_gst(wl_format);
     fprintf(stderr, "[strux-screen] Pixel format: 0x%08x -> GStreamer %s\n",
             wl_format, gst_format);
+
+    ctx->vformat = gst_video_format_from_string(gst_format);
+    ctx->dmabuf_allocator = gst_dmabuf_allocator_new();
 
     /* Create pipeline elements */
     ctx->pipeline = gst_pipeline_new("screen-encode");
@@ -266,19 +301,11 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
     return 0;
 }
 
-int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
-                        size_t size, uint32_t format, uint64_t capture_ns)
+/* Timestamp with real (zero-based) capture time so downstream viewers can
+ * measure latency; fall back to synthetic pacing if capture time is 0. */
+static void stamp_buffer(struct pipeline_context *ctx, GstBuffer *buffer,
+                         uint64_t capture_ns)
 {
-    (void)format; /* Already configured in caps */
-
-    GstBuffer *buffer = gst_buffer_new_allocate(NULL, size, NULL);
-    if (!buffer)
-        return -1;
-
-    gst_buffer_fill(buffer, 0, data, size);
-
-    /* Timestamp with real (zero-based) capture time so downstream viewers can
-     * measure latency; fall back to synthetic pacing if capture time is 0. */
     uint64_t duration = GST_SECOND / ctx->fps;
     uint64_t wire_ts;
     if (capture_ns != 0) {
@@ -292,11 +319,96 @@ int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
     GST_BUFFER_DTS(buffer) = wire_ts;
     GST_BUFFER_DURATION(buffer) = duration;
     ctx->frame_count++;
+}
+
+int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
+                        size_t size, uint32_t format, uint64_t capture_ns)
+{
+    (void)format; /* Already configured in caps */
+
+    GstBuffer *buffer = gst_buffer_new_allocate(NULL, size, NULL);
+    if (!buffer)
+        return -1;
+
+    gst_buffer_fill(buffer, 0, data, size);
+    stamp_buffer(ctx, buffer, capture_ns);
 
     GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(ctx->appsrc),
                                                  buffer);
     if (ret != GST_FLOW_OK) {
         fprintf(stderr, "[strux-screen] Failed to push frame: %s\n",
+                gst_flow_get_name(ret));
+        return -1;
+    }
+
+    return 0;
+}
+
+/* --- Zero-copy dmabuf input --- */
+
+struct release_closure {
+    void (*release)(void *);
+    void *data;
+};
+
+static void buffer_released(gpointer data, GstMiniObject *obj)
+{
+    (void)obj;
+    struct release_closure *rc = data;
+    rc->release(rc->data);
+    free(rc);
+}
+
+int pipeline_push_dmabuf(struct pipeline_context *ctx, int fd, size_t size,
+                         uint32_t stride, uint32_t width, uint32_t height,
+                         uint64_t capture_ns,
+                         void (*release)(void *), void *release_data)
+{
+    /* The dmabuf allocator takes ownership of the fd and closes it when the
+     * memory is freed — hand it a private duplicate. */
+    int fd_dup = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+    if (fd_dup < 0) {
+        fprintf(stderr, "[strux-screen] Failed to dup dmabuf fd: %s\n",
+                strerror(errno));
+        return -1;
+    }
+
+    GstMemory *mem = gst_dmabuf_allocator_alloc(ctx->dmabuf_allocator,
+                                                fd_dup, size);
+    if (!mem) {
+        close(fd_dup);
+        return -1;
+    }
+
+    GstBuffer *buffer = gst_buffer_new();
+    gst_buffer_append_memory(buffer, mem);
+
+    /* Carry the real stride — GBM may pad beyond width * bpp.
+     * (The API reads GST_VIDEO_MAX_PLANES entries regardless of n_planes.) */
+    gsize offsets[GST_VIDEO_MAX_PLANES] = { 0 };
+    gint strides[GST_VIDEO_MAX_PLANES] = { (gint)stride };
+    gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE,
+                                   ctx->vformat, width, height, 1,
+                                   offsets, strides);
+
+    stamp_buffer(ctx, buffer, capture_ns);
+
+    if (release) {
+        struct release_closure *rc = malloc(sizeof(*rc));
+        if (!rc) {
+            gst_buffer_unref(buffer);
+            return -1;
+        }
+        rc->release = release;
+        rc->data = release_data;
+        gst_mini_object_weak_ref(GST_MINI_OBJECT_CAST(buffer),
+                                 buffer_released, rc);
+    }
+
+    GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(ctx->appsrc),
+                                                 buffer);
+    if (ret != GST_FLOW_OK) {
+        fprintf(stderr, "[strux-screen] Failed to push dmabuf frame: %s\n",
                 gst_flow_get_name(ret));
         return -1;
     }
@@ -387,5 +499,9 @@ void pipeline_destroy(struct pipeline_context *ctx)
         gst_element_set_state(ctx->pipeline, GST_STATE_NULL);
         gst_object_unref(ctx->pipeline);
         ctx->pipeline = NULL;
+    }
+    if (ctx->dmabuf_allocator) {
+        gst_object_unref(ctx->dmabuf_allocator);
+        ctx->dmabuf_allocator = NULL;
     }
 }

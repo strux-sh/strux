@@ -176,6 +176,14 @@ fi
 
 progress "Configuring strux-screen with meson for $ARCH_LABEL..."
 
+# The builder image's trimmed GStreamer dev set lacks the unversioned
+# linker symlink for gstallocators (needed by the dmabuf zero-copy path)
+for libdir in /usr/lib/*-linux-gnu*; do
+    if [ -e "$libdir/libgstallocators-1.0.so.0" ] && [ ! -e "$libdir/libgstallocators-1.0.so" ]; then
+        ln -sf libgstallocators-1.0.so.0 "$libdir/libgstallocators-1.0.so"
+    fi
+done
+
 # Fix clock skew
 find . -type f -exec touch {} + 2>/dev/null || true
 

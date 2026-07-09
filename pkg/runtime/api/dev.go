@@ -58,10 +58,6 @@ type DevService struct {
 	activeConfigPath   string
 	disabledConfigPath string
 	restart            func() error
-	// setUSBNet starts (enabled) or stops (disabled) the standalone
-	// strux-usbnet.service so the USB debug link follows dev-mode state. Nil
-	// uses a systemctl-based default.
-	setUSBNet func(enabled bool) error
 }
 
 // GetConfig returns the currently stored dev-mode config.
@@ -180,15 +176,10 @@ func (d *DevService) RestartService() error {
 		return errors.New("restart function not configured")
 	}
 
+	// The strux client syncs strux-usbnet.service with dev-mode state at
+	// startup, so the restart itself converges the USB debug link.
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		// Bring the standalone USB debug service in line with the current
-		// dev-mode state before restarting the kiosk service.
-		if state, err := d.GetConfig(); err == nil {
-			if uerr := d.usbNetFunc()(state.Enabled); uerr != nil {
-				fmt.Printf("Strux Dev: Failed to sync USB debug service: %v\n", uerr)
-			}
-		}
 		if err := restart(); err != nil {
 			fmt.Printf("Strux Dev: Failed to restart service: %v\n", err)
 		}
@@ -260,19 +251,6 @@ func (d *DevService) restartFunc() func() error {
 	}
 	return func() error {
 		return exec.Command("systemctl", "restart", "strux").Run()
-	}
-}
-
-func (d *DevService) usbNetFunc() func(enabled bool) error {
-	if d.setUSBNet != nil {
-		return d.setUSBNet
-	}
-	return func(enabled bool) error {
-		action := "stop"
-		if enabled {
-			action = "start"
-		}
-		return exec.Command("systemctl", action, "strux-usbnet").Run()
 	}
 }
 

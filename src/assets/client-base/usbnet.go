@@ -105,6 +105,25 @@ func RunUSBNetDaemon() {
 	logger.Info("USB debug Ethernet torn down")
 }
 
+// syncUSBNetService starts or stops the standalone strux-usbnet.service to
+// match dev-mode state. Called by the main client at startup, which is the
+// single choke point every dev-mode transition passes through. Best-effort:
+// systemd may be unavailable in some environments, and the daemon itself
+// no-ops when USB debug is disabled by config.
+func syncUSBNetService(devMode bool) {
+	logger := NewLogger("USBNet")
+
+	action := "stop"
+	if devMode {
+		action = "start"
+	}
+	if err := runCommand("systemctl", action, "strux-usbnet"); err != nil {
+		logger.Warn("Failed to %s strux-usbnet service: %v", action, err)
+		return
+	}
+	logger.Info("USB debug service synced (%s)", action)
+}
+
 func (m *USBNetManager) Cleanup(config usbNetConfig) {
 	if strings.TrimSpace(config.GadgetName) == "" {
 		return

@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -278,6 +279,62 @@ static struct pipeline_context pipeline;
 static bool pipeline_initialized = false;
 static bool streaming = false;
 
+static uint64_t capture_count = 0;
+static uint64_t capture_rate_ms = 0;
+
+/* Capture-input rate, logged every 5s. Compare against "encode out" to
+ * locate the bottleneck: equal rates = capture/compositor-bound; higher
+ * capture rate = frames dropped at appsrc = convert/encode-bound. */
+static void log_capture_rate(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t now_ms = (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+    capture_count++;
+    if (capture_rate_ms == 0)
+        capture_rate_ms = now_ms;
+    if (now_ms - capture_rate_ms >= 5000) {
+        fprintf(stderr, "[strux-screen] capture in: %.1f fps\n",
+                capture_count * 1000.0 / (now_ms - capture_rate_ms));
+        capture_count = 0;
+        capture_rate_ms = now_ms;
+    }
+}
+
+/* Initialize the encode pipeline on the first frame (when dimensions and
+ * pixel format are known) and announce readiness. Returns false when the
+ * pipeline is unavailable. */
+static bool ensure_pipeline(uint32_t width, uint32_t height, uint32_t format)
+{
+    if (pipeline_initialized)
+        return true;
+
+    memset(&pipeline, 0, sizeof(pipeline));
+    pipeline.on_encoded_frame = on_encoded_frame;
+
+    if (pipeline_init(&pipeline, width, height, config.fps, format) < 0) {
+        fprintf(stderr, "[strux-screen] Failed to initialize pipeline\n");
+        config.running = false;
+        return false;
+    }
+    pipeline_initialized = true;
+
+    /* Force first keyframe */
+    pipeline_force_keyframe(&pipeline);
+
+    /* Send ready event */
+    char info[256];
+    snprintf(info, sizeof(info),
+             "{\"type\":\"ready\",\"width\":%u,\"height\":%u,"
+             "\"encoder\":\"%s\",\"fps\":%d}",
+             width, height,
+             pipeline.encoder_name ? pipeline.encoder_name : "unknown",
+             config.fps);
+    socket_send_control(info);
+
+    return true;
+}
+
 static void on_frame_captured(struct capture_context *ctx, void *data,
                               uint32_t width, uint32_t height,
                               uint32_t stride, uint32_t format,
@@ -286,34 +343,42 @@ static void on_frame_captured(struct capture_context *ctx, void *data,
     if (!streaming)
         return;
 
-    /* Initialize pipeline on first frame (we now know dimensions) */
-    if (!pipeline_initialized) {
-        memset(&pipeline, 0, sizeof(pipeline));
-        pipeline.on_encoded_frame = on_encoded_frame;
+    log_capture_rate();
 
-        if (pipeline_init(&pipeline, width, height, config.fps, format) < 0) {
-            fprintf(stderr, "[strux-screen] Failed to initialize pipeline\n");
-            config.running = false;
-            return;
-        }
-        pipeline_initialized = true;
-
-        /* Force first keyframe */
-        pipeline_force_keyframe(&pipeline);
-
-        /* Send ready event */
-        char info[256];
-        snprintf(info, sizeof(info),
-                 "{\"type\":\"ready\",\"width\":%u,\"height\":%u,"
-                 "\"encoder\":\"%s\",\"fps\":%d}",
-                 width, height,
-                 pipeline.encoder_name ? pipeline.encoder_name : "unknown",
-                 config.fps);
-        socket_send_control(info);
-    }
+    if (!ensure_pipeline(width, height, format))
+        return;
 
     size_t size = stride * height;
     pipeline_push_frame(&pipeline, data, size, format, timestamp_ns);
+}
+
+/* Zero-copy frame: the dmabuf fd goes straight to the encoder; the slot is
+ * returned to the capture pool once the pipeline is done with it. */
+static void on_frame_captured_dmabuf(struct capture_context *ctx, void *slot,
+                                     int fd, size_t size, uint32_t stride,
+                                     uint32_t drm_format, uint32_t width,
+                                     uint32_t height, uint64_t timestamp_ns)
+{
+    (void)ctx;
+
+    if (!streaming) {
+        capture_release_dmabuf_slot(slot);
+        return;
+    }
+
+    log_capture_rate();
+
+    if (!ensure_pipeline(width, height, drm_format)) {
+        capture_release_dmabuf_slot(slot);
+        return;
+    }
+
+    if (pipeline_push_dmabuf(&pipeline, fd, size, stride, width, height,
+                             timestamp_ns, capture_release_dmabuf_slot,
+                             slot) < 0) {
+        /* release is idempotent — safe even if the push partially completed */
+        capture_release_dmabuf_slot(slot);
+    }
 }
 
 /* --- Virtual input --- */
@@ -389,8 +454,19 @@ static bool handle_input_command(const char *cmd)
 
 static void handle_screenshot(struct capture_context *capture_ctx)
 {
-    /* Capture a single frame */
-    if (capture_frame(capture_ctx) < 0) {
+    /* Screenshots read pixels from the CPU-mapped shm buffer, so force the
+     * shm path. The already-pending capture may still complete as dmabuf
+     * (it was requested before the flag) — retry until an shm frame lands. */
+    capture_ctx->force_shm = true;
+    int rc = -1;
+    for (int tries = 0; tries < 3; tries++) {
+        rc = capture_frame(capture_ctx);
+        if (rc < 0 || !capture_ctx->last_frame_dmabuf)
+            break;
+    }
+    capture_ctx->force_shm = false;
+
+    if (rc < 0 || capture_ctx->last_frame_dmabuf || !capture_ctx->data) {
         socket_send_control("{\"type\":\"error\","
                             "\"message\":\"Screenshot capture failed\"}");
         return;
@@ -533,6 +609,7 @@ int main(int argc, char *argv[])
 
     /* Set callbacks AFTER init (init does memset) */
     capture_ctx.on_frame = on_frame_captured;
+    capture_ctx.on_frame_dmabuf = on_frame_captured_dmabuf;
     capture_ctx.user_data = NULL;
 
     fprintf(stderr, "[strux-screen] Capture initialized for output: %s\n",

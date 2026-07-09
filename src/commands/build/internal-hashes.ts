@@ -58,6 +58,8 @@ import screenProtocolScreencopy from "../../assets/screen-base/protocols/wlr-scr
 import screenProtocolVirtualPointer from "../../assets/screen-base/protocols/wlr-virtual-pointer-unstable-v1.xml" with { type: "text" }
 // @ts-ignore
 import screenProtocolVirtualKeyboard from "../../assets/screen-base/protocols/virtual-keyboard-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import screenProtocolLinuxDmabuf from "../../assets/screen-base/protocols/linux-dmabuf-unstable-v1.xml" with { type: "text" }
 
 // Go Client-base files
 // @ts-ignore
@@ -275,7 +277,8 @@ export function computeInternalAssetHashes(): Record<string, string> {
             screenMesonBuild,
             screenProtocolScreencopy,
             screenProtocolVirtualPointer,
-            screenProtocolVirtualKeyboard
+            screenProtocolVirtualKeyboard,
+            screenProtocolLinuxDmabuf
         ),
 
         // Plymouth theme assets
