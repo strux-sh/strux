@@ -59,7 +59,7 @@ Set `STRUX_DEV_NO_UI=1` to run dev mode with plain log output instead of the ter
 
 Different files take different paths back to the running device:
 
-- **Frontend files** (`frontend/`) — Vite handles these directly. In dev mode the device loads your frontend from the Vite server on port 5173, not from a compiled bundle, so changes hot-reload in the running page within a second.
+- **Frontend files** (`frontend/`) — Vite handles these directly. In dev mode the device loads your frontend from the Vite server on port 5173, not from a compiled bundle, so changes hot-reload in the running page within a second. For an npm workspace frontend, imported local workspace package sources are mounted into the same container and participate in Vite hot reload too. Restart `strux dev` after changing workspace package manifests or the root lockfile so dependencies are reinstalled.
 - **Go files** (`*.go`, `go.mod`, `go.sum`) — the file watcher recompiles your application and pushes the new binary to the connected device over the WebSocket. The app restarts with the new binary in seconds; no image rebuild, no reboot.
 - **`strux.yaml`** — a YAML change triggers a full image rebuild, because configuration can affect any build step. The [build cache](/concepts/caching.md) keeps this fast: only the steps whose inputs actually changed are rebuilt.
 

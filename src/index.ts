@@ -119,6 +119,7 @@ program.command("types")
         const { MainYAMLValidator } = await import("./types/main-yaml")
         const { BSPYamlValidator } = await import("./types/bsp-yaml")
         const { getLocalBSPRuntimeExtensionDirs, writeBSPRuntimeExtensionImports } = await import("./utils/bsp-runtime")
+        const { resolveFrontendLayout } = await import("./utils/frontend-layout")
         const cwd = process.cwd()
 
         Settings.projectPath = cwd
@@ -131,9 +132,11 @@ program.command("types")
 
         await writeBSPRuntimeExtensionImports()
 
+        const frontendLayout = resolveFrontendLayout()
+
         const result = await generateTypes({
             mainGoPath: `${cwd}/main.go`,
-            outputDir: `${cwd}/frontend/src`,
+            outputDir: join(frontendLayout.frontendDirectory, "src"),
             runtimeExtensionDirs: getLocalBSPRuntimeExtensionDirs(),
         })
         if (result.success) {

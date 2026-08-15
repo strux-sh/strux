@@ -7,9 +7,20 @@
  */
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
-import { Runner } from "../../utils/run"
+import { frontendDockerMounts, frontendEnvironment, resolveFrontendLayout } from "../../utils/frontend-layout"
+import { appendDockerMountArguments, Runner } from "../../utils/run"
 import type { Subprocess } from "bun"
 
+const VITE_DEV_SCRIPT = `
+set -eo pipefail
+cd "$FRONTEND_INSTALL_DIR"
+workspace_args=()
+if [[ -n "$FRONTEND_WORKSPACE_PACKAGE" ]]; then
+    workspace_args+=(--workspace "$FRONTEND_WORKSPACE_PACKAGE")
+fi
+npm install "\${workspace_args[@]}"
+npm run "$FRONTEND_DEV_SCRIPT" "\${workspace_args[@]}" -- --host 0.0.0.0 --port 5173
+`.trim()
 
 /** Env for Vite/npm child: stdout is piped (not a TTY), so picocolors would strip colors unless forced. */
 function viteChildEnv(): NodeJS.ProcessEnv {
@@ -61,9 +72,7 @@ export class ViteManager {
         // Stream stdout/stderr
         this.streamOutput()
 
-        // Watch for an unexpected exit (e.g. the builder image is missing, the
-        // container fails to launch, or the dev server crashes) so the TUI can
-        // show it failed rather than leaving the status green.
+        // Watch for an unexpected exit so the TUI can show a failed Vite process.
         this.watchExit()
 
     }
@@ -87,7 +96,6 @@ export class ViteManager {
     stop(): void {
 
         this.stopping = true
-
         if (this.process) {
 
             this.process.kill()
@@ -98,7 +106,13 @@ export class ViteManager {
         // Fallback: stop the Docker container if running on host
         if (!Settings.inContainer) {
 
-            Bun.$`docker stop -t 3 ${this.containerName}`.quiet().nothrow()
+            // DevServer.stop() exits the process immediately afterward, so ensure
+            // the container is removed before returning.
+            Bun.spawnSync(["docker", "rm", "-f", this.containerName], {
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "ignore",
+            })
 
         }
 
@@ -120,7 +134,8 @@ export class ViteManager {
 
     private async startDocker(): Promise<void> {
 
-        const projectPath = process.cwd()
+        const frontendLayout = resolveFrontendLayout()
+        const frontendEnv = frontendEnvironment(frontendLayout)
 
         // Ensure the local "strux-builder" image exists before running it. The
         // dev startup does not otherwise prepare it before Vite starts, and
@@ -129,23 +144,23 @@ export class ViteManager {
         // builds it from the Dockerfile when the version isn't published.
         await Runner.prepareDockerImage()
 
-        this.process = Bun.spawn([
+        const args = [
             "docker", "run", "--rm",
             "--name", this.containerName,
-            "-v", `${projectPath}:/project`,
             "-p", "5173:5173",
-            "-w", "/project/frontend",
+            "-w", frontendLayout.containerInstallDirectory,
             "-e", "CHOKIDAR_USEPOLLING=true",
             "-e", "CHOKIDAR_INTERVAL=100",
             "-e", "FORCE_COLOR=1",
-            // Use the locally-prepared builder tag (Runner.prepareDockerImage pulls
-            // the versioned GHCR image and tags it "strux-builder", or builds it
-            // from the Dockerfile when the version isn't published — e.g. an
-            // unreleased dev version). Running Settings.builderImage directly would
-            // try to pull ghcr.io/…:<version> and fail for unpublished versions.
-            "strux-builder",
-            "/bin/bash", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5173",
-        ], {
+        ]
+
+        for (const [key, value] of Object.entries(frontendEnv)) args.push("-e", `${key}=${value}`)
+        appendDockerMountArguments(args, frontendDockerMounts(frontendLayout))
+
+        // Use the locally-prepared builder tag so unreleased versions use the image prepared above.
+        args.push("strux-builder", "/bin/bash", "-c", VITE_DEV_SCRIPT)
+
+        this.process = Bun.spawn(args, {
             stdio: ["pipe", "pipe", "pipe"],
         })
 
@@ -154,12 +169,12 @@ export class ViteManager {
 
     private async startDirect(): Promise<void> {
 
-        this.process = Bun.spawn([
-            "/bin/bash", "-c",
-            "cd /project/frontend && npm install && npm run dev -- --host 0.0.0.0 --port 5173",
-        ], {
+        const frontendLayout = resolveFrontendLayout()
+
+        this.process = Bun.spawn(["/bin/bash", "-c", VITE_DEV_SCRIPT], {
             stdio: ["pipe", "pipe", "pipe"],
-            env: viteChildEnv(),
+            cwd: frontendLayout.installDirectory,
+            env: { ...viteChildEnv(), ...frontendEnvironment(frontendLayout, true) },
         })
 
     }

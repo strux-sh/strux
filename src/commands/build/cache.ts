@@ -11,13 +11,14 @@
  *
  */
 
-import { join } from "path"
-import { readFileSync, readdirSync, statSync } from "fs"
+import { join, relative } from "path"
+import { readFileSync, readdirSync } from "fs"
 import { Settings } from "../../settings"
 import { fileExists, directoryExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
-import { type BuildStep, STEP_DEPENDENCIES, resolvePlaceholders, type StepDependency } from "./cache-deps"
+import { type BuildStep, STEP_DEPENDENCIES, resolvePlaceholders } from "./cache-deps"
 import { computeInternalAssetHashes, getDockerfileHash } from "./internal-hashes"
+import { resolveFrontendLayout } from "../../utils/frontend-layout"
 
 // =========================================================================
 // CACHE MANIFEST TYPES
@@ -210,6 +211,22 @@ async function computeDirectoryHash(
     }
 }
 
+async function addFrontendWorkspaceHashes(hashes: Record<string, string>, ignorePatterns: string[]): Promise<void> {
+    const layout = resolveFrontendLayout()
+    if (!layout.workspaceRoot) return
+
+    for (const filePath of layout.cacheFiles) {
+        const relativePath = relative(layout.workspaceRoot, filePath)
+        hashes[`frontend-workspace:file:${relativePath}`] = await computeFileHashOrMissing(filePath)
+    }
+
+    for (const directoryPath of layout.cacheDirectories) {
+        const relativePath = relative(layout.workspaceRoot, directoryPath)
+        const hash = await computeDirectoryHash(directoryPath, ["node_modules", "dist", ...ignorePatterns])
+        hashes[`frontend-workspace:dir:${relativePath}`] = hash ?? Bun.hash(`empty:${relativePath}`).toString(16)
+    }
+}
+
 /**
  * Recursively collects all files in a directory
  */
@@ -391,6 +408,11 @@ export async function computeDependencyHashes(
                 }
             }
         }
+    }
+
+    // Workspace frontends also depend on the root lockfile and transitive local package sources.
+    if (step === "frontend") {
+        await addFrontendWorkspaceHashes(hashes, ignorePatterns)
     }
 
     // Hash YAML keys

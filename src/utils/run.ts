@@ -29,6 +29,28 @@ export interface RunnerOptions {
     cwd?: string
     exitOnError?: boolean
     env?: Record<string, string>
+    containerProjectDirectory?: string
+    dockerMounts?: DockerMount[]
+}
+
+export interface DockerMount {
+    type: "bind" | "volume"
+    source?: string
+    target: string
+    readOnly?: boolean
+}
+
+export function appendDockerMountArguments(args: string[], mounts: DockerMount[]): void {
+    for (const mount of mounts) {
+        if (mount.type === "bind" && !mount.source) {
+            throw new Error(`Docker bind mount for ${mount.target} requires a source path`)
+        }
+
+        const options = [`type=${mount.type}`, `target=${mount.target}`]
+        if (mount.source) options.push(`source=${mount.source}`)
+        if (mount.readOnly) options.push("readonly")
+        args.push("--mount", options.join(","))
+    }
 }
 
 export class RunnerClass {
@@ -418,8 +440,8 @@ export class RunnerClass {
         return `git config --global --add safe.directory "$PROJECT_DIR" 2>/dev/null || true\n${script.trimEnd()}`
     }
 
-    private getScriptPathEnv(): Record<string, string> {
-        const projectDir = Settings.inContainer ? Settings.projectPath : "/project"
+    private getScriptPathEnv(projectDirectory?: string): Record<string, string> {
+        const projectDir = projectDirectory ?? (Settings.inContainer ? Settings.projectPath : "/project")
         const projectDistDir = `${projectDir}/dist`
         const env: Record<string, string> = {
             PROJECT_DIR: projectDir,
@@ -501,13 +523,14 @@ export class RunnerClass {
 
         const finalScript = this.withGitSafeProjectDirectory(script)
         const args = ["/bin/bash", "-c", finalScript]
-        assertShellSafeEnv({ ...options.env, ...this.getScriptPathEnv() }, "script environment variable")
+        const scriptPathEnv = this.getScriptPathEnv(options.containerProjectDirectory)
+        assertShellSafeEnv({ ...options.env, ...scriptPathEnv }, "script environment variable")
 
         // Capture output for spinner, error display, and verbose output to UI
         const proc = Bun.spawn(args, {
             stdout: "pipe",
             stderr: "pipe",
-            env: { ...process.env, ...options.env, ...this.getScriptPathEnv() },
+            env: { ...process.env, ...options.env, ...scriptPathEnv },
             cwd: Settings.projectPath,
         })
 
@@ -606,7 +629,7 @@ export class RunnerClass {
             "--privileged"  // Required for debootstrap, mount, and chroot operations
         ]
 
-        const scriptEnv = { ...options.env, ...this.getScriptPathEnv() }
+        const scriptEnv = { ...options.env, ...this.getScriptPathEnv(options.containerProjectDirectory) }
         assertShellSafeEnv(scriptEnv, "script environment variable")
 
         // Add environment variable flags
@@ -614,12 +637,22 @@ export class RunnerClass {
             args.push("-e", `${key}=${value}`)
         }
 
-        // Add volume mount
-        args.push("-v", `${Settings.projectPath}:/project`)
+        // Mount either the normal project root or the caller's isolated build layout.
+        const dockerMounts = options.dockerMounts ?? [{ type: "bind" as const, source: Settings.projectPath, target: "/project" }]
+        appendDockerMountArguments(args, dockerMounts)
 
         // If local runtime is set, mount it into the container
         if (Settings.localRuntime) {
-            args.push("-v", `${Settings.localRuntime}:/strux-runtime:ro`)
+            // Use an explicit bind mount instead of Docker's -v shorthand.  The
+            // shorthand silently creates an empty host directory when the source
+            // path is unavailable to the daemon, which later looks like a missing
+            // /strux-runtime/go.mod during Go module resolution.
+            appendDockerMountArguments(args, [{
+                type: "bind",
+                source: Settings.localRuntime,
+                target: "/strux-runtime",
+                readOnly: true,
+            }])
         }
 
         // Add image and command (use bash since scripts use bash features)
@@ -764,7 +797,12 @@ export class RunnerClass {
 
         // If local runtime is set, mount it into the container
         if (Settings.localRuntime) {
-            args.push("-v", `${Settings.localRuntime}:/strux-runtime:ro`)
+            appendDockerMountArguments(args, [{
+                type: "bind",
+                source: Settings.localRuntime,
+                target: "/strux-runtime",
+                readOnly: true,
+            }])
         }
 
         // Add image and command

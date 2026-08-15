@@ -12,6 +12,24 @@ Vite is the standard build tool for modern web apps: it serves your code with in
 
 On the device, your frontend runs full-screen in WPE WebKit — a real browser engine built for embedded hardware — composited by Cage. During development it runs in the same place, but served live from a Vite dev server on your machine.
 
+## Using an npm workspace
+
+A Strux project may live inside a larger npm workspace and import local packages without publishing or copying them. Point `frontend.workspace.root` at the workspace root and name the frontend package:
+
+```yaml
+frontend:
+  directory: ./frontend
+  workspace:
+    root: ../..
+    package: "@example/kiosk-frontend"
+```
+
+The workspace root must contain the Strux project, and the named package must resolve to `frontend.directory`. Builds run the equivalent of `npm install --workspace @example/kiosk-frontend` and `npm run build --workspace @example/kiosk-frontend` inside the builder container. `strux dev` uses the same package for Vite.
+
+Strux mounts the workspace source and keeps Linux `node_modules` in isolated Docker volumes. Local workspace sources remain visible to Vite for hot reload without overwriting dependencies installed on the host. The frontend cache follows the selected package's transitive local workspace dependencies, so editing a shared component package rebuilds the frontend while editing an unrelated workspace does not.
+
+See the [`frontend` configuration reference](/reference/strux-yaml.md#frontend) for custom scripts and output paths.
+
 ## Talking to the Go backend
 
 Strux injects your backend's API directly into the page as global objects. There's no HTTP client to write and no endpoints to define. Given the template's backend:

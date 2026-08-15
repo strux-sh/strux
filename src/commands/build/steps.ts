@@ -8,13 +8,14 @@
  */
 
 import { join } from "path"
-import { mkdir, rename } from "node:fs/promises"
+import { rename } from "node:fs/promises"
 import { Settings } from "../../settings"
 import { Runner } from "../../utils/run"
-import { fileExists, directoryExists } from "../../utils/path"
+import { fileExists } from "../../utils/path"
 import { Logger } from "../../utils/log"
 import { generateTypes } from "../types"
 import { getLocalBSPRuntimeExtensionDirs, writeBSPRuntimeExtensionImports } from "../../utils/bsp-runtime"
+import { frontendDockerMounts, frontendEnvironment, resolveFrontendLayout } from "../../utils/frontend-layout"
 import { bundleUpdate } from "../update"
 
 // Build Scripts
@@ -59,24 +60,28 @@ function bspBuildEnv(bspName: string, extra: Record<string, string> = {}): Recor
 export async function compileFrontend(): Promise<void> {
     await writeBSPRuntimeExtensionImports()
 
+    const frontendLayout = resolveFrontendLayout()
+
     // Generate types directly instead of shelling out to `strux types`,
     // so we use the local strux-introspect binary if available
     const mainGoPath = join(Settings.projectPath, "main.go")
     const result = await generateTypes({
         mainGoPath,
-        outputDir: join(Settings.projectPath, "frontend", "src"),
+        outputDir: join(frontendLayout.frontendDirectory, "src"),
         runtimeExtensionDirs: getLocalBSPRuntimeExtensionDirs(),
     })
     if (!result.success) {
-        Logger.error(result.error ?? "Failed to generate TypeScript types. Please generate them manually.")
-        process.exit(1)
+        throw new Error(result.error ?? "Failed to generate TypeScript types. Please generate them manually.")
     }
     Logger.info(`Generated ${result.methodCount} methods, ${result.fieldCount} fields`)
 
     await Runner.runScriptInDocker(scriptBuildFrontend, {
         message: "Compiling Frontend...",
         messageOnError: "Failed to compile Frontend. Please check the build logs for more information.",
-        exitOnError: true
+        exitOnError: true,
+        env: frontendEnvironment(frontendLayout, Settings.inContainer),
+        containerProjectDirectory: Settings.inContainer ? frontendLayout.projectDirectory : frontendLayout.containerProjectDirectory,
+        dockerMounts: frontendDockerMounts(frontendLayout),
     })
 }
 

@@ -117,7 +117,13 @@ fi
 # We back up go.mod/go.sum, modify them inside the container, build, then restore.
 GOMOD_BACKUP=""
 GOSUM_BACKUP=""
-if [ "${USE_LOCAL_RUNTIME:-}" = "1" ] && [ -d "/strux-runtime" ]; then
+if [ "${USE_LOCAL_RUNTIME:-}" = "1" ]; then
+    if [ ! -f "/strux-runtime/go.mod" ]; then
+        echo "Local Strux runtime is not mounted at a Go module root: /strux-runtime/go.mod is missing." >&2
+        echo "Pass --local-runtime the root of the Strux repository (the directory containing go.mod)." >&2
+        exit 1
+    fi
+
     progress "Using local strux runtime from /strux-runtime..."
     GOMOD_BACKUP=$(cat "$PROJECT_DIR/go.mod")
     if [ -f "$PROJECT_DIR/go.sum" ]; then

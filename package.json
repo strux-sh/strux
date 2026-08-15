@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "build:web-ui": "cd src/web-ui && bun run build",
-    "build": "bun run build:web-ui && bun build src/index.ts --compile --outfile strux",
+    "build": "bun run build:web-ui && bun build src/index.ts --compile --outfile strux && bun run scripts/sign-macos-binary.ts strux",
     "build:go": "go build -o strux-introspect ./cmd/strux/main.go",
     "generate:types": "go run ./cmd/gen-runtime-types -format=ts > src/types/strux-runtime.ts",
     "lint": "eslint src/",

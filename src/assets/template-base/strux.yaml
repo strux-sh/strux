@@ -14,6 +14,20 @@ bsp: qemu
 
 hostname: ${projectName}
 
+# --- Frontend Build Configuration ---
+# --- Standalone projects can omit this section. For an npm workspace, set the root ---
+# --- relative to this Strux project and the package name declared by frontend/package.json. ---
+# frontend:
+#   directory: ./frontend
+#   workspace:
+#     root: ../..
+#     package: "@example/kiosk-frontend"
+#   package_manager: npm
+#   scripts:
+#     build: build
+#     dev: dev
+#   output: ./dist
+
 # --- Display Configuration ---
 display:
   monitors:

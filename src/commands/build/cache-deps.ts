@@ -87,7 +87,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         directories: ["frontend/"],
         excludePatterns: ["node_modules", "dist"],
         yamlKeys: [
-            { file: "strux.yaml", keyPath: "dev" }
+            { file: "strux.yaml", keyPath: "dev" },
+            { file: "strux.yaml", keyPath: "frontend" }
         ],
         internalAssets: ["@build-frontend-script"],
         // Frontend is architecture-agnostic, so it stays in shared cache (no {bsp} prefix)

@@ -5,7 +5,7 @@
  *
  *
  */
-import { join } from "path"
+import { join, relative, resolve, sep } from "path"
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
 import { Runner } from "../../utils/run"
@@ -19,7 +19,12 @@ const DEBOUNCE_MS = 300
 const COOLDOWN_MS = 1000
 
 const WATCH_EXTENSIONS = [".go", ".mod", ".sum", ".yaml"]
-const IGNORE_DIRS = ["frontend/", "dist/", "assets/", "bsp/", "overlay/", ".git/"]
+const IGNORED_DIRECTORY_NAMES = new Set(["frontend", "dist", "assets", "bsp", "overlay", ".git", "node_modules"])
+
+export function shouldIgnoreDevWatchPath(projectRoot: string, filePath: string): boolean {
+    const relativePath = relative(resolve(projectRoot), resolve(filePath))
+    return relativePath.split(sep).some((segment) => IGNORED_DIRECTORY_NAMES.has(segment))
+}
 
 
 export class FileWatcher {
@@ -41,16 +46,12 @@ export class FileWatcher {
     async start(projectRoot: string): Promise<void> {
 
         const chokidar = await import("chokidar")
+        const resolvedProjectRoot = resolve(projectRoot)
 
-        this.watcher = chokidar.watch(projectRoot, {
+        this.watcher = chokidar.watch(resolvedProjectRoot, {
             persistent: true,
             ignoreInitial: true,
-            ignored: (filePath: string) => {
-
-                if (IGNORE_DIRS.some((d) => filePath.includes(d))) return true
-                return false
-
-            },
+            ignored: (filePath: string) => shouldIgnoreDevWatchPath(resolvedProjectRoot, filePath),
         })
 
         this.watcher.on("change", (path) => this.handleChange(path))

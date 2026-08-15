@@ -24,6 +24,8 @@ Each step has its own dependency list. A few examples of dependency kinds:
 | YAML-referenced file | The DTS file named in `bsp.boot.kernel.device_tree.dts` | The referenced file's contents. The cache follows paths *inside* YAML values, so editing your device tree source reruns the kernel step even though `bsp.yaml` itself didn't change. |
 | Internal asset | The embedded build script for the step | See below. |
 
+When the frontend is an npm workspace package, its dependency set expands beyond `frontend/`. Strux hashes the workspace root `package.json`, `package-lock.json`, optional `.npmrc`, the selected frontend package, and every transitive local workspace package it references. Unrelated workspace packages are not included.
+
 Steps also declare which other steps they depend on. `rootfs-post` depends on frontend, application, cage, wpe, client, kernel, and rootfs-base — if any of those ran more recently than the last `rootfs-post` run, it rebuilds too. That's how a one-line frontend change correctly cascades into a new rootfs without rebuilding the kernel.
 
 Independently of dependency hashes, a step also reruns if any of its declared **output artifacts** is missing from disk — so deleting something from `dist/cache/` regenerates it instead of breaking the build.

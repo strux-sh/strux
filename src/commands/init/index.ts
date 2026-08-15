@@ -108,8 +108,8 @@ export async function init() {
         exitOnError: true
     })
 
-    // Install the Strux Runtime
-    await Runner.runCommand("go get github.com/strux-dev/strux/pkg/runtime", {
+    // Install the runtime release that matches the scaffolding CLI.
+    await Runner.runCommand(["go", "get", `github.com/strux-dev/strux/pkg/runtime@v${Settings.struxVersion.replace(/^v/, "")}`], {
         message: "Installing Strux Runtime...",
         messageOnError: "Failed to install Strux Runtime. Please install it manually.",
         exitOnError: true,

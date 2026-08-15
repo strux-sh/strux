@@ -27,7 +27,9 @@ Before any step runs, the CLI validates `strux.yaml` and the selected `bsp.yaml`
 
 ## 1. Frontend
 
-Runs `npm install` and `npm run build` in your `frontend/` directory, then copies the build output to `dist/cache/frontend/`.
+For a standalone project, runs `npm install` and `npm run build` in `frontend/`. When [`frontend.workspace`](/reference/strux-yaml.md#frontend) is configured, Strux mounts the npm workspace and runs the install and build scripts for the selected package instead. The configured output is copied to `dist/cache/frontend/`.
+
+Dependency installation happens in Docker-managed `node_modules` volumes. Workspace source stays live-mounted, but Linux-native dependencies cannot replace the host's installation.
 
 This is the only step whose output goes in the *shared* cache rather than the per-BSP cache: a built web app is just files, identical for every CPU architecture, so it's reused across boards.
 

@@ -23,6 +23,7 @@ Many string values feed into build scripts, so the schema rejects characters tha
 | `rootfs` | object | — | Root filesystem overlay and packages. See [rootfs](#rootfs). |
 | `scripts` | object[] | — | Project build scripts run against the assembled rootfs. See [scripts](#scripts). |
 | `qemu` | object | — | QEMU settings for local testing. See [qemu](#qemu). |
+| `frontend` | object | — | Frontend package, npm workspace, scripts, and output settings. See [frontend](#frontend). |
 | `build` | object | — | Build environment and cache settings. See [build](#build). |
 | `dev` | object | — | Dev mode settings. See [dev](#dev). |
 
@@ -84,6 +85,35 @@ Maps monitors to frontend routes — each monitor shows your app at a different 
 | `display.monitors[].transform` | string or number | — | Output rotation/flip: `normal`, `0`, `90`, `180`, `270`, `flipped`, `flipped-90`, `flipped-180`, or `flipped-270`. The numeric values `0`, `90`, `180`, `270` may be written unquoted; all values are normalized to strings. |
 | `display.monitors[].names` | string[] | — | Output connector names this entry matches, e.g. `HDMI-A-1`, `DSI-1`, `Virtual-1`. |
 | `display.monitors[].input_devices` | string[] | — | Input device names (e.g. a touchscreen controller) bound to this monitor. |
+
+## frontend
+
+Configures how Strux installs and builds the web frontend. Omit this section for the standard standalone `frontend/` layout, which continues to run `npm install` followed by `npm run build` and reads output from `frontend/dist/`.
+
+```yaml
+frontend:
+  directory: ./frontend
+  workspace:
+    root: ../..
+    package: "@example/kiosk-frontend"
+  package_manager: npm
+  scripts:
+    build: build
+    dev: dev
+  output: ./dist
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `frontend.directory` | shell-safe relative path | `./frontend` | Frontend package directory relative to the Strux project. It must remain inside the project because Strux writes generated types and build output there. |
+| `frontend.workspace.root` | shell-safe relative path | — | npm workspace root relative to the Strux project. It must be the project directory or one of its ancestors and must contain the root `package.json`. |
+| `frontend.workspace.package` | shell-safe string | — | npm workspace package name that resolves to `frontend.directory`. Both workspace keys are required when workspace mode is enabled. |
+| `frontend.package_manager` | string | `npm` | Package manager. v0.4.0 supports `npm`. |
+| `frontend.scripts.build` | script name | `build` | Package script used for production frontend compilation. |
+| `frontend.scripts.dev` | script name | `dev` | Package script used by `strux dev`. |
+| `frontend.output` | shell-safe relative path | `./dist` | Build output relative to `frontend.directory`. It must remain inside the Strux project. |
+
+Workspace source is mounted into the frontend container, while Linux `node_modules` directories are Docker-managed volumes. This lets local packages remain live for Vite without replacing the host's dependency installation. Strux follows transitive local workspace dependencies for build-cache invalidation.
 
 ## rootfs
 
@@ -194,6 +224,15 @@ profiles:
 
 # Device hostname
 hostname: test
+
+# Frontend build settings. Add `workspace` when this project is nested in an npm workspace.
+frontend:
+  directory: ./frontend
+  package_manager: npm
+  scripts:
+    build: build
+    dev: dev
+  output: ./dist
 
 # Monitor-to-route mapping: each monitor shows a different frontend route
 display:

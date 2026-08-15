@@ -413,12 +413,23 @@ func introspectData(filePath string) (IntrospectionOutput, error) {
 		}
 	}
 
+	// JSON null is not a valid replacement for an empty list in the CLI's
+	// introspection contract. Initialize absent slices so consumers can always
+	// validate and iterate the generated metadata.
+	appFields := structFields[appStructName]
+	if appFields == nil {
+		appFields = []FieldDef{}
+	}
+	if methods == nil {
+		methods = []MethodDef{}
+	}
+
 	// Build the output
 	output := IntrospectionOutput{
 		App: AppInfo{
 			Name:        appStructName,
 			PackageName: packageName,
-			Fields:      structFields[appStructName],
+			Fields:      appFields,
 			Methods:     methods,
 		},
 		Structs:    make(map[string]StructDef),
@@ -428,6 +439,9 @@ func introspectData(filePath string) (IntrospectionOutput, error) {
 	// Add all structs except the app struct, including their methods
 	for name, fields := range structFields {
 		if name != appStructName {
+			if fields == nil {
+				fields = []FieldDef{}
+			}
 			output.Structs[name] = StructDef{
 				Fields:  fields,
 				Methods: structMethods[name],

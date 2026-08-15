@@ -122,6 +122,24 @@ const BuildSchema = z.object({
     cache: CacheConfigSchema.optional(),
 })
 
+const FrontendScriptSchema = z.string().regex(/^[A-Za-z0-9:_-]+$/, "Frontend script names may only contain letters, numbers, colons, underscores, and hyphens")
+
+const FrontendWorkspaceSchema = z.object({
+    root: shellSafeRelativePath("frontend.workspace.root"),
+    package: shellSafeString("frontend.workspace.package").trim().min(1, "frontend.workspace.package must not be empty"),
+})
+
+const FrontendSchema = z.object({
+    directory: shellSafeRelativePath("frontend.directory").default("./frontend"),
+    workspace: FrontendWorkspaceSchema.optional(),
+    package_manager: z.literal("npm").default("npm"),
+    scripts: z.object({
+        build: FrontendScriptSchema.default("build"),
+        dev: FrontendScriptSchema.default("dev"),
+    }).default({ build: "build", dev: "dev" }),
+    output: shellSafeRelativePath("frontend.output").default("./dist"),
+})
+
 // A profile is a stable application-facing device classification. BSP names
 // are used only at build time to choose the profile baked into an image.
 const ProfileSchema = z.object({
@@ -251,6 +269,7 @@ export const StruxYamlSchema = z.object({
     rootfs: RootFSSchema.optional(),
     scripts: z.array(ProjectScriptSchema).optional(),
     qemu: QemuSchema.optional(),
+    frontend: FrontendSchema.optional(),
     build: BuildSchema.optional(),
     dev: DevSchema.optional(),
     profiles: ProfilesSchema.optional(),

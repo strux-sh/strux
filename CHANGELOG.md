@@ -8,6 +8,12 @@
 
 ### Major Changes
 
+#### New: npm Workspace Frontends
+
+Strux projects can now build a frontend package from a parent npm workspace. The new `frontend` configuration selects the project-relative frontend directory, workspace root and package, install mode, build/dev scripts, and output directory. Production builds and `strux dev` use the same resolved package layout.
+
+Workspace source is mounted into the builder while Linux `node_modules` directories remain isolated in Docker volumes, so local packages participate in Vite hot reload without replacing the host's dependency installation. Frontend cache invalidation follows the workspace root manifests and the selected package's transitive local workspace dependencies instead of rebuilding for unrelated workspace changes.
+
 #### New: Runtime Capability Extension System
 
 The Go runtime now has a first-class system for BSPs to plug board-specific implementations into standard Strux APIs, exposed to the frontend as `window.strux.<namespace>.*`. Each capability is three pieces: a **Contract** (the interface a BSP implements), a **Capability** (the registration socket — one provider per board), and a **Service** (the app-facing surface that validates input and returns a clean "unsupported" error when no BSP provides the capability). Network, Wi-Fi, and display use this system, and a new **`strux.audio`** capability (master volume, mute, and output routing, with optional auto-switching and microphone capture) ships as the worked example.

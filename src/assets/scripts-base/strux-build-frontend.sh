@@ -11,19 +11,32 @@ progress() {
 }
 
 PROJECT_DIR="${PROJECT_DIR:-/project}"
+FRONTEND_DIR="${FRONTEND_DIR:-$PROJECT_DIR/frontend}"
+FRONTEND_OUTPUT_DIR="${FRONTEND_OUTPUT_DIR:-$FRONTEND_DIR/dist}"
+FRONTEND_INSTALL_DIR="${FRONTEND_INSTALL_DIR:-$FRONTEND_DIR}"
+FRONTEND_BUILD_SCRIPT="${FRONTEND_BUILD_SCRIPT:-build}"
+FRONTEND_WORKSPACE_PACKAGE="${FRONTEND_WORKSPACE_PACKAGE:-}"
 
-# Navigate to the frontend directory of the project
-cd "$PROJECT_DIR/frontend"
+# npm resolves local workspace packages from the configured workspace root.
+cd "$FRONTEND_INSTALL_DIR"
+
+workspace_args=()
+if [[ -n "$FRONTEND_WORKSPACE_PACKAGE" ]]; then
+    workspace_args+=(--workspace "$FRONTEND_WORKSPACE_PACKAGE")
+fi
 
 progress "Installing Frontend Dependencies..."
 
-# Install the dependencies
-npm install
+# Install Linux dependencies into Docker-managed node_modules volumes.
+# A frontend compilation always needs its devDependencies (Vite, TypeScript,
+# framework plugins, and linters), even when the builder environment happens
+# to set production-oriented npm defaults.
+npm install --include=dev "${workspace_args[@]}"
 
 progress "Building Frontend..."
 
-# Build the frontend
-npm run build
+# Run the package build without requiring a root-level forwarding script.
+npm run "$FRONTEND_BUILD_SCRIPT" "${workspace_args[@]}"
 
 progress "Copying Built Frontend to Dist Directory..."
 
@@ -37,6 +50,5 @@ rm -rf "$CACHE_DIR/frontend"
 # Create the frontend directory if it doesn't exist
 mkdir -p "$CACHE_DIR/frontend"
 
-# Copy the built frontend to the cache/frontend directory.
-# Using dist/. preserves the full directory contents, including dotfiles.
-cp -R dist/. "$CACHE_DIR/frontend/"
+# Copy the configured output while preserving dotfiles.
+cp -R "$FRONTEND_OUTPUT_DIR"/. "$CACHE_DIR/frontend/"

@@ -12,6 +12,8 @@
 - Top-level binaries produced in the repo root (`strux`, `strux-introspect`); config at `tsconfig.json`, lint rules in `eslint.config.mjs`.
 
 ## Build, Test, and Development Commands
+
+- Before running any `strux build`, ask the user whether to build a development image or a production image, and do not proceed until they answer. Add `--dev` only when the user selects a development image.
 - `bun run dev` – run the TypeScript CLI directly for rapid iteration.
 - `bun run build` – bundle and compile the CLI to a native binary `strux`.
 - `bun run build:go` – build the Go helper binary `strux-introspect`.

@@ -127,7 +127,9 @@ jobs:
         run: go build -o strux-introspect${{ matrix.os == 'windows-latest' && '.exe' || '' }} ./cmd/strux/main.go
 
       - name: Build Bun executable
-        run: bun build src/index.ts --compile --outfile strux${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        run: |
+          bun build src/index.ts --compile --outfile strux${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          bun run scripts/sign-macos-binary.ts strux${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
       - name: Test binaries
         shell: bash
