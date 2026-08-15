@@ -64,6 +64,7 @@ export default defineUserConfig({
             '/concepts/build-pipeline',
             '/concepts/caching',
             '/concepts/bsp',
+            '/concepts/profiles',
             '/concepts/artifacts',
             '/concepts/display-stack',
             '/concepts/update-system',

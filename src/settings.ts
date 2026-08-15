@@ -8,7 +8,7 @@
 import path from "path"
 import { directoryExists } from "./utils/path"
 import { STRUX_VERSION } from "./version"
-import type { StruxYaml } from "./types/main-yaml"
+import type { StruxProfile, StruxYaml } from "./types/main-yaml"
 import type { BSPYaml } from "./types/bsp-yaml"
 
 export type TemplateType = "vanilla" | "react" | "vue"
@@ -43,6 +43,12 @@ export class SettingsConfig {
     bsp: BSPYaml["bsp"] | null = null
 
     bspName: string | null = null
+    // Global --bsp value, kept separately so config reloads cannot replace it.
+    bspOverride: string | null = null
+
+    // Explicit CLI override and the resolved profile for the current build.
+    profileOverride: string | null = null
+    profile: StruxProfile | null = null
 
     isDevMode = false
 
@@ -144,6 +150,12 @@ export class SettingsConfig {
 
         return this.projectPath
 
+    }
+
+    public resolveBspName(commandBsp?: string | null, configuredBsp?: string | null): string | null {
+        const bspName = this.bspOverride ?? commandBsp ?? this.bspName ?? configuredBsp ?? null
+        this.bspName = bspName
+        return bspName
     }
 
 

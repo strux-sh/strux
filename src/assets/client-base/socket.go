@@ -169,8 +169,9 @@ type DeviceInfoInspectorPort struct {
 
 // OutputInfo describes a connected display output
 type OutputInfo struct {
-	Name  string `json:"name"`
-	Label string `json:"label,omitempty"`
+	Name      string `json:"name"`
+	Label     string `json:"label,omitempty"`
+	Transform string `json:"transform,omitempty"`
 }
 
 // DeviceInfoPayload reports device IP and inspector ports to the dev server

@@ -116,7 +116,7 @@ Creating the actual bootable image is **always the BSP's job** — partition lay
 
 If `strux.yaml` has both `update.enabled: true` and `update.auto_bundle: true`, the build ends by producing a signed `.struxb` update bundle — a tarball containing the rootfs image, a manifest, and an RSA signature — ready to ship to devices over the air. See [Updates](/guide/updates.md).
 
-Finally, the `after_build` hook runs and the CLI writes `dist/output/{bsp}/.build-info.json` with the build mode, timestamp, BSP name, and versions.
+Finally, the `after_build` hook runs and the CLI writes `dist/output/{bsp}/.build-info.json` with the build mode, timestamp, BSP name, versions, and selected [device profile](/concepts/profiles.md) when profiles are configured.
 
 ## Where to go next
 

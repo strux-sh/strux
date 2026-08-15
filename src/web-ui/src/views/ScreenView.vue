@@ -113,6 +113,7 @@
                         v-show="focusedStream?.status === 'streaming'"
                         class="relative bg-black border rounded-strux-md overflow-hidden max-w-full max-h-full transition-shadow"
                         :class="inputEnabled ? 'border-strux-ok ring-2 ring-strux-ok/50' : 'border-strux-divider'"
+                        :style="surfaceStyle"
                     >
                         <video
                             v-show="!usingCanvas"
@@ -122,9 +123,9 @@
                             playsinline
                             tabindex="0"
                             draggable="false"
-                            class="block max-w-full outline-none select-none"
+                            class="absolute outline-none select-none"
                             :class="inputEnabled ? 'cursor-none' : 'cursor-pointer'"
-                            style="max-height: calc(100vh - 9rem)"
+                            :style="videoStyle"
                             @click="enableInput"
                         />
                         <canvas
@@ -132,9 +133,8 @@
                             ref="canvasRef"
                             tabindex="0"
                             draggable="false"
-                            class="block max-w-full outline-none select-none"
+                            class="block w-full h-full outline-none select-none"
                             :class="inputEnabled ? 'cursor-none' : 'cursor-pointer'"
-                            style="max-height: calc(100vh - 9rem)"
                             @click="enableInput"
                         />
                         <!-- Local virtual cursor: frames are captured without the
@@ -186,6 +186,7 @@
         <img
             :src="`data:image/jpeg;base64,${store.screenshot.data}`"
             class="max-w-[90vw] max-h-[90vh] border border-strux-divider rounded-strux-md"
+            :style="screenshotStyle"
             alt="Device screenshot"
         >
     </div>
@@ -198,6 +199,7 @@ import AppLayout from "@/layout/AppLayout.vue"
 import { useDeviceStore } from "@/stores/device"
 import { useScreenStreams } from "@/composables/useScreenStreams"
 import { useInputCapture } from "@/composables/useInputCapture"
+import { inverseCssTransform, isQuarterTurn, normalizeOutputTransform, transformedSize } from "@/lib/output-transform"
 
 const store = useDeviceStore()
 const streams = useScreenStreams()
@@ -216,6 +218,41 @@ const focusedStats = computed(() => {
 const usingCanvas = computed(() => focusedStats.value?.mode === "webcodecs")
 // Input binds to whichever element is actually displaying the stream
 const inputTarget = computed(() => (usingCanvas.value ? canvasRef.value : videoRef.value))
+
+const surfaceStyle = computed(() => {
+    const stream = focusedStream.value
+    if (!stream || stream.width <= 0 || stream.height <= 0) return undefined
+    const size = transformedSize(stream.width, stream.height, stream.transform)
+    return {
+        aspectRatio: `${size.width} / ${size.height}`,
+        width: `min(100%, calc((100vh - 9rem) * ${size.width / size.height}))`,
+        maxHeight: "calc(100vh - 9rem)",
+    }
+})
+
+const videoStyle = computed(() => {
+    const stream = focusedStream.value
+    if (!stream || stream.width <= 0 || stream.height <= 0) return undefined
+    const transform = stream.transform
+    const size = transformedSize(stream.width, stream.height, transform)
+    const widthPercent = isQuarterTurn(transform)
+        ? (size.height / size.width) * 100
+        : 100
+    return {
+        left: "50%",
+        top: "50%",
+        width: `${widthPercent}%`,
+        maxWidth: "none",
+        maxHeight: "none",
+        transformOrigin: "center",
+        transform: `translate(-50%, -50%) ${inverseCssTransform(transform)}`,
+    }
+})
+
+const screenshotStyle = computed(() => {
+    const output = store.outputs.find((item) => item.name === store.screenshot?.outputName)
+    return { transform: inverseCssTransform(normalizeOutputTransform(output?.transform)) }
+})
 
 const connectionLabel = computed(() => {
     if (store.status !== "connected") return "Disconnected"
@@ -264,7 +301,12 @@ watch(
         nextTick(() => {
             const s = focusedStream.value
             if (s && s.status === "streaming" && videoRef.value && canvasRef.value) {
-                streams.registerStream(s.index, { video: videoRef.value, canvas: canvasRef.value }, s.fps)
+                streams.registerStream(
+                    s.index,
+                    { video: videoRef.value, canvas: canvasRef.value },
+                    s.fps,
+                    s.transform
+                )
             }
         })
     }

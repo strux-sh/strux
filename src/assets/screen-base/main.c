@@ -278,6 +278,7 @@ static void on_encoded_frame(const uint8_t *data, size_t size,
 static struct pipeline_context pipeline;
 static bool pipeline_initialized = false;
 static bool streaming = false;
+static bool screenshot_capture = false;
 
 static uint64_t capture_count = 0;
 static uint64_t capture_rate_ms = 0;
@@ -306,8 +307,20 @@ static void log_capture_rate(void)
  * pipeline is unavailable. */
 static bool ensure_pipeline(uint32_t width, uint32_t height, uint32_t format)
 {
-    if (pipeline_initialized)
-        return true;
+    if (pipeline_initialized) {
+        if (pipeline.width == width && pipeline.height == height &&
+            pipeline.input_format == format) {
+            return true;
+        }
+
+        fprintf(stderr, "[strux-screen] Capture layout changed "
+                        "(%ux%u 0x%08x -> %ux%u 0x%08x); "
+                        "reconfiguring pipeline\n",
+                pipeline.width, pipeline.height, pipeline.input_format,
+                width, height, format);
+        pipeline_destroy(&pipeline);
+        pipeline_initialized = false;
+    }
 
     memset(&pipeline, 0, sizeof(pipeline));
     pipeline.on_encoded_frame = on_encoded_frame;
@@ -343,13 +356,16 @@ static void on_frame_captured(struct capture_context *ctx, void *data,
     if (!streaming)
         return;
 
+    if (screenshot_capture)
+        return;
+
     log_capture_rate();
 
     if (!ensure_pipeline(width, height, format))
         return;
 
     size_t size = stride * height;
-    pipeline_push_frame(&pipeline, data, size, format, timestamp_ns);
+    pipeline_push_frame(&pipeline, data, size, stride, format, timestamp_ns);
 }
 
 /* Zero-copy frame: the dmabuf fd goes straight to the encoder; the slot is
@@ -361,7 +377,7 @@ static void on_frame_captured_dmabuf(struct capture_context *ctx, void *slot,
 {
     (void)ctx;
 
-    if (!streaming) {
+    if (!streaming || screenshot_capture) {
         capture_release_dmabuf_slot(slot);
         return;
     }
@@ -458,12 +474,14 @@ static void handle_screenshot(struct capture_context *capture_ctx)
      * shm path. The already-pending capture may still complete as dmabuf
      * (it was requested before the flag) — retry until an shm frame lands. */
     capture_ctx->force_shm = true;
+    screenshot_capture = true;
     int rc = -1;
     for (int tries = 0; tries < 3; tries++) {
         rc = capture_frame(capture_ctx);
         if (rc < 0 || !capture_ctx->last_frame_dmabuf)
             break;
     }
+    screenshot_capture = false;
     capture_ctx->force_shm = false;
 
     if (rc < 0 || capture_ctx->last_frame_dmabuf || !capture_ctx->data) {
@@ -478,6 +496,7 @@ static void handle_screenshot(struct capture_context *capture_ctx)
                                         capture_ctx->stride * capture_ctx->height,
                                         capture_ctx->width,
                                         capture_ctx->height,
+                                        capture_ctx->stride,
                                         capture_ctx->format,
                                         &jpeg_size);
 

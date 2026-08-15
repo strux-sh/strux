@@ -5,16 +5,36 @@
 ## Running a build
 
 ```bash
-strux build qemu
+strux build --bsp qemu
 ```
 
-The argument is the BSP (Board Support Package — the folder under `bsp/` describing your target hardware) to build for. Use `qemu` for local testing, or the name of your hardware BSP:
+The BSP is the Board Support Package — the folder under `bsp/` describing your target hardware. By default Strux uses the `bsp` value in `strux.yaml`. Use `--bsp` to override it for one command:
 
 ```bash
-strux build my-board
+strux build --bsp my-board
 ```
 
+The older `strux build my-board` positional form remains supported. If both forms are supplied, `--bsp` wins.
+
 Each BSP builds independently: caches live in `dist/cache/<bsp>/` and outputs in `dist/output/<bsp>/`, so building for one board never clobbers another.
+
+## Selecting a device profile
+
+If the project defines [device profiles](/concepts/profiles.md), Strux chooses which application experience to bake into the image after it reads the BSP argument.
+
+- One matching profile is selected automatically.
+- Several matching profiles open a menu so you can choose one.
+- If no profiles match, Strux opens a menu containing every declared profile.
+
+You can always make the choice explicit:
+
+```bash
+strux build my-board --profile kiosk
+```
+
+The flag overrides the normal BSP matching. Use it in CI and other non-interactive builds whenever Strux cannot select exactly one profile on its own. The chosen profile is stored in the image and available to web code through `strux.profiles.GetProfile()`.
+
+Outputs are still grouped by BSP. Building the same BSP with another profile replaces that BSP's previous output under `dist/output/<bsp>/`.
 
 ## What a build does
 
@@ -117,7 +137,7 @@ dist/
     ├── rootfs.ext4          # Root filesystem image
     ├── vmlinuz, initrd.img  # Kernel and initramfs (qemu BSP)
     ├── *.img                # Flashable disk image (hardware BSPs, named by the BSP's image script)
-    └── .build-info.json     # Build mode, time, versions
+    └── .build-info.json     # Build mode, time, versions, selected profile
 ```
 
 The exact files in `output/` depend on the BSP's `make_image` script — a Rockchip board produces a single flashable `.img`, while the qemu BSP keeps kernel, initramfs, and rootfs separate for QEMU to load directly. See [Artifacts](/concepts/artifacts.md) for what lives in `dist/artifacts/` and why you might edit it.
@@ -126,6 +146,7 @@ The exact files in `output/` depend on the BSP's `make_image` script — a Rockc
 
 | Flag | Description |
 | --- | --- |
+| `--profile <name>` | Select the device profile to bake into the image |
 | `--clean` | Delete this BSP's build cache before building |
 | `--dev` | Build a development image (with a 5-second warning banner) |
 | `--no-chown` | Skip file permission fixing after builds |

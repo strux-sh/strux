@@ -386,13 +386,30 @@ func sendDeviceInfo(socket *SocketClient, inspector *InspectorConfig, displayCon
 	}
 
 	// Discover connected outputs via wlr-randr
-	outputs := discoverOutputs()
+	outputs := discoverOutputs(displayConfig)
 
 	socket.SendDeviceInfo(ip, ports, outputs)
 }
 
-// discoverOutputs runs wlr-randr and parses connected output names
-func discoverOutputs() []OutputInfo {
+func configuredOutputTransform(config *DisplayConfig, outputName string) string {
+	if config != nil {
+		for _, monitor := range config.Monitors {
+			for _, name := range monitor.Names {
+				if name == outputName && monitor.Transform != "" {
+					return monitor.Transform
+				}
+			}
+		}
+	}
+
+	// BSPs may apply a single transform through cage.env instead of the
+	// project display map. Report the same fallback Cage actually receives.
+	return envValue(loadCageEnv("/strux/.cage-env"), "STRUX_OUTPUT_TRANSFORM")
+}
+
+// discoverOutputs runs wlr-randr and parses connected output names together
+// with the transform Strux configured for each output.
+func discoverOutputs(displayConfig *DisplayConfig) []OutputInfo {
 	logger := NewLogger("Display")
 
 	cmd := exec.Command("wlr-randr")
@@ -408,14 +425,18 @@ func discoverOutputs() []OutputInfo {
 		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
 			parts := strings.Fields(line)
 			if len(parts) > 0 {
-				outputs = append(outputs, OutputInfo{Name: parts[0]})
+				name := parts[0]
+				outputs = append(outputs, OutputInfo{
+					Name:      name,
+					Transform: configuredOutputTransform(displayConfig, name),
+				})
 			}
 		}
 	}
 
 	logger.Info("Discovered %d outputs", len(outputs))
 	for _, o := range outputs {
-		logger.Info("  Output: %s", o.Name)
+		logger.Info("  Output: %s transform=%s", o.Name, o.Transform)
 	}
 
 	return outputs

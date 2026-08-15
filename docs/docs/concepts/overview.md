@@ -93,4 +93,5 @@ Cog loads `http://localhost:8080` plus the path configured for its display. Alon
 - [Build Pipeline](/concepts/build-pipeline.md) — every build step in detail.
 - [Caching](/concepts/caching.md) — why rebuilds are fast.
 - [Board Support Packages](/concepts/bsp.md) — how hardware support is packaged.
+- [Device Profiles](/concepts/profiles.md) — how one frontend selects a product experience without depending on BSP names.
 - [Display Stack](/concepts/display-stack.md) — Cage, Cog, and multi-monitor setups.

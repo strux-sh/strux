@@ -3,6 +3,15 @@ name: ${projectName}
 
 bsp: qemu
 
+# --- Device Profiles ---
+# --- Profiles let one frontend choose a device-specific experience at runtime. ---
+# profiles:
+#   - name: kiosk
+#     label: Kiosk
+#     bsp:
+#       - qemu
+#       - my-board
+
 hostname: ${projectName}
 
 # --- Display Configuration ---

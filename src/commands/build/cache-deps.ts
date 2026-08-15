@@ -245,7 +245,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         files: [
             "dist/artifacts/logo.png",
             "dist/cache/{bsp}/.dev-env.json",
-            "dist/cache/{bsp}/.dev-env.json.disabled"
+            "dist/cache/{bsp}/.dev-env.json.disabled",
+            "dist/cache/{bsp}/profile.json"
         ],
         directories: [
             // User project overlays

@@ -77,15 +77,37 @@ The template's `main.go` includes the matching Go side (`rt.On` / `rt.Emit`) —
 
 ## System APIs: window.strux
 
-Beyond your own app, Strux exposes built-in system services on `window.strux` — `boot`, `display`, `network`, `wifi`, `project`, `update`, `dev`, and `capabilities`. For example:
+Beyond your own app, Strux exposes built-in system services on `window.strux` — `boot`, `display`, `network`, `wifi`, `profiles`, `project`, `update`, `dev`, and `capabilities`. For example:
 
 ```ts
 await strux.boot.HideSplash()           // dismiss the splash screen
 const info = await strux.project.Info() // name, version, BSP, arch, build time
+const profile = await strux.profiles.GetProfile() // selected device experience
 const nets = await strux.wifi.Scan(iface)
 ```
 
 These are documented in the [Backend guide](/guide/backend.md#the-built-in-strux-services) and the [Frontend API reference](/reference/frontend-api.md).
+
+## Choosing a device-specific view
+
+When one project supports several kinds of product, define [device profiles](/concepts/profiles.md) in `strux.yaml`. The build places the selected profile in the image, and the frontend can read it without knowing which board it is running on:
+
+```ts
+const profile = await strux.profiles.GetProfile()
+
+switch (profile?.name) {
+  case "kiosk":
+    mountKioskApp()
+    break
+  case "wallboard":
+    mountWallboardApp()
+    break
+  default:
+    mountDefaultApp()
+}
+```
+
+The result contains the stable `name` used by your code and a human-readable `label`. It is `null` for images built by projects that do not define profiles. Profiles choose the application experience; for hardware support such as Wi-Fi or backlight control, continue to check `strux.capabilities`.
 
 ## Generated types: strux.d.ts
 

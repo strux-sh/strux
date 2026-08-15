@@ -77,10 +77,12 @@ struct capture_context {
     bool last_frame_dmabuf; /* which path the last completed frame took */
     bool dmabuf_disabled;   /* set after repeated dmabuf copy failures */
     int dmabuf_failures;
+    uint64_t dmabuf_frames_dropped;
 
     /* Status */
     bool frame_ready;
     bool frame_failed;
+    bool frame_skipped;
     bool running;
 
     /* Frame callback (shm path) */

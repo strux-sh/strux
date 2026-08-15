@@ -8,6 +8,9 @@ import { type BSPScript, type ScriptStep } from "../../../types/bsp-yaml"
 const originalSettings = {
     projectPath: Settings.projectPath,
     bspName: Settings.bspName,
+    bspOverride: Settings.bspOverride,
+    profileOverride: Settings.profileOverride,
+    profile: Settings.profile,
     isDevMode: Settings.isDevMode,
     noChown: Settings.noChown,
     clean: Settings.clean,
@@ -28,6 +31,9 @@ interface HarnessOptions {
 afterEach(() => {
     Settings.projectPath = originalSettings.projectPath
     Settings.bspName = originalSettings.bspName
+    Settings.bspOverride = originalSettings.bspOverride
+    Settings.profileOverride = originalSettings.profileOverride
+    Settings.profile = originalSettings.profile
     Settings.isDevMode = originalSettings.isDevMode
     Settings.noChown = originalSettings.noChown
     Settings.clean = originalSettings.clean
@@ -39,6 +45,9 @@ afterEach(() => {
 function configureBuildSettings(): void {
     Settings.projectPath = "/tmp/strux-build-test"
     Settings.bspName = "qemu"
+    Settings.bspOverride = null
+    Settings.profileOverride = null
+    Settings.profile = null
     Settings.struxVersion = "test-version"
     Settings.isDevMode = false
     Settings.noChown = false
@@ -189,8 +198,12 @@ function createDeps(options: HarnessOptions = {}): { deps: BuildDeps; events: st
             prepareInitialArtifacts: async () => {
                 events.push("files:artifacts")
             },
+            writeProfileConfig: async (bspName: string) => {
+                events.push(`files:profile:${bspName}`)
+            },
             writeBuildMetadata: async (_bspName: string, metadata: BuildMetadata) => {
                 events.push(`files:metadata:${metadata.buildMode}:${metadata.buildTime}`)
+                if (metadata.profile) events.push(`files:metadata-profile:${metadata.profile.name}`)
             },
         },
         cache: {
@@ -275,6 +288,28 @@ test("runs uncached build steps through the build orchestration", async () => {
     expect(events).toContain("runner:chown")
     expect(events).toContain("files:metadata:production:2026-04-24T12:00:00.000Z")
     expect(deps.runner.skipChown).toBe(false)
+})
+
+test("uses the BSP from loaded project configuration when no CLI BSP is selected", async () => {
+    configureBuildSettings()
+    Settings.bspName = null
+
+    const { deps, events } = createDeps()
+    deps.validators.validateMainYAML = () => {
+        Settings.main = {
+            ...Settings.main,
+            bsp: "configured-board",
+        } as any
+    }
+    deps.validators.validateBSPYAML = (_filePath: string, bspName: string) => {
+        events.push(`validate:bsp:${bspName}`)
+    }
+
+    await buildWithDeps(deps)
+
+    expect(Settings.bspName).toBe("configured-board")
+    expect(events).toContain("validate:bsp:configured-board")
+    expect(events).toContain("files:profile:configured-board")
 })
 
 test("prepares initial artifacts before BSP build hooks", async () => {
@@ -409,6 +444,32 @@ test("writes display config even when rootfs-post is cached", async () => {
         "cache:check:rootfs-post",
     ])
     expect(events).not.toContain("step:rootfs-post")
+})
+
+test("selects the sole matching profile and records it in build metadata", async () => {
+    configureBuildSettings()
+    Settings.main = {
+        ...Settings.main,
+        profiles: [
+            {
+                name: "kiosk",
+                label: "Self-service kiosk",
+                bsp: ["qemu"],
+            },
+        ],
+    } as any
+
+    const { deps, events } = createDeps()
+    await buildWithDeps(deps)
+
+    expect(Settings.profile?.name).toBe("kiosk")
+    expect(events).toContain("log:Profile: Self-service kiosk (kiosk)")
+    expect(events).toContain("files:metadata-profile:kiosk")
+    expectEventsInOrder(events, [
+        "files:artifacts",
+        "files:profile:qemu",
+        "cache:load-manifest",
+    ])
 })
 
 test("generates update bundle after image creation when enabled", async () => {

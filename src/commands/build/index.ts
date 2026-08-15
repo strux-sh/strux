@@ -17,6 +17,7 @@ import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
 import { getIncludedBSPRuntimeExtensions, syncStruxRuntimeVersion } from "../../utils/bsp-runtime"
+import { resolveProfile } from "../../utils/profile"
 import { type ScriptStep } from "../../types/bsp-yaml"
 import { type ProjectScriptStep } from "../../types/main-yaml"
 
@@ -70,6 +71,10 @@ export interface BuildMetadata {
     bspName: string
     struxVersion: string
     projectVersion: string
+    profile: {
+        name: string
+        label: string
+    } | null
     runtimeExtensions: BuildRuntimeExtension[]
 }
 
@@ -90,6 +95,7 @@ export interface BuildFiles {
     fileExists(path: string): boolean
     prepareBuildDirectories(): Promise<void>
     prepareInitialArtifacts(): Promise<void>
+    writeProfileConfig(bspName: string): Promise<void>
     writeBuildMetadata(bspName: string, metadata: BuildMetadata): Promise<void>
 }
 
@@ -168,6 +174,7 @@ export const realBuildDeps: BuildDeps = {
         fileExists,
         prepareBuildDirectories,
         prepareInitialArtifacts: regenerateArtifacts,
+        writeProfileConfig,
         writeBuildMetadata,
     },
     cache: {
@@ -214,7 +221,6 @@ export async function build(): Promise<void> {
  */
 export async function buildWithDeps(deps: BuildDeps): Promise<void> {
     const isDevMode = Settings.isDevMode
-    const bspName = Settings.bspName!
 
     // ========================================
     // VALIDATE CONFIGURATION FILES
@@ -226,6 +232,21 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
 
     // Load and validate the main Strux YAML configuration
     deps.validators.validateMainYAML()
+
+    const resolvedBspName = Settings.resolveBspName(undefined, Settings.main?.bsp)
+    if (!resolvedBspName) {
+        return deps.logger.errorWithExit("BSP is required. Pass --bsp, provide the build BSP argument, or specify bsp in strux.yaml.")
+    }
+    const bspName: string = resolvedBspName
+
+    Settings.profile = await resolveProfile({
+        profiles: Settings.main?.profiles,
+        bspName,
+        override: Settings.profileOverride,
+    })
+    if (Settings.profile) {
+        deps.logger.log(`Profile: ${Settings.profile.label} (${Settings.profile.name})`)
+    }
 
     // Check if the BSP exists
     const bspYamlPath = join(Settings.projectPath, "bsp", bspName, "bsp.yaml")
@@ -254,6 +275,7 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
     // ========================================
     await deps.files.prepareBuildDirectories()
     await deps.files.prepareInitialArtifacts()
+    await deps.files.writeProfileConfig(bspName)
 
     // ========================================
     // SMART BUILD CACHING SYSTEM
@@ -522,6 +544,12 @@ export async function buildWithDeps(deps: BuildDeps): Promise<void> {
             bspName,
             struxVersion: Settings.struxVersion,
             projectVersion: Settings.projectVersion,
+            profile: Settings.profile
+                ? {
+                    name: Settings.profile.name,
+                    label: Settings.profile.label,
+                }
+                : null,
             runtimeExtensions: getIncludedBSPRuntimeExtensions().map((extension) => ({
                 importPath: extension.importPath,
                 implements: extension.implements,
@@ -580,6 +608,19 @@ async function writeBuildMetadata(bspName: string, metadata: BuildMetadata): Pro
         join(Settings.projectPath, "dist", "output", bspName, ".build-info.json"),
         JSON.stringify(metadata, null, 2)
     )
+}
+
+export async function writeProfileConfig(bspName: string): Promise<void> {
+    const profilePath = join(Settings.projectPath, "dist", "cache", bspName, "profile.json")
+    if (!Settings.profile) {
+        await rm(profilePath, { force: true })
+        return
+    }
+
+    await Bun.write(profilePath, JSON.stringify({
+        name: Settings.profile.name,
+        label: Settings.profile.label,
+    }, null, 2))
 }
 
 /**

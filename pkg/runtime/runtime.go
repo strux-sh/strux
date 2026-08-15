@@ -24,6 +24,7 @@ const CapabilityDisplay = api.CapabilityDisplay
 const CapabilityNetwork = api.CapabilityNetwork
 const CapabilityWiFi = api.CapabilityWiFi
 const CapabilityAudio = api.CapabilityAudio
+const CapabilityBattery = api.CapabilityBattery
 
 type DisplayContract = api.DisplayContract
 type NetworkContract = api.NetworkContract
@@ -46,6 +47,9 @@ type AudioContract = api.AudioContract
 type AudioEvents = api.AudioEvents
 type AudioState = api.AudioState
 type AudioOutput = api.AudioOutput
+type BatteryContract = api.BatteryContract
+type BatteryEvents = api.BatteryEvents
+type BatteryState = api.BatteryState
 
 // Optional audio features — a BSP opts in by also satisfying these on its
 // provider (see api/audio.go and the README "Optional features" section).

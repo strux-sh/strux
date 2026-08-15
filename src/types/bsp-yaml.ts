@@ -412,7 +412,11 @@ export class BSPYamlValidator {
             return join(Settings.projectPath, "bsp", bspName, "bsp.yaml")
         }
 
-        // Otherwise, try to get BSP name from Settings.main if available
+        // Otherwise, use the resolved BSP selection before consulting strux.yaml.
+        if (Settings.bspName) {
+            return join(Settings.projectPath, "bsp", Settings.bspName, "bsp.yaml")
+        }
+
         if (Settings.main?.bsp) {
             return join(Settings.projectPath, "bsp", Settings.main.bsp, "bsp.yaml")
         }

@@ -10,6 +10,7 @@ These options work with every command. Pass them before or after the command nam
 
 | Flag | Description |
 | --- | --- |
+| `--bsp <name>` | Override the BSP selected by `strux.yaml`. This also takes precedence over legacy positional BSP arguments. |
 | `--verbose` | Enable verbose output. Streams full build script output instead of progress bars. |
 | `--local-builder` | Build the `strux-builder` Docker image locally instead of pulling it from GHCR. |
 | `--remote-builder <branch-or-tag>` | Pull a branch-scoped builder image from GHCR instead of the default one. |
@@ -54,15 +55,16 @@ No arguments or options. Run it from the project root. Dev mode runs this automa
 Build a complete OS image for a BSP. Runs the full [build pipeline](/concepts/build-pipeline.md) inside Docker and writes the result to `dist/output/<bsp>/`.
 
 ```bash
-strux build qemu --clean
+strux build --bsp qemu --clean
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<bsp>` | The board support package to build for (required). Must match a folder under `bsp/`. |
+| `[bsp]` | Backward-compatible BSP selection. Defaults to `bsp` in `strux.yaml`; `--bsp` takes precedence. |
 
 | Flag | Description |
 | --- | --- |
+| `--profile <name>` | Profile to bake into the image. Overrides BSP-to-profile matching. |
 | `--clean` | Clean the build cache before building. |
 | `--dev` | Build a development image. Prints a prominent warning — dev images enable development-only services and remote control paths and must not be deployed to production. |
 | `--no-chown` | Skip file permission fixing after builds. |
@@ -101,7 +103,6 @@ strux update bundle --bsp qemu --version 1.2.0
 | Flag | Description |
 | --- | --- |
 | `--private-key <path>` | RSA private key PEM used to sign the bundle with RSA-PSS/SHA-512. Default: `./strux-update.key`. |
-| `--bsp <name>` | Target BSP name. Default: the `bsp` value from `strux.yaml`. |
 | `--version <version>` | Update version/generation label. Default: `project_version` from `strux.yaml`. |
 | `-o, --out <path>` | Output `.struxb` path. Default: `dist/output/<bsp>/<image-name>.struxb`. |
 
@@ -128,7 +129,7 @@ See [Dev Mode](/guide/dev-mode.md) for running the dev server and the [Updates g
 
 ## strux run
 
-Run the built Strux OS image in QEMU, exactly as it would boot on hardware. Uses the BSP configured in `strux.yaml`.
+Run the built Strux OS image in QEMU, exactly as it would boot on hardware. Uses the BSP configured in `strux.yaml` unless overridden with `--bsp`.
 
 ```bash
 strux run --debug
@@ -151,6 +152,7 @@ strux dev --remote
 
 | Flag | Description |
 | --- | --- |
+| `--profile <name>` | Profile to bake into the development image. Overrides BSP-to-profile matching. |
 | `--remote` | Run the development server to serve the project to a remote device (skips build and QEMU running). |
 | `--clean` | Clean the build cache before building. |
 | `--debug` | Show device log streams. |

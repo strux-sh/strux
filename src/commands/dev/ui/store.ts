@@ -171,7 +171,7 @@ export class TUIStore {
     }
 
 
-    setDeviceInfo(info: { ip: string, inspectorPorts: { path: string, port: number }[], outputs?: { name: string, label?: string }[], version?: string }): void {
+    setDeviceInfo(info: { ip: string, inspectorPorts: { path: string, port: number }[], outputs?: { name: string, label?: string, transform?: string }[], version?: string }): void {
 
         this.deviceIP = info.ip
         this.deviceVersion = info.version

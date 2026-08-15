@@ -16,6 +16,7 @@ struct pipeline_context {
 
     uint32_t width;
     uint32_t height;
+    uint32_t input_format;
     int fps;
     const char *encoder_name;
 
@@ -56,7 +57,8 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
  * capture_ns is the compositor's capture timestamp (CLOCK_MONOTONIC); it is
  * carried through as the buffer PTS so viewers can measure real latency. */
 int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
-                        size_t size, uint32_t format, uint64_t capture_ns);
+                        size_t size, uint32_t stride, uint32_t format,
+                        uint64_t capture_ns);
 
 /* Push a dmabuf-backed frame (zero-copy). The fd is dup'd internally; the
  * release callback fires (from the streaming thread) once the pipeline is
@@ -73,7 +75,8 @@ void pipeline_force_keyframe(struct pipeline_context *ctx);
  * Returns allocated buffer (caller must free) and sets out_size. */
 uint8_t *pipeline_screenshot(struct pipeline_context *ctx, const void *data,
                              size_t size, uint32_t width, uint32_t height,
-                             uint32_t format, size_t *out_size);
+                             uint32_t stride, uint32_t format,
+                             size_t *out_size);
 
 /* Stop and clean up the pipeline */
 void pipeline_destroy(struct pipeline_context *ctx);

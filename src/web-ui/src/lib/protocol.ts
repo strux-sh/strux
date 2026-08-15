@@ -6,9 +6,13 @@
  * directly. Binary H.264 frames arrive out-of-band (see FrameHeader below).
  */
 
+export type OutputTransform = "normal" | "90" | "180" | "270" |
+  "flipped" | "flipped-90" | "flipped-180" | "flipped-270"
+
 export interface OutputInfo {
   name: string
   label?: string
+  transform?: OutputTransform
 }
 
 export type PointerAxis = "vertical" | "horizontal"

@@ -32,6 +32,11 @@ func (rt *Runtime) Project() *api.ProjectService {
 	return &api.ProjectService{}
 }
 
+// Profiles returns the build-selected application profile APIs.
+func (rt *Runtime) Profiles() *api.ProfilesService {
+	return &api.ProfilesService{}
+}
+
 // System returns Strux-owned device and system information APIs.
 func (rt *Runtime) System() *api.SystemService {
 	return &api.SystemService{}
@@ -50,6 +55,11 @@ func (rt *Runtime) WiFi() *api.WiFiService {
 // Audio returns Strux-owned audio APIs backed by the active BSP.
 func (rt *Runtime) Audio() *api.AudioService {
 	return &api.AudioService{}
+}
+
+// Battery returns Strux-owned battery status APIs backed by the active BSP.
+func (rt *Runtime) Battery() *api.BatteryService {
+	return &api.BatteryService{}
 }
 
 // Capabilities returns Strux-owned capabilities APIs backed by the active BSP.
@@ -78,6 +88,10 @@ func RegisterAudioProvider(provider AudioContract) {
 	api.RegisterAudioProvider(provider)
 }
 
+func RegisterBatteryProvider(provider BatteryContract) {
+	api.RegisterBatteryProvider(provider)
+}
+
 // ----------------------------------------------------------------------------
 
 // registerBuiltinExtensions registers all built-in Strux framework extensions
@@ -89,10 +103,12 @@ func (rt *Runtime) registerBuiltinExtensions() {
 	rt.registerStruxAPI(api.DisplayNamespace, rt.Display())
 	rt.registerStruxAPI(api.NetworkNamespace, rt.Network())
 	rt.registerStruxAPI(api.ProjectNamespace, rt.Project())
+	rt.registerStruxAPI(api.ProfilesNamespace, rt.Profiles())
 	rt.registerStruxAPI(api.SystemNamespace, rt.System())
 	rt.registerStruxAPI(api.UpdateNamespace, rt.Update())
 	rt.registerStruxAPI(api.WiFiNamespace, rt.WiFi())
 	rt.registerStruxAPI(api.AudioNamespace, rt.Audio())
+	rt.registerStruxAPI(api.BatteryNamespace, rt.Battery())
 	rt.registerStruxAPI(api.CapabilitiesNamespace, rt.Capabilities())
 
 	// ----------------------------------------------------------------------------

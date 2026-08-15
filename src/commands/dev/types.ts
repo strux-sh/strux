@@ -31,7 +31,7 @@ interface ClientMessageComponentArchiveAck { type: "component-archive-ack", payl
 
 // Device Information
 interface DeviceInfoInspectorPort { path: string, port: number }
-export interface DeviceInfoOutputInfo { name: string, label?: string }
+export interface DeviceInfoOutputInfo { name: string, label?: string, transform?: string }
 interface ClientMessageDeviceInfo { type: "device-info", payload: { ip: string, inspectorPorts: DeviceInfoInspectorPort[], outputs?: DeviceInfoOutputInfo[], version?: string }}
 interface ClientMessageDeviceInfoRequested { type: "device-info-requested" }
 

@@ -16,6 +16,8 @@
 import { onBeforeUnmount, reactive } from "vue"
 import JMuxer from "jmuxer"
 import { useDeviceStore } from "@/stores/device"
+import type { OutputTransform } from "@/lib/protocol"
+import { drawTransformed, transformedSize } from "@/lib/output-transform"
 
 export type DecodeMode = "webcodecs" | "jmuxer"
 
@@ -39,6 +41,7 @@ interface Sink {
   video: HTMLVideoElement
   canvas: HTMLCanvasElement
   fps: number
+  transform: OutputTransform
   mode: DecodeMode | null
   muxer: JMuxer | null
   decoder: VideoDecoder | null
@@ -88,10 +91,13 @@ export function useScreenStreams() {
         const frame = sink.latestFrame
         if (!frame) return
         sink.latestFrame = null
-        if (sink.canvas.width !== frame.displayWidth) sink.canvas.width = frame.displayWidth
-        if (sink.canvas.height !== frame.displayHeight) sink.canvas.height = frame.displayHeight
+        const size = transformedSize(frame.displayWidth, frame.displayHeight, sink.transform)
+        if (sink.canvas.width !== size.width) sink.canvas.width = size.width
+        if (sink.canvas.height !== size.height) sink.canvas.height = size.height
         sink.ctx ??= sink.canvas.getContext("2d")
-        sink.ctx?.drawImage(frame, 0, 0)
+        if (sink.ctx) {
+            drawTransformed(sink.ctx, frame, frame.displayWidth, frame.displayHeight, sink.transform)
+        }
         frame.close()
     }
 
@@ -254,12 +260,18 @@ export function useScreenStreams() {
 
     // --- Registration ---
 
-    function registerStream(index: number, els: { video: HTMLVideoElement; canvas: HTMLCanvasElement }, fps: number): void {
+    function registerStream(
+        index: number,
+        els: { video: HTMLVideoElement; canvas: HTMLCanvasElement },
+        fps: number,
+        transform: OutputTransform
+    ): void {
         unregisterStream(index)
         sinks.set(index, {
             video: els.video,
             canvas: els.canvas,
             fps,
+            transform,
             mode: null,
             muxer: null,
             decoder: null,

@@ -36,4 +36,5 @@
 
 # Rules
 - Always ask questions for certain developer decisions and the shape of things. Confirm what changes you are going to make before changing them.
+- When adding or changing configuration or artifacts baked into a device image, audit every equivalent delivery path, not only full image assembly. Keep cache invalidation, dev-TUI/live component transfer, staged application on reboot, system updates, and runtime readers in sync as applicable. Handle both creation/update and removal so live devices cannot retain stale state, and add focused tests for that parity.
 - For changes to `kernel-source` or `bootloader-source`, never hand-edit the `.diff` patch file directly. Make the change in the actual checked-out source tree first, generate the patch from that source tree with `git diff`, write that output to the BSP patch file, then run `git reset --hard HEAD` inside the source tree afterward. Leave unrelated untracked files alone unless explicitly told otherwise.

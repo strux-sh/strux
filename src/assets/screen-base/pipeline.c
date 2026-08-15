@@ -203,6 +203,7 @@ int pipeline_init(struct pipeline_context *ctx, uint32_t width,
 {
     ctx->width = width;
     ctx->height = height;
+    ctx->input_format = wl_format;
     ctx->fps = fps;
     ctx->frame_count = 0;
 
@@ -321,8 +322,20 @@ static void stamp_buffer(struct pipeline_context *ctx, GstBuffer *buffer,
     ctx->frame_count++;
 }
 
+static void add_video_layout_meta(GstBuffer *buffer, GstVideoFormat format,
+                                  uint32_t width, uint32_t height,
+                                  uint32_t stride)
+{
+    gsize offsets[GST_VIDEO_MAX_PLANES] = { 0 };
+    gint strides[GST_VIDEO_MAX_PLANES] = { (gint)stride };
+    gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE,
+                                   format, width, height, 1,
+                                   offsets, strides);
+}
+
 int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
-                        size_t size, uint32_t format, uint64_t capture_ns)
+                        size_t size, uint32_t stride, uint32_t format,
+                        uint64_t capture_ns)
 {
     (void)format; /* Already configured in caps */
 
@@ -331,6 +344,8 @@ int pipeline_push_frame(struct pipeline_context *ctx, const void *data,
         return -1;
 
     gst_buffer_fill(buffer, 0, data, size);
+    add_video_layout_meta(buffer, ctx->vformat, ctx->width, ctx->height,
+                          stride);
     stamp_buffer(ctx, buffer, capture_ns);
 
     GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(ctx->appsrc),
@@ -383,13 +398,8 @@ int pipeline_push_dmabuf(struct pipeline_context *ctx, int fd, size_t size,
     GstBuffer *buffer = gst_buffer_new();
     gst_buffer_append_memory(buffer, mem);
 
-    /* Carry the real stride — GBM may pad beyond width * bpp.
-     * (The API reads GST_VIDEO_MAX_PLANES entries regardless of n_planes.) */
-    gsize offsets[GST_VIDEO_MAX_PLANES] = { 0 };
-    gint strides[GST_VIDEO_MAX_PLANES] = { (gint)stride };
-    gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE,
-                                   ctx->vformat, width, height, 1,
-                                   offsets, strides);
+    /* Carry the real stride — GBM may pad beyond width * bpp. */
+    add_video_layout_meta(buffer, ctx->vformat, width, height, stride);
 
     stamp_buffer(ctx, buffer, capture_ns);
 
@@ -429,7 +439,8 @@ void pipeline_force_keyframe(struct pipeline_context *ctx)
 
 uint8_t *pipeline_screenshot(struct pipeline_context *ctx, const void *data,
                              size_t size, uint32_t width, uint32_t height,
-                             uint32_t format, size_t *out_size)
+                             uint32_t stride, uint32_t format,
+                             size_t *out_size)
 {
     const char *gst_format = wl_format_to_gst(format);
 
@@ -462,6 +473,8 @@ uint8_t *pipeline_screenshot(struct pipeline_context *ctx, const void *data,
     /* Push frame */
     GstBuffer *buf = gst_buffer_new_allocate(NULL, size, NULL);
     gst_buffer_fill(buf, 0, data, size);
+    add_video_layout_meta(buf, gst_video_format_from_string(gst_format),
+                          width, height, stride);
     GST_BUFFER_PTS(buf) = 0;
     gst_app_src_push_buffer(GST_APP_SRC(src), buf);
     gst_app_src_end_of_stream(GST_APP_SRC(src));

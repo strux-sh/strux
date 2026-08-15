@@ -15,6 +15,7 @@ Many string values feed into build scripts, so the schema rejects characters tha
 | `project_version` | string (semver) | — | **Required.** Your project's version, e.g. `1.2.3` or `1.2.3-beta.1`. Must be valid semver (prerelease and build suffixes allowed). Numbers are coerced to strings before validation. Used as the default version label for update bundles. |
 | `name` | shell-safe string | — | **Required.** The project name. |
 | `bsp` | shell-safe string | — | **Required.** The default board support package — must match a folder under `bsp/` in your project. Commands like `strux run`, `strux dev`, `strux flash`, and `strux kernel` use this BSP. See [BSPs](/concepts/bsp.md). |
+| `profiles` | object[] | — | Device profiles that map one or more BSPs to an application-facing name and label. See [profiles](#profiles). |
 | `hostname` | shell-safe string | — | The device hostname. |
 | `boot` | object | — | Boot configuration. See [boot.splash](#boot-splash). |
 | `update` | object | — | System update configuration. See [update](#update). |
@@ -24,6 +25,34 @@ Many string values feed into build scripts, so the schema rejects characters tha
 | `qemu` | object | — | QEMU settings for local testing. See [qemu](#qemu). |
 | `build` | object | — | Build environment and cache settings. See [build](#build). |
 | `dev` | object | — | Dev mode settings. See [dev](#dev). |
+
+## profiles
+
+Profiles let the same frontend render a device-specific experience without coupling that UI decision directly to a BSP name. Each profile maps a stable machine name and human-readable label to one or more BSPs.
+
+```yaml
+profiles:
+  - name: kiosk
+    label: Kiosk
+    bsp:
+      - qemu
+      - rk3576-panel
+  - name: wallboard
+    label: Wallboard
+    bsp:
+      - qemu
+      - rk3588-signage
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `profiles[].name` | shell-safe string | — | **Required.** Unique stable profile name returned to the frontend. |
+| `profiles[].label` | non-empty string | — | **Required.** Human-readable profile label. |
+| `profiles[].bsp` | shell-safe string[] | — | **Required.** Non-empty list of matching BSP names. A BSP may intentionally appear in multiple profiles. |
+
+During a build, a sole BSP match is selected automatically. Multiple matches, or no matches, open an interactive profile menu. In a non-interactive environment, pass `--profile <name>` instead. An explicit `--profile` may select any declared profile even when the current BSP is not in its `bsp` list.
+
+The selected `{ name, label }` is baked into `/etc/strux/profile.json` and exposed to the frontend as `strux.profiles.GetProfile()`. Projects without `profiles` continue to build without profile metadata, and `GetProfile()` returns `null`.
 
 ## boot.splash
 
@@ -150,6 +179,18 @@ name: test
 
 # Required: the default BSP (a folder under bsp/)
 bsp: ht109-rk3576s
+
+# Application-facing device profiles. BSPs may match more than one profile.
+profiles:
+  - name: kiosk
+    label: Kiosk
+    bsp:
+      - ht109-rk3576s
+      - qemu
+  - name: wallboard
+    label: Wallboard
+    bsp:
+      - qemu
 
 # Device hostname
 hostname: test

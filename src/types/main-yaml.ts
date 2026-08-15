@@ -122,6 +122,42 @@ const BuildSchema = z.object({
     cache: CacheConfigSchema.optional(),
 })
 
+// A profile is a stable application-facing device classification. BSP names
+// are used only at build time to choose the profile baked into an image.
+const ProfileSchema = z.object({
+    name: shellSafeString("profiles.name").trim().min(1, "Profile name cannot be empty"),
+    label: z.string().trim().min(1, "Profile label cannot be empty"),
+    bsp: z.array(shellSafeString("profiles.bsp").trim().min(1, "BSP name cannot be empty"))
+        .min(1, "Profile must match at least one BSP"),
+})
+
+const ProfilesSchema = z.array(ProfileSchema).min(1, "At least one profile is required").superRefine((profiles, ctx) => {
+    const names = new Set<string>()
+
+    profiles.forEach((profile, profileIndex) => {
+        if (names.has(profile.name)) {
+            ctx.addIssue({
+                code: "custom",
+                path: [profileIndex, "name"],
+                message: `Profile name must be unique: ${profile.name}`,
+            })
+        }
+        names.add(profile.name)
+
+        const bspNames = new Set<string>()
+        profile.bsp.forEach((bspName, bspIndex) => {
+            if (bspNames.has(bspName)) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: [profileIndex, "bsp", bspIndex],
+                    message: `BSP may only appear once in a profile: ${bspName}`,
+                })
+            }
+            bspNames.add(bspName)
+        })
+    })
+})
+
 // Dev server fallback host schema
 const DevFallbackHostSchema = z.object({
     host: shellSafeString("dev.server.fallback_hosts.host"),
@@ -217,9 +253,11 @@ export const StruxYamlSchema = z.object({
     qemu: QemuSchema.optional(),
     build: BuildSchema.optional(),
     dev: DevSchema.optional(),
+    profiles: ProfilesSchema.optional(),
 })
 
 export type StruxYaml = z.infer<typeof StruxYamlSchema>
+export type StruxProfile = z.infer<typeof ProfileSchema>
 
 export class MainYAMLValidator {
 
@@ -296,8 +334,8 @@ export class MainYAMLValidator {
 
             Settings.projectVersion = validated.project_version
 
-            // Only set bspName from strux.yaml if it wasn't already set by a CLI argument
-            if (validated.bsp && !Settings.bspName) Settings.bspName = validated.bsp
+            // CLI overrides and command arguments take precedence over strux.yaml.
+            Settings.resolveBspName(undefined, validated.bsp)
 
             Settings.main = validated
 

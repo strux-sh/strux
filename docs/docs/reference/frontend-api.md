@@ -46,7 +46,7 @@ What happens under the hood:
 | --- | --- |
 | `window.go.<package>.<Struct>` | Your app struct's bindings, e.g. `window.go.main.App`. |
 | `window.<Struct>` | A shortcut to the same object, e.g. `window.App` — what you'll normally use. |
-| `window.strux.<namespace>` | The built-in runtime services (`boot`, `capabilities`, `dev`, `display`, `network`, `project`, `update`, `wifi`) plus any custom BSP extensions. |
+| `window.strux.<namespace>` | The built-in runtime services (`boot`, `capabilities`, `dev`, `display`, `network`, `profiles`, `project`, `update`, `wifi`) plus any custom BSP extensions. |
 | `window.strux.ipc` | The event API: `on`, `off`, `send`. |
 
 Because they are `window` properties, all of these are also reachable as bare globals (`App`, `strux`), and the generated `strux.d.ts` declares them that way.
@@ -161,6 +161,9 @@ interface Strux {
     SetEnabled(interfaceName: string, enabled: boolean): Promise<void>;
     RenewDHCP(interfaceName: string): Promise<void>;
   };
+  profiles: {
+    GetProfile(): Promise<StruxRuntime.Profile | null>;
+  };
   project: {
     Info(): Promise<StruxRuntime.ProjectInfo | null>;
   };
@@ -190,6 +193,15 @@ interface Strux {
 ```
 
 The supporting data shapes (`StruxRuntime.DisplayOutput`, `StruxRuntime.WiFiStatus`, …) are declared in the same generated file under the `StruxRuntime` namespace; their field-by-field documentation lives in the [Go Runtime reference](/reference/go-runtime.md#services).
+
+`strux.profiles.GetProfile()` returns the device profile chosen when the image was built:
+
+```ts
+const profile = await strux.profiles.GetProfile()
+// { name: "kiosk", label: "Self-service kiosk" }
+```
+
+The result is `null` when the project does not define profiles. It contains only `name` and `label`; the BSP matching lists in `strux.yaml` are build-time configuration and are not exposed on the device. See [Device Profiles](/concepts/profiles.md) for the selection rules and frontend patterns.
 
 A few service-specific notes:
 

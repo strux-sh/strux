@@ -151,6 +151,23 @@ if [ -f /strux/.client-update ]; then
     mv /strux/.client-update /strux/client
 fi
 
+# Apply profile state staged by the dev TUI. The literal JSON value null is a
+# tombstone used when profiles were removed from strux.yaml; otherwise the file
+# is the selected {name, label} profile. Apply this before starting the backend
+# so strux.profiles.GetProfile() observes the new state immediately.
+if [ -f /strux/.profile-update.json ]; then
+    PROFILE_UPDATE=$(tr -d '[:space:]' < /strux/.profile-update.json)
+    if [ "$PROFILE_UPDATE" = "null" ]; then
+        log "Removing staged profile metadata..."
+        rm -f /etc/strux/profile.json
+    else
+        log "Applying staged profile metadata..."
+        mkdir -p /etc/strux
+        install -m 0644 /strux/.profile-update.json /etc/strux/profile.json
+    fi
+    rm -f /strux/.profile-update.json
+fi
+
 # Use /strux/main for the backend binary
 APP_BINARY="/strux/main"
 

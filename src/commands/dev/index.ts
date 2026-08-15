@@ -13,7 +13,8 @@ import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
 import { BSPYamlValidator } from "../../types/bsp-yaml"
 import { directoryExists, fileExists } from "../../utils/path"
-import { build as buildCommand } from "../build"
+import { resolveProfile } from "../../utils/profile"
+import { build as buildCommand, writeProfileConfig } from "../build"
 import { runFlashScripts, type FlashOutputSource } from "../flash"
 import { compileApplication, compileCage, compileFrontend, compileWPE, compileScreen, buildStruxClient } from "../build/steps"
 import { regenerateArtifacts } from "../build/artifacts"
@@ -29,6 +30,7 @@ import { SSHManager } from "./ssh"
 import { registerClientHandlers } from "./handlers/client"
 import { registerScreenHandlers } from "./handlers/screen"
 import { registerWebUIHandlers } from "./handlers/webui"
+import { createProfileTransferPayload } from "./profile-transfer"
 import type { ClientMessageSendable, ClientMessageReceivable, ScreenMessageSendable, ScreenMessageReceivable, WebUIMessageSendable, WebUIMessageReceivable, DeviceInfoOutputInfo, DeviceStatus, DashboardLogLine, DevBuildState } from "./types"
 
 
@@ -94,8 +96,13 @@ export class DevServer {
         // Validate the YAML
         MainYAMLValidator.validateAndLoad()
 
-        // Determine BSP based on --remote flag
-        if (Settings.isRemoteOnly) {
+        // An explicit CLI override wins in both local and remote development.
+        if (Settings.bspOverride) {
+
+            Settings.resolveBspName()
+            Logger.info(`Using BSP from --bsp: ${Settings.bspName}`)
+
+        } else if (Settings.isRemoteOnly) {
 
             Logger.info("Remote mode: Using BSP from strux.yaml")
 
@@ -412,6 +419,16 @@ export class DevServer {
 
                     Logger.info("Rebuilding Strux components, application, and frontend...")
 
+                    // Keep live-device configuration in parity with a full image
+                    // build, including explicit removal when profiles are disabled.
+                    MainYAMLValidator.validateAndLoad()
+                    Settings.profile = await resolveProfile({
+                        profiles: Settings.main?.profiles,
+                        bspName,
+                        override: Settings.profileOverride,
+                    })
+                    await writeProfileConfig(bspName)
+
                     Runner.skipChown = true
                     try {
                         // Source dirs (client/cage/wpe/screen) are derived — refresh
@@ -440,13 +457,17 @@ export class DevServer {
                     const cogPath = join(Settings.projectPath, "dist", "cache", bspName, "cog")
                     const screenPath = join(Settings.projectPath, "dist", "cache", bspName, "screen")
 
+                    const sendEncodedComponent = async (data: string, destPath: string) => {
+                        const ack = this.waitForComponentAck(destPath)
+                        client.broadcast({ type: "component", payload: { data, destPath } })
+                        await ack
+                    }
+
                     const sendComponent = async (filePath: string, destPath: string) => {
                         const file = Bun.file(filePath)
                         if (!await file.exists()) return
                         const data = Buffer.from(await file.arrayBuffer()).toString("base64")
-                        const ack = this.waitForComponentAck(destPath)
-                        client.broadcast({ type: "component", payload: { data, destPath } })
-                        await ack
+                        await sendEncodedComponent(data, destPath)
                     }
 
                     await sendComponent(cagePath, "/usr/bin/cage")
@@ -464,6 +485,14 @@ export class DevServer {
                     await sendComponent(join(scriptsDir, "strux.sh"), "/strux/strux.sh")
                     await sendComponent(join(scriptsDir, "strux-network.sh"), "/usr/bin/strux-network.sh")
                     await sendComponent(join(scriptsDir, "strux-run-cog.sh"), "/strux/strux-run-cog.sh")
+
+                    // Stage profile metadata (or a null tombstone) for the updated
+                    // strux.sh to apply before the backend starts after reboot.
+                    const profileTransfer = await createProfileTransferPayload(Settings.projectPath, bspName)
+                    await sendEncodedComponent(profileTransfer.data, profileTransfer.destPath)
+                    Logger.info(profileTransfer.removesProfile
+                        ? "Profile removal staged on device"
+                        : "Profile metadata staged on device")
 
                     // Send cage env if it exists
                     const cageEnvPath = join(Settings.projectPath, "dist", "cache", bspName, ".cage-env")

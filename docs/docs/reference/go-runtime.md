@@ -323,6 +323,23 @@ type NetworkStatus struct {
 
 (`NetworkInterface`, `NetworkDefaultInterface`, and `NetworkIPConfigRequest` are exported with matching JSON field names — see `pkg/runtime/api/network.go`.)
 
+### Profiles
+
+`rt.Profiles() *api.ProfilesService` — namespace `profiles`. Returns the application profile selected when the image was built.
+
+```go
+func (p *ProfilesService) GetProfile() (*Profile, error)
+
+type Profile struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+}
+```
+
+`GetProfile` reads `/etc/strux/profile.json`. It returns `nil` without an error when the project was built without profiles. A malformed or unreadable profile file returns an error.
+
+Profiles describe the application experience, not hardware support. The profile's BSP matching list stays in `strux.yaml` at build time and is not returned here. A BSP provider does not need to register or implement anything for this service. See [Device Profiles](/concepts/profiles.md) for the full model.
+
 ### Project
 
 `rt.Project() *api.ProjectService` — namespace `project`. Metadata about the image the device is running.

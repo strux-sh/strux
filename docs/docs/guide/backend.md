@@ -118,6 +118,7 @@ Beyond your own app, the runtime registers system services that the frontend rea
 | Display | `strux.display` | List outputs, change modes/resolution, layout, rotation, scale, backlight |
 | Dev | `strux.dev` | Read and change dev-mode configuration on the device, restart the dev service |
 | Network | `strux.network` | List interfaces, status, DHCP/static IP configuration |
+| Profiles | `strux.profiles` | `GetProfile()` — application profile selected when the image was built |
 | Project | `strux.project` | `Info()` — project name, version, BSP, architecture, build time |
 | Update | `strux.update` | System update `State()` and `Progress()` |
 | WiFi | `strux.wifi` | Scan, connect, known networks, IP configuration |

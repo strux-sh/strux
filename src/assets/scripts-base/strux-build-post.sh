@@ -114,6 +114,12 @@ cat > "$ROOTFS_DIR/etc/strux/project.json" <<EOF
 }
 EOF
 
+# Copy the build-selected application profile. BSP matching is intentionally
+# omitted from the image; it is only used by the CLI during profile selection.
+if [ -f "$BSP_CACHE/profile.json" ]; then
+    cp "$BSP_CACHE/profile.json" "$ROOTFS_DIR/etc/strux/profile.json"
+fi
+
 
 # ============================================================================
 # SECTION 5: CUSTOM PACKAGE INSTALLATION

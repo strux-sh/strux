@@ -8,7 +8,8 @@
 import { defineStore } from "pinia"
 import { ref, shallowReactive } from "vue"
 import { DevtoolSocket, type ConnectionStatus } from "@/lib/socket"
-import { parseFrame, type BuildState, type DeviceStatus, type DevtoolInbound, type DevtoolOutbound, type LogLine, type OutputInfo } from "@/lib/protocol"
+import { parseFrame, type BuildState, type DeviceStatus, type DevtoolInbound, type DevtoolOutbound, type LogLine, type OutputInfo, type OutputTransform } from "@/lib/protocol"
+import { normalizeOutputTransform } from "@/lib/output-transform"
 
 export type StreamStatus = "starting" | "streaming" | "stopping" | "stopped" | "error"
 
@@ -24,6 +25,7 @@ export interface StreamState {
   height: number
   encoder: string
   fps: number
+  transform: OutputTransform
   error?: string
 }
 
@@ -81,6 +83,7 @@ export const useDeviceStore = defineStore("device", () => {
                     height: p.height,
                     encoder: p.encoder,
                     fps: p.fps,
+                    transform: normalizeOutputTransform(outputs.value.find((output) => output.name === p.outputName)?.transform),
                 }
                 break
             }
@@ -145,6 +148,7 @@ export const useDeviceStore = defineStore("device", () => {
             height: 0,
             encoder: "",
             fps: 0,
+            transform: normalizeOutputTransform(outputs.value.find((output) => output.name === outputName)?.transform),
         }
         send({ type: "start-stream", payload: { outputName } })
     }

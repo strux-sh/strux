@@ -32,7 +32,7 @@ function toContainerProjectPath(hostPath: string, label: string): string {
 }
 
 export async function bundleUpdate(rootfsImage: string | undefined, options: BundleUpdateOptions): Promise<void> {
-    const bsp = options.bsp ?? Settings.bspName ?? Settings.main?.bsp
+    const bsp = Settings.resolveBspName(options.bsp, Settings.main?.bsp)
     if (!bsp) {
         Logger.errorWithExit("BSP is required. Pass --bsp or run from a project with strux.yaml loaded.")
     }

@@ -196,17 +196,20 @@ static int ensure_dmabuf_slot(struct capture_context *ctx,
 }
 
 static struct capture_dmabuf_slot *acquire_dmabuf_slot(
-    struct capture_context *ctx)
+    struct capture_context *ctx, bool *pool_exhausted)
 {
+    *pool_exhausted = true;
     for (int i = 0; i < CAPTURE_DMABUF_SLOTS; i++) {
         struct capture_dmabuf_slot *slot = &ctx->slots[i];
         if (__atomic_load_n(&slot->in_use, __ATOMIC_ACQUIRE))
             continue;
-        if (ensure_dmabuf_slot(ctx, slot) == 0)
+        *pool_exhausted = false;
+        if (ensure_dmabuf_slot(ctx, slot) == 0) {
             return slot;
-        return NULL; /* allocation failure — let caller fall back to shm */
+        }
+        return NULL;
     }
-    return NULL; /* encoder holds every buffer — skip this frame */
+    return NULL;
 }
 
 /* --- screencopy frame listener --- */
@@ -258,13 +261,37 @@ static void frame_buffer_done(void *data,
     ctx->copy_slot = NULL;
     if (ctx->gbm && ctx->dmabuf && ctx->dmabuf_offered &&
         !ctx->force_shm && !ctx->dmabuf_disabled) {
-        struct capture_dmabuf_slot *slot = acquire_dmabuf_slot(ctx);
+        bool pool_exhausted = false;
+        struct capture_dmabuf_slot *slot =
+            acquire_dmabuf_slot(ctx, &pool_exhausted);
         if (slot) {
             ctx->copy_slot = slot;
             zwlr_screencopy_frame_v1_copy(frame, slot->wl_buffer);
             return;
         }
-        /* Pool exhausted or allocation failed — shm keeps the stream alive */
+
+        if (pool_exhausted) {
+            /* The encoder still owns every slot. Destroying this screencopy
+             * frame in capture_frame() is intentional backpressure: mixing a
+             * one-off shm buffer into a dmabuf-configured pipeline can change
+             * both pixel format and stride and corrupt the stream. */
+            ctx->frame_skipped = true;
+            ctx->frame_ready = true;
+            ctx->dmabuf_frames_dropped++;
+            if (ctx->dmabuf_frames_dropped <= 5 ||
+                ctx->dmabuf_frames_dropped % 100 == 0) {
+                fprintf(stderr, "[strux-screen] DMA-BUF pool busy; dropping "
+                                "capture frame (%lu total)\n",
+                        ctx->dmabuf_frames_dropped);
+            }
+            return;
+        }
+
+        /* Allocation/import failure is persistent for this geometry. Make a
+         * one-way transition to shm instead of alternating paths per frame. */
+        ctx->dmabuf_disabled = true;
+        fprintf(stderr, "[strux-screen] DMA-BUF allocation failed; "
+                        "using shm capture for this session\n");
     }
 
     if (!ctx->buffer && create_buffer(ctx) < 0) {
@@ -470,6 +497,7 @@ static void request_frame(struct capture_context *ctx)
 {
     ctx->frame_ready = false;
     ctx->frame_failed = false;
+    ctx->frame_skipped = false;
     ctx->buffer_ready = false;
     ctx->dmabuf_offered = false;
     ctx->copy_slot = NULL;

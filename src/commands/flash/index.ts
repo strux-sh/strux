@@ -137,13 +137,11 @@ async function loadFlashConfig(options: FlashRunOptions): Promise<LoadedFlashCon
         throw new Error("strux.yaml file not found. Please create it first.")
     }
 
-    if (options.bspName) {
-        Settings.bspName = options.bspName
-    }
+    Settings.resolveBspName(options.bspName)
 
     MainYAMLValidator.validateAndLoad()
 
-    const bspName = options.bspName ?? Settings.bspName
+    const bspName = Settings.resolveBspName(options.bspName, Settings.main?.bsp)
     if (!bspName) {
         throw new Error("BSP name not found. Please specify one or add a 'bsp' field to strux.yaml.")
     }

@@ -282,6 +282,16 @@ func envHasKey(env []string, key string) bool {
 	return false
 }
 
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return strings.TrimPrefix(item, prefix)
+		}
+	}
+	return ""
+}
+
 func displayConfigDefaultTransform(config *DisplayConfig) string {
 	if config == nil {
 		return ""

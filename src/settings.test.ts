@@ -17,3 +17,23 @@ test("builderImage uses the remote builder tag override when set", () => {
 
     expect(settings.builderImage).toBe("ghcr.io/strux-sh/strux-builder:feature-v0.3.0")
 })
+
+test("resolveBspName applies CLI override precedence", () => {
+    const settings = new SettingsConfig()
+    settings.bspName = "previous-bsp"
+    settings.bspOverride = "override-bsp"
+
+    expect(settings.resolveBspName("command-bsp", "configured-bsp")).toBe("override-bsp")
+    expect(settings.bspName).toBe("override-bsp")
+})
+
+test("resolveBspName falls back through command, current, and configured BSP values", () => {
+    const settings = new SettingsConfig()
+
+    expect(settings.resolveBspName("command-bsp", "configured-bsp")).toBe("command-bsp")
+
+    settings.bspName = null
+    expect(settings.resolveBspName(undefined, "configured-bsp")).toBe("configured-bsp")
+
+    expect(settings.resolveBspName(undefined, "new-configured-bsp")).toBe("configured-bsp")
+})

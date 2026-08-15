@@ -148,6 +148,21 @@ export const STRUX_RUNTIME_TYPES = {
           }
         ]
       },
+      "battery": {
+        "methods": [
+          {
+            "name": "GetState",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "BatteryState",
+                "tsType": "StruxRuntime.BatteryState"
+              }
+            ],
+            "hasError": true
+          }
+        ]
+      },
       "boot": {
         "methods": [
           {
@@ -608,6 +623,21 @@ export const STRUX_RUNTIME_TYPES = {
           }
         ]
       },
+      "profiles": {
+        "methods": [
+          {
+            "name": "GetProfile",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "*Profile",
+                "tsType": "StruxRuntime.Profile"
+              }
+            ],
+            "hasError": true
+          }
+        ]
+      },
       "project": {
         "methods": [
           {
@@ -929,6 +959,35 @@ export const STRUX_RUNTIME_TYPES = {
           "goType": "*CaptureState",
           "tsType": "CaptureState",
           "optional": true
+        }
+      ]
+    },
+    "BatteryState": {
+      "fields": [
+        {
+          "name": "percent",
+          "goType": "int",
+          "tsType": "number"
+        },
+        {
+          "name": "status",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "charging",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "powerConnected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "health",
+          "goType": "string",
+          "tsType": "string"
         }
       ]
     },
@@ -1488,6 +1547,20 @@ export const STRUX_RUNTIME_TYPES = {
           "name": "ip",
           "goType": "NetworkIPConfig",
           "tsType": "NetworkIPConfig"
+        }
+      ]
+    },
+    "Profile": {
+      "fields": [
+        {
+          "name": "name",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "label",
+          "goType": "string",
+          "tsType": "string"
         }
       ]
     },

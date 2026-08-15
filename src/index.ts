@@ -51,12 +51,19 @@ program
     .name("strux")
     .description("A Framework for Building Kiosk-Style Operating Systems")
     .version(STRUX_VERSION)
+    .configureHelp({ showGlobalOptions: true })
+    .option("--bsp <name>", "Override the BSP configured in strux.yaml")
     .option("--verbose", "Enable verbose output")
     .option("--local-builder", "Build Docker image locally instead of pulling from GHCR")
     .option("--remote-builder <branch-or-tag>", "Pull a branch-scoped builder image from GHCR, e.g. feature/v0.3.0 -> feature-v0.3.0")
     .hook("preAction", (command: Command) => {
 
         const options = command.optsWithGlobals()
+
+        if (options.bsp) {
+            Settings.bspOverride = options.bsp
+            Settings.resolveBspName()
+        }
 
         if (options.verbose) {
             Settings.verbose = true
@@ -141,16 +148,20 @@ program.command("types")
 
 program.command("build")
     .description("Build a complete OS image for a BSP")
-    .argument("<bsp>", "The board support package to build for")
+    .argument("[bsp]", "The board support package to build for. Defaults to strux.yaml.")
+    .option("--profile <name>", "Profile to bake into the image")
     .option("--clean", "Clean the build cache before building")
     .option("--dev", "Build a development image")
     .option("--no-chown", "Skip file permission fixing after builds")
     .option("--local-runtime <path>", "Use a local strux repo for the Go runtime instead of the published module")
-    .action(async (bspName: string, options: {clean?: boolean, dev?: boolean, chown?: boolean, localRuntime?: string}) => {
+    .action(async (bspName: string | undefined, options: {profile?: string, clean?: boolean, dev?: boolean, chown?: boolean, localRuntime?: string}) => {
 
         try {
-            Logger.title("Building Strux OS Image for BSP: " + bspName)
-            Settings.bspName = bspName
+            const selectedBsp = Settings.resolveBspName(bspName)
+            Logger.title(selectedBsp
+                ? `Building Strux OS Image for BSP: ${selectedBsp}`
+                : "Building Strux OS Image")
+            Settings.profileOverride = options.profile ?? null
             Settings.clean = options.clean ?? false
             Settings.isDevMode = options.dev ?? false
             Settings.noChown = options.chown === false
@@ -189,7 +200,6 @@ updateCommand.command("bundle")
     .description("Create a signed full-rootfs update bundle")
     .argument("[rootfs-image]", "The full rootfs image to bundle. Defaults to dist/output/<bsp>/rootfs.ext4.")
     .option("--private-key <path>", "RSA private key PEM used to sign the bundle with RSA-PSS/SHA-512. Defaults to ./strux-update.key.")
-    .option("--bsp <name>", "Target BSP name")
     .option("--version <version>", "Update version/generation label")
     .option("-o, --out <path>", "Output .struxb path")
     .action(async (rootfsImage: string | undefined, options: {privateKey?: string, bsp?: string, version?: string, out?: string}) => {
@@ -250,6 +260,7 @@ program.command("run")
 
 program.command("dev")
     .description("Start the Strux OS development server")
+    .option("--profile <name>", "Profile to bake into the development image")
     .option("--remote", "Run the development server to serve the project to a remote device (skips build and QEMU running)")
     .option("--clean", "Clean the build cache before building")
     .option("--debug", "Show device log streams")
@@ -258,11 +269,12 @@ program.command("dev")
     .option("--no-rebuild", "Skip the initial build and use existing artifacts")
     .option("--no-chown", "Skip file permission fixing after builds")
     .option("--local-runtime <path>", "Use a local strux repo for the Go runtime instead of the published module")
-    .action(async (options: {remote?: boolean, clean?: boolean, debug?: boolean, vite?: boolean, appDebug?: boolean, rebuild?: boolean, chown?: boolean, localRuntime?: string}) => {
+    .action(async (options: {profile?: string, remote?: boolean, clean?: boolean, debug?: boolean, vite?: boolean, appDebug?: boolean, rebuild?: boolean, chown?: boolean, localRuntime?: string}) => {
 
         try {
 
             Logger.title("Starting Strux OS Development Server")
+            Settings.profileOverride = options.profile ?? null
             Settings.isRemoteOnly = options.remote ?? false
             Settings.clean = options.clean ?? false
             Settings.devDebug = options.debug ?? false
@@ -288,8 +300,9 @@ program.command("flash")
 
         try {
 
-            Logger.title(`Flashing Strux OS${bspName ? ` for BSP: ${bspName}` : ""}`)
-            await flash({ bspName })
+            const selectedBsp = Settings.resolveBspName(bspName)
+            Logger.title(`Flashing Strux OS${selectedBsp ? ` for BSP: ${selectedBsp}` : ""}`)
+            await flash({ bspName: selectedBsp ?? undefined })
 
         } catch (err) {
 
@@ -355,18 +368,10 @@ KernelCommand.command("menuconfig")
     .option("--save", "Save the configuration as a fragment file")
     .action(async (options: { save?: boolean }) => {
         try {
-            // Get BSP name from strux.yaml or require it as argument
-            const { readFileSync } = await import("fs")
-            const struxYamlPath = join(process.cwd(), "strux.yaml")
-            if (fileExists(struxYamlPath)) {
-                const struxYaml = Bun.YAML.parse(readFileSync(struxYamlPath, "utf-8")) as { bsp?: string }
-                if (struxYaml.bsp) {
-                    Settings.bspName = struxYaml.bsp
-                }
-            }
+            MainYAMLValidator.validateAndLoad()
 
             if (!Settings.bspName) {
-                Logger.errorWithExit("BSP name not found. Please specify in strux.yaml or use 'strux build <bsp>' first.")
+                Logger.errorWithExit("BSP name not found. Pass --bsp or specify bsp in strux.yaml.")
             }
 
             Logger.title("Opening Kernel Menuconfig")
@@ -381,18 +386,10 @@ KernelCommand.command("clean")
     .option("--mode <mode>", "Clean mode: mrproper (default), clean, or full", "mrproper")
     .action(async (options: { mode?: string }) => {
         try {
-            // Get BSP name from strux.yaml
-            const { readFileSync } = await import("fs")
-            const struxYamlPath = join(process.cwd(), "strux.yaml")
-            if (fileExists(struxYamlPath)) {
-                const struxYaml = Bun.YAML.parse(readFileSync(struxYamlPath, "utf-8")) as { bsp?: string }
-                if (struxYaml.bsp) {
-                    Settings.bspName = struxYaml.bsp
-                }
-            }
+            MainYAMLValidator.validateAndLoad()
 
             if (!Settings.bspName) {
-                Logger.errorWithExit("BSP name not found. Please specify in strux.yaml or use 'strux build <bsp>' first.")
+                Logger.errorWithExit("BSP name not found. Pass --bsp or specify bsp in strux.yaml.")
             }
 
             // Validate mode
