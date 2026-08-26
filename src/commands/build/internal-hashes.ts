@@ -147,9 +147,27 @@ import cageIdleInhibit from "../../assets/cage-base/idle_inhibit_v1.c" with { ty
 // @ts-ignore
 import cageIdleInhibitH from "../../assets/cage-base/idle_inhibit_v1.h" with { type: "text" }
 // @ts-ignore
+import cageLayerShell from "../../assets/cage-base/layer_shell.c" with { type: "text" }
+// @ts-ignore
+import cageLayerShellH from "../../assets/cage-base/layer_shell.h" with { type: "text" }
+// @ts-ignore
+import keyboardIcons from "../../assets/cage-base/keyboard_icons.c" with { type: "text" }
+// @ts-ignore
+import keyboardIconsH from "../../assets/cage-base/keyboard_icons.h" with { type: "text" }
+// @ts-ignore
 import cageSplash from "../../assets/cage-base/splash.c" with { type: "text" }
 // @ts-ignore
 import cageSplashH from "../../assets/cage-base/splash.h" with { type: "text" }
+// @ts-ignore
+import cageTextInput from "../../assets/cage-base/text_input.c" with { type: "text" }
+// @ts-ignore
+import cageTextInputH from "../../assets/cage-base/text_input.h" with { type: "text" }
+// @ts-ignore
+import struxKeyboard from "../../assets/cage-base/strux_keyboard.c" with { type: "text" }
+// @ts-ignore
+import keyboardLayerShellProtocol from "../../assets/cage-base/protocols/wlr-layer-shell-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import keyboardVirtualKeyboardProtocol from "../../assets/cage-base/protocols/virtual-keyboard-unstable-v1.xml" with { type: "text" }
 // @ts-ignore
 import cageServerH from "../../assets/cage-base/server.h" with { type: "text" }
 // @ts-ignore
@@ -248,8 +266,17 @@ export function computeInternalAssetHashes(): Record<string, string> {
             cageXwaylandH,
             cageIdleInhibit,
             cageIdleInhibitH,
+            cageLayerShell,
+            cageLayerShellH,
+            keyboardIcons,
+            keyboardIconsH,
             cageSplash,
             cageSplashH,
+            cageTextInput,
+            cageTextInputH,
+            struxKeyboard,
+            keyboardLayerShellProtocol,
+            keyboardVirtualKeyboardProtocol,
             cageServerH,
             cageConfigH,
             cageMesonBuild,

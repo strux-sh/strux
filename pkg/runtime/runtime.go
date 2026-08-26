@@ -25,6 +25,7 @@ const CapabilityNetwork = api.CapabilityNetwork
 const CapabilityWiFi = api.CapabilityWiFi
 const CapabilityAudio = api.CapabilityAudio
 const CapabilityBattery = api.CapabilityBattery
+const CapabilityDeviceSigning = api.CapabilityDeviceSigning
 
 type DisplayContract = api.DisplayContract
 type NetworkContract = api.NetworkContract
@@ -50,6 +51,25 @@ type AudioOutput = api.AudioOutput
 type BatteryContract = api.BatteryContract
 type BatteryEvents = api.BatteryEvents
 type BatteryState = api.BatteryState
+type DeviceSigningContract = api.DeviceSigningContract
+type DeviceSigningStatus = api.DeviceSigningStatus
+type DeviceSigningReason = api.DeviceSigningReason
+type GenerateDeviceSigningKeyResult = api.GenerateDeviceSigningKeyResult
+type DevicePublicKey = api.DevicePublicKey
+type DeviceSignRequest = api.DeviceSignRequest
+type DeviceSignature = api.DeviceSignature
+type DeviceSigningUnavailableError = api.DeviceSigningUnavailableError
+
+const (
+	DeviceSigningReasonNone                   = api.DeviceSigningReasonNone
+	DeviceSigningReasonTEEDeviceMissing       = api.DeviceSigningReasonTEEDeviceMissing
+	DeviceSigningReasonSupplicantMissing      = api.DeviceSigningReasonSupplicantMissing
+	DeviceSigningReasonSupplicantInactive     = api.DeviceSigningReasonSupplicantInactive
+	DeviceSigningReasonClientLibraryMissing   = api.DeviceSigningReasonClientLibraryMissing
+	DeviceSigningReasonClientConnectionFailed = api.DeviceSigningReasonClientConnectionFailed
+	DeviceSigningReasonTrustedAppMissing      = api.DeviceSigningReasonTrustedAppMissing
+	DeviceSigningReasonKeyMissing             = api.DeviceSigningReasonKeyMissing
+)
 
 // Optional audio features — a BSP opts in by also satisfying these on its
 // provider (see api/audio.go and the README "Optional features" section).

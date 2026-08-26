@@ -28,6 +28,7 @@
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
@@ -38,6 +39,7 @@
 #include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
+#include <wlr/types/wlr_text_input_v3.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
@@ -53,10 +55,12 @@
 #endif
 
 #include "idle_inhibit_v1.h"
+#include "layer_shell.h"
 #include "output.h"
 #include "seat.h"
 #include "server.h"
 #include "splash.h"
+#include "text_input.h"
 #include "view.h"
 #include "xdg_shell.h"
 #if CAGE_HAS_XWAYLAND
@@ -393,6 +397,8 @@ main(int argc, char *argv[])
 
 	wl_list_init(&server.views);
 	wl_list_init(&server.outputs);
+	wl_list_init(&server.layer_surfaces);
+	wl_list_init(&server.text_inputs);
 
 	server.output_layout = wlr_output_layout_create(server.wl_display);
 	if (!server.output_layout) {
@@ -411,6 +417,13 @@ main(int argc, char *argv[])
 	}
 
 	server.scene_output_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);
+	server.view_tree = wlr_scene_tree_create(&server.scene->tree);
+	server.overlay_tree = wlr_scene_tree_create(&server.scene->tree);
+	if (!server.view_tree || !server.overlay_tree) {
+		wlr_log(WLR_ERROR, "Unable to create scene layer trees");
+		ret = 1;
+		goto end;
+	}
 
 	// Create splash screen (shows framebuffer splash immediately if configured)
 	if (server.splash_image_path) {
@@ -482,6 +495,25 @@ main(int argc, char *argv[])
 	wl_signal_add(&xdg_shell->events.new_toplevel, &server.new_xdg_toplevel);
 	server.new_xdg_popup.notify = handle_new_xdg_popup;
 	wl_signal_add(&xdg_shell->events.new_popup, &server.new_xdg_popup);
+
+	struct wlr_layer_shell_v1 *layer_shell = wlr_layer_shell_v1_create(server.wl_display, 4);
+	if (!layer_shell) {
+		wlr_log(WLR_ERROR, "Unable to create the layer-shell interface");
+		ret = 1;
+		goto end;
+	}
+	server.new_layer_surface.notify = handle_new_layer_surface;
+	wl_signal_add(&layer_shell->events.new_surface, &server.new_layer_surface);
+
+	struct wlr_text_input_manager_v3 *text_input_manager =
+		wlr_text_input_manager_v3_create(server.wl_display);
+	if (!text_input_manager) {
+		wlr_log(WLR_ERROR, "Unable to create the text-input-v3 interface");
+		ret = 1;
+		goto end;
+	}
+	server.new_text_input.notify = handle_new_text_input;
+	wl_signal_add(&text_input_manager->events.text_input, &server.new_text_input);
 
 	struct wlr_xdg_decoration_manager_v1 *xdg_decoration_manager =
 		wlr_xdg_decoration_manager_v1_create(server.wl_display);
@@ -637,6 +669,11 @@ main(int argc, char *argv[])
 		wlr_log(WLR_DEBUG, "Cage " CAGE_VERSION " is running on Wayland display %s", socket);
 	}
 
+	struct cg_output *keyboard_output;
+	wl_list_for_each (keyboard_output, &server.outputs, link) {
+		output_start_keyboard(keyboard_output);
+	}
+
 	// Transition splash from framebuffer to Wayland scene
 	if (server.splash) {
 		splash_show_wayland(server.splash);
@@ -667,6 +704,8 @@ main(int argc, char *argv[])
 
 	wl_list_remove(&server.new_virtual_pointer.link);
 	wl_list_remove(&server.new_virtual_keyboard.link);
+	wl_list_remove(&server.new_text_input.link);
+	wl_list_remove(&server.new_layer_surface.link);
 	wl_list_remove(&server.output_manager_apply.link);
 	wl_list_remove(&server.output_manager_test.link);
 	wl_list_remove(&server.xdg_toplevel_decoration.link);

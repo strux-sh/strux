@@ -96,6 +96,7 @@ const PROTOCOLS: Record<string, ProtocolMapping> = {
                 status: p.status,
                 message: p.message ?? "",
                 destPath: p.message ?? p.componentType ?? "",
+                sha256: p.sha256,
             }),
 
         },
@@ -129,6 +130,7 @@ const PROTOCOLS: Record<string, ProtocolMapping> = {
                 componentType: "",
                 data: p.data,
                 destPath: p.destPath,
+                sha256: p.sha256,
             }),
 
         },

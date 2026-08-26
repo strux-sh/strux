@@ -6,6 +6,7 @@
 #include <wayland-server-core.h>
 
 struct cg_splash;
+struct cg_layer_surface;
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -43,6 +44,8 @@ struct cg_server {
 	struct wlr_scene_output_layout *scene_output_layout;
 
 	struct wlr_scene *scene;
+	struct wlr_scene_tree *view_tree;
+	struct wlr_scene_tree *overlay_tree;
 	/* Includes disabled outputs; depending on the output_mode
 	 * some outputs may be disabled. */
 	struct wl_list outputs; // cg_output::link
@@ -52,6 +55,10 @@ struct cg_server {
 	struct wl_listener xdg_toplevel_decoration;
 	struct wl_listener new_xdg_toplevel;
 	struct wl_listener new_xdg_popup;
+	struct wl_listener new_layer_surface;
+	struct wl_listener new_text_input;
+	struct wl_list layer_surfaces;
+	struct wl_list text_inputs;
 
 	struct wl_listener new_virtual_keyboard;
 	struct wl_listener new_virtual_pointer;

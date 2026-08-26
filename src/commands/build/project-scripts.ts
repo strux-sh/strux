@@ -163,6 +163,7 @@ function buildProjectScriptEnv(bspName: string, step: ProjectScriptStep): Record
         TARGET_ARCH: Settings.targetArch!,
         STEP: step,
         STRUX_VERSION: Settings.struxVersion!,
+        STRUX_BUILD_MODE: Settings.isDevMode ? "development" : "production",
         PROJECT_NAME: Settings.projectName,
         PROJECT_VERSION: Settings.projectVersion,
         STRUX_UPDATE_ENABLED: Settings.main?.update?.enabled ? "true" : "false",

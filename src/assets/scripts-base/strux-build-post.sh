@@ -382,6 +382,12 @@ if [ -f "$BSP_CACHE/screen" ]; then
     progress "Installed strux-screen daemon"
 fi
 
+if [ -f "$BSP_CACHE/strux-keyboard" ]; then
+    cp "$BSP_CACHE/strux-keyboard" "$ROOTFS_DIR/usr/bin/strux-keyboard"
+    chmod +x "$ROOTFS_DIR/usr/bin/strux-keyboard"
+    progress "Installed Strux touch keyboard"
+fi
+
 # Copy WPE WebKit Extension (provides JS bridge for strux.* API) - from BSP-specific cache
 mkdir -p "$ROOTFS_DIR/usr/lib/wpe-web-extensions"
 cp "$BSP_CACHE/libstrux-extension.so" "$ROOTFS_DIR/usr/lib/wpe-web-extensions/libstrux-extension.so"

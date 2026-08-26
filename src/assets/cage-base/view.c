@@ -95,8 +95,7 @@ view_position(struct cg_view *view)
 
 	if (view->assigned_output) {
 		/* Per-view mode: constrain to the assigned output */
-		wlr_output_layout_get_box(view->server->output_layout,
-					  view->assigned_output->wlr_output, &layout_box);
+		output_get_usable_box(view->assigned_output, &layout_box);
 	} else {
 		/* Default: use the full output layout */
 		wlr_output_layout_get_box(view->server->output_layout, NULL, &layout_box);
@@ -132,7 +131,7 @@ view_unmap(struct cg_view *view)
 void
 view_map(struct cg_view *view, struct wlr_surface *surface)
 {
-	view->scene_tree = wlr_scene_subsurface_tree_create(&view->server->scene->tree, surface);
+	view->scene_tree = wlr_scene_subsurface_tree_create(view->server->view_tree, surface);
 	if (!view->scene_tree) {
 		wl_resource_post_no_memory(surface->resource);
 		return;

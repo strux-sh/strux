@@ -8,7 +8,7 @@
 //
 // Server → Client:
 //   - "binary-new"           { data: string }
-//   - "component"            { data: string, destPath: string }
+//   - "component"            { data: string, destPath: string, sha256?: string }
 //   - "device-info-requested"
 //   - "ssh-start"            { sessionID: string, shell: string }
 //   - "ssh-input"            { sessionID: string, data: string }
@@ -123,6 +123,7 @@ type BinaryAckPayload struct {
 type ComponentPayload struct {
 	Data     string `json:"data"`     // Base64 encoded binary data
 	DestPath string `json:"destPath"` // Target filesystem path on device
+	SHA256   string `json:"sha256,omitempty"`
 }
 
 // ComponentArchivePayload represents a zip archive update from the server
@@ -144,6 +145,7 @@ type ComponentAckPayload struct {
 	Status   string `json:"status"` // "updated", "error"
 	Message  string `json:"message"`
 	DestPath string `json:"destPath"`
+	SHA256   string `json:"sha256,omitempty"`
 }
 
 // ComponentArchiveAckPayload represents the acknowledgment of an archive update
@@ -650,6 +652,12 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 	}
 
 	s.logger.Info("Decoded component: %d bytes -> %s", len(decoded), payload.DestPath)
+	checksum := fmt.Sprintf("%x", sha256.Sum256(decoded))
+	if payload.SHA256 != "" && !strings.EqualFold(payload.SHA256, checksum) {
+		s.logger.Error("Received checksum mismatch for %s", payload.DestPath)
+		s.SendComponentAck("error", "Checksum mismatch before write", payload.DestPath, checksum)
+		return
+	}
 
 	if payload.DestPath == "/strux/frontend" {
 		if err := extractZipToPath(decoded, payload.DestPath); err != nil {
@@ -659,12 +667,9 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 		}
 
 		s.logger.Info("Frontend updated at %s", payload.DestPath)
-		s.SendComponentAck("updated", describeExtractedFrontend(payload.DestPath), payload.DestPath)
+		s.SendComponentAck("updated", describeExtractedFrontend(payload.DestPath), payload.DestPath, checksum)
 		return
 	}
-
-	// Compute checksum for verification
-	checksum := fmt.Sprintf("%x", sha256.Sum256(decoded))
 
 	// Ensure parent directory exists
 	parentDir := filepath.Dir(payload.DestPath)
@@ -708,7 +713,7 @@ func (s *SocketClient) handleComponentUpdate(payload ComponentPayload) {
 	}
 
 	s.logger.Info("Component updated at %s (checksum: %s)", payload.DestPath, checksum[:16])
-	s.SendComponentAck("updated", fmt.Sprintf("Updated at %s", payload.DestPath), payload.DestPath)
+	s.SendComponentAck("updated", fmt.Sprintf("Updated at %s", payload.DestPath), payload.DestPath, checksum)
 }
 
 // handleComponentArchiveUpdate handles a zip archive update from the server.
@@ -777,7 +782,7 @@ func (s *SocketClient) handleSystemUpdate(payload SystemUpdatePayload) {
 }
 
 // SendComponentAck sends a component update acknowledgment to the server
-func (s *SocketClient) SendComponentAck(status, message, destPath string) {
+func (s *SocketClient) SendComponentAck(status, message, destPath string, checksums ...string) {
 	if s.ws == nil {
 		return
 	}
@@ -786,6 +791,9 @@ func (s *SocketClient) SendComponentAck(status, message, destPath string) {
 		Status:   status,
 		Message:  message,
 		DestPath: destPath,
+	}
+	if len(checksums) > 0 {
+		payload.SHA256 = checksums[0]
 	}
 
 	if err := s.ws.Emit("component-ack", payload); err != nil {

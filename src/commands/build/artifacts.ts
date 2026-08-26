@@ -127,9 +127,27 @@ import cageIdleInhibit from "../../assets/cage-base/idle_inhibit_v1.c" with { ty
 // @ts-ignore
 import cageIdleInhibitH from "../../assets/cage-base/idle_inhibit_v1.h" with { type: "text" }
 // @ts-ignore
+import cageLayerShell from "../../assets/cage-base/layer_shell.c" with { type: "text" }
+// @ts-ignore
+import cageLayerShellH from "../../assets/cage-base/layer_shell.h" with { type: "text" }
+// @ts-ignore
+import keyboardIcons from "../../assets/cage-base/keyboard_icons.c" with { type: "text" }
+// @ts-ignore
+import keyboardIconsH from "../../assets/cage-base/keyboard_icons.h" with { type: "text" }
+// @ts-ignore
 import cageSplash from "../../assets/cage-base/splash.c" with { type: "text" }
 // @ts-ignore
 import cageSplashH from "../../assets/cage-base/splash.h" with { type: "text" }
+// @ts-ignore
+import cageTextInput from "../../assets/cage-base/text_input.c" with { type: "text" }
+// @ts-ignore
+import cageTextInputH from "../../assets/cage-base/text_input.h" with { type: "text" }
+// @ts-ignore
+import struxKeyboard from "../../assets/cage-base/strux_keyboard.c" with { type: "text" }
+// @ts-ignore
+import keyboardLayerShellProtocol from "../../assets/cage-base/protocols/wlr-layer-shell-unstable-v1.xml" with { type: "text" }
+// @ts-ignore
+import keyboardVirtualKeyboardProtocol from "../../assets/cage-base/protocols/virtual-keyboard-unstable-v1.xml" with { type: "text" }
 // @ts-ignore
 import cageServerH from "../../assets/cage-base/server.h" with { type: "text" }
 // @ts-ignore
@@ -244,8 +262,17 @@ const ARTIFACT_FILES: readonly (readonly [string, string])[] = [
     ["cage/xwayland.h", cageXwaylandH],
     ["cage/idle_inhibit_v1.c", cageIdleInhibit],
     ["cage/idle_inhibit_v1.h", cageIdleInhibitH],
+    ["cage/layer_shell.c", cageLayerShell],
+    ["cage/layer_shell.h", cageLayerShellH],
+    ["cage/keyboard_icons.c", keyboardIcons],
+    ["cage/keyboard_icons.h", keyboardIconsH],
     ["cage/splash.c", cageSplash],
     ["cage/splash.h", cageSplashH],
+    ["cage/text_input.c", cageTextInput],
+    ["cage/text_input.h", cageTextInputH],
+    ["cage/strux_keyboard.c", struxKeyboard],
+    ["cage/protocols/wlr-layer-shell-unstable-v1.xml", keyboardLayerShellProtocol],
+    ["cage/protocols/virtual-keyboard-unstable-v1.xml", keyboardVirtualKeyboardProtocol],
     ["cage/server.h", cageServerH],
     ["cage/config.h.in", cageConfigH],
     ["cage/meson.build", cageMesonBuild],

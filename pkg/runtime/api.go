@@ -62,6 +62,11 @@ func (rt *Runtime) Battery() *api.BatteryService {
 	return &api.BatteryService{}
 }
 
+// DeviceSigning returns Strux-owned device signing and readiness APIs backed by the active BSP.
+func (rt *Runtime) DeviceSigning() *api.DeviceSigningService {
+	return &api.DeviceSigningService{}
+}
+
 // Capabilities returns Strux-owned capabilities APIs backed by the active BSP.
 func (rt *Runtime) Capabilities() *api.CapabilitiesService {
 	return &api.CapabilitiesService{}
@@ -92,6 +97,10 @@ func RegisterBatteryProvider(provider BatteryContract) {
 	api.RegisterBatteryProvider(provider)
 }
 
+func RegisterDeviceSigningProvider(provider DeviceSigningContract) {
+	api.RegisterDeviceSigningProvider(provider)
+}
+
 // ----------------------------------------------------------------------------
 
 // registerBuiltinExtensions registers all built-in Strux framework extensions
@@ -109,6 +118,7 @@ func (rt *Runtime) registerBuiltinExtensions() {
 	rt.registerStruxAPI(api.WiFiNamespace, rt.WiFi())
 	rt.registerStruxAPI(api.AudioNamespace, rt.Audio())
 	rt.registerStruxAPI(api.BatteryNamespace, rt.Battery())
+	rt.registerStruxAPI(api.DeviceSigningNamespace, rt.DeviceSigning())
 	rt.registerStruxAPI(api.CapabilitiesNamespace, rt.Capabilities())
 
 	// ----------------------------------------------------------------------------

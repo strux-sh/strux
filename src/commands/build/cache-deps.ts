@@ -132,8 +132,8 @@ export const STEP_DEPENDENCIES: Record<BuildStep, StepDependency> = {
         internalAssets: ["@build-cage-script"],
         // Fallback to internal assets if dist/cage/ doesn't exist yet (first build)
         fallbackInternalAssets: ["@cage-sources"],
-        // BSP-specific cache (architecture-dependent binary)
-        artifacts: ["cache/{bsp}/cage"]
+        // BSP-specific cache (architecture-dependent binaries)
+        artifacts: ["cache/{bsp}/cage", "cache/{bsp}/strux-keyboard"]
     },
 
     wpe: {

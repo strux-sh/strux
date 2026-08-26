@@ -51,6 +51,8 @@ The shell opened with `s` is a real `/bin/bash` on the device, tunneled through 
 
 The config panel (`c`) offers one-keystroke maintenance actions: restore Strux artifacts to their built-in versions, rebuild Strux components and transfer them to the device, rebuild the builder Docker image, install the latest [system update bundle](/guide/updates.md), flash the device (if the BSP supports it), restart the Strux service, and reboot the device.
 
+The rebuild-and-transfer action installs both Cage and its touch-keyboard companion at `/usr/bin/cage` and `/usr/bin/strux-keyboard`. Component transfers are checksummed and acknowledged before the device reboots; the reboot is what starts the new Cage process and its per-output keyboard clients.
+
 ::: tip Running without the TUI
 Set `STRUX_DEV_NO_UI=1` to run dev mode with plain log output instead of the terminal UI.
 :::

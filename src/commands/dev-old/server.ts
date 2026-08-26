@@ -34,6 +34,7 @@ import type { Server, ServerWebSocket } from "bun"
 import { Bonjour, type Service } from "bonjour-service"
 
 import chalk from "chalk"
+import { createHash } from "node:crypto"
 
 import { Logger } from "../../utils/log"
 
@@ -113,12 +114,13 @@ interface BinaryAckPayload {
 }
 
 
-export type ComponentType = "cage" | "wpe-extension" | "client" | "script" | "screen" | "cog"
+export type ComponentType = "cage" | "keyboard" | "wpe-extension" | "client" | "script" | "screen" | "cog"
 
 interface ComponentPayload {
     componentType: ComponentType
     data: string  // Base64 encoded binary data
     destPath: string
+    sha256: string
 }
 
 
@@ -1028,7 +1030,8 @@ export class DevServer {
         const payload: ComponentPayload = {
             componentType,
             data: base64Data,
-            destPath
+            destPath,
+            sha256: createHash("sha256").update(binary).digest("hex")
         }
 
         Logger.log(`Streaming ${componentType} component to client (${binary.length} bytes) -> ${destPath}`)

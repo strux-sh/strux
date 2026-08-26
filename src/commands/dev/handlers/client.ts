@@ -116,7 +116,7 @@ export function registerClientHandlers(client: Socket<ClientMessageSendable, Cli
     client.on("component-ack", (payload, _ws) => {
         const detail = payload.message ? ` (${payload.message})` : ""
         Logger.info(`Component ${payload.destPath || payload.message}: ${payload.status}${detail}`)
-        dev.handleComponentAck(payload.destPath, payload.status, payload.message)
+        dev.handleComponentAck(payload.destPath, payload.status, payload.message, payload.sha256)
     })
 
     client.on("component-archive-ack", (payload, _ws) => {

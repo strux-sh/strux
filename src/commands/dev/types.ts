@@ -24,8 +24,8 @@ interface ClientMessageBinaryAck {type: "binary-ack", payload: { status: BinaryA
 interface ClientMessageBinaryRequested {type: "binary-requested"}
 
 // Components
-interface ClientMessageComponent { type: "component", payload: { data: string, destPath: string }}
-interface ClientMessageComponentAck { type: "component-ack", payload: { status: "updated" | "error", message: string, destPath: string }}
+interface ClientMessageComponent { type: "component", payload: { data: string, destPath: string, sha256: string }}
+interface ClientMessageComponentAck { type: "component-ack", payload: { status: "updated" | "error", message: string, destPath: string, sha256?: string }}
 interface ClientMessageComponentArchive { type: "component-archive", payload: { data: string, extractPath: string }}
 interface ClientMessageComponentArchiveAck { type: "component-archive-ack", payload: { status: "updated" | "error", message: string, extractPath: string }}
 

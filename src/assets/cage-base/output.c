@@ -12,10 +12,14 @@
 #include "config.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -37,9 +41,11 @@
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 
+#include "layer_shell.h"
 #include "output.h"
 #include "seat.h"
 #include "server.h"
+#include "text_input.h"
 #include "view.h"
 #if CAGE_HAS_XWAYLAND
 #include "xwayland.h"
@@ -72,6 +78,176 @@ update_output_manager_config(struct cg_server *server)
 	}
 
 	wlr_output_manager_v1_set_configuration(server->output_manager_v1, config);
+}
+
+#define STRUX_KEYBOARD_BINARY "/usr/bin/strux-keyboard"
+#define STRUX_KEYBOARD_CONTROL_FD 3
+#define STRUX_KEYBOARD_HIDE_TIMEOUT_MS 220
+
+void
+output_get_usable_box(struct cg_output *output, struct wlr_box *box)
+{
+	if (output->usable_area.width > 0 && output->usable_area.height > 0) {
+		*box = output->usable_area;
+		return;
+	}
+	wlr_output_layout_get_box(output->server->output_layout, output->wlr_output, box);
+}
+
+void
+output_update_usable_area(struct cg_output *output)
+{
+	if (!wlr_output_layout_get(output->server->output_layout, output->wlr_output)) {
+		output->usable_area = (struct wlr_box){0};
+		return;
+	}
+	layer_shell_arrange_output(output, &output->usable_area);
+}
+
+static void
+send_keyboard_control(struct cg_output *output, const char *message)
+{
+	if (output->keyboard_control_fd < 0) {
+		return;
+	}
+	ssize_t ignored = send(output->keyboard_control_fd, message, strlen(message), MSG_NOSIGNAL);
+	(void)ignored;
+}
+
+static void
+finish_keyboard_hide(struct cg_output *output)
+{
+	if (output->keyboard_hide_timer) {
+		wl_event_source_remove(output->keyboard_hide_timer);
+		output->keyboard_hide_timer = NULL;
+	}
+	if (!output->keyboard_visible && !output->keyboard_hiding) {
+		return;
+	}
+	output->keyboard_hiding = false;
+	output->keyboard_visible = false;
+	output_update_usable_area(output);
+	view_position_all(output->server);
+}
+
+static int
+handle_keyboard_hide_timeout(void *data)
+{
+	struct cg_output *output = data;
+	wlr_log(WLR_ERROR, "Keyboard hide animation timed out on %s", output->wlr_output->name);
+	finish_keyboard_hide(output);
+	return 0;
+}
+
+void
+output_set_keyboard_visible(struct cg_output *output, bool visible, uint32_t purpose)
+{
+	char message[64];
+	if (visible) {
+		bool needs_usable_area_update = !output->keyboard_visible;
+		if (output->keyboard_hide_timer) {
+			wl_event_source_remove(output->keyboard_hide_timer);
+			output->keyboard_hide_timer = NULL;
+		}
+		output->keyboard_hiding = false;
+		output->keyboard_visible = true;
+		snprintf(message, sizeof(message), "show %" PRIu32 "\n", purpose);
+		send_keyboard_control(output, message);
+		if (needs_usable_area_update) {
+			/* Reserve the keyboard region and configure Cog once. The client
+			 * animates only pixels inside this fixed region. */
+			output_update_usable_area(output);
+			view_position_all(output->server);
+		}
+	} else {
+		if (!output->keyboard_visible || output->keyboard_hiding) {
+			return;
+		}
+		output->keyboard_hiding = true;
+		send_keyboard_control(output, "hide\n");
+		struct wl_event_loop *loop = wl_display_get_event_loop(output->server->wl_display);
+		output->keyboard_hide_timer = wl_event_loop_add_timer(loop, handle_keyboard_hide_timeout, output);
+		if (!output->keyboard_hide_timer) {
+			finish_keyboard_hide(output);
+			return;
+		}
+		wl_event_source_timer_update(output->keyboard_hide_timer, STRUX_KEYBOARD_HIDE_TIMEOUT_MS);
+	}
+}
+
+static int
+handle_keyboard_control_fd(int fd, uint32_t mask, void *data)
+{
+	struct cg_output *output = data;
+	if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
+		wl_event_source_remove(output->keyboard_control_source);
+		output->keyboard_control_source = NULL;
+		close(output->keyboard_control_fd);
+		output->keyboard_control_fd = -1;
+		finish_keyboard_hide(output);
+		return 0;
+	}
+
+	char buffer[128];
+	ssize_t length = read(fd, buffer, sizeof(buffer) - 1);
+	if (length <= 0) {
+		return 0;
+	}
+	buffer[length] = '\0';
+	if (strstr(buffer, "dismiss")) {
+		output->keyboard_suppressed = true;
+		output_set_keyboard_visible(output, false, 0);
+	} else if (strstr(buffer, "hidden")) {
+		if (output->keyboard_hiding) {
+			finish_keyboard_hide(output);
+		}
+	}
+	return 0;
+}
+
+void
+output_start_keyboard(struct cg_output *output)
+{
+	const char *enabled = getenv("STRUX_KEYBOARD_ENABLED");
+	if (output->keyboard_pid > 0 || output->server->only_display_image || !getenv("WAYLAND_DISPLAY") ||
+	    (enabled && strcmp(enabled, "0") == 0)) {
+		return;
+	}
+
+	int sockets[2];
+	if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets) < 0) {
+		wlr_log_errno(WLR_ERROR, "Unable to create keyboard control socket");
+		return;
+	}
+
+	pid_t pid = fork();
+	if (pid == 0) {
+		close(sockets[0]);
+		if (sockets[1] != STRUX_KEYBOARD_CONTROL_FD) {
+			dup2(sockets[1], STRUX_KEYBOARD_CONTROL_FD);
+			close(sockets[1]);
+		}
+		char fd_value[16];
+		snprintf(fd_value, sizeof(fd_value), "%d", STRUX_KEYBOARD_CONTROL_FD);
+		setenv("STRUX_KEYBOARD_CONTROL_FD", fd_value, true);
+		execl(STRUX_KEYBOARD_BINARY, STRUX_KEYBOARD_BINARY, "--output", output->wlr_output->name, NULL);
+		_exit(1);
+	}
+
+	close(sockets[1]);
+	if (pid < 0) {
+		close(sockets[0]);
+		wlr_log_errno(WLR_ERROR, "Unable to launch Strux keyboard");
+		return;
+	}
+
+	output->keyboard_pid = pid;
+	output->keyboard_control_fd = sockets[0];
+	fcntl(output->keyboard_control_fd, F_SETFL, O_NONBLOCK);
+	struct wl_event_loop *loop = wl_display_get_event_loop(output->server->wl_display);
+	output->keyboard_control_source = wl_event_loop_add_fd(loop, output->keyboard_control_fd,
+		WL_EVENT_READABLE, handle_keyboard_control_fd, output);
+	wlr_log(WLR_INFO, "Strux keyboard spawned for output %s (PID %d)", output->wlr_output->name, pid);
 }
 
 static inline void
@@ -211,6 +387,10 @@ handle_output_layout_change(struct wl_listener *listener, void *data)
 {
 	struct cg_server *server = wl_container_of(listener, server, output_layout_change);
 
+	struct cg_output *output;
+	wl_list_for_each (output, &server->outputs, link) {
+		output_update_usable_area(output);
+	}
 	view_position_all(server);
 	update_output_manager_config(server);
 }
@@ -436,6 +616,25 @@ output_destroy(struct cg_output *output)
 
 	/* Kill the Cog instance for this output */
 	kill_cog_for_output(output);
+	layer_shell_output_destroyed(output);
+	text_input_output_destroyed(server, output);
+	if (output->keyboard_control_source) {
+		wl_event_source_remove(output->keyboard_control_source);
+		output->keyboard_control_source = NULL;
+	}
+	if (output->keyboard_hide_timer) {
+		wl_event_source_remove(output->keyboard_hide_timer);
+		output->keyboard_hide_timer = NULL;
+	}
+	if (output->keyboard_control_fd >= 0) {
+		close(output->keyboard_control_fd);
+		output->keyboard_control_fd = -1;
+	}
+	if (output->keyboard_pid > 0) {
+		kill(output->keyboard_pid, SIGTERM);
+		waitpid(output->keyboard_pid, NULL, 0);
+		output->keyboard_pid = 0;
+	}
 
 	/* Notify the primary client that this output is gone */
 	server_notify_output_event(server, "DISCONNECTED", output->wlr_output->name);
@@ -501,6 +700,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 	output->wlr_output = wlr_output;
 	wlr_output->data = output;
 	output->server = server;
+	output->keyboard_control_fd = -1;
 
 	wl_list_insert(&server->outputs, &output->link);
 
@@ -556,6 +756,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 	if (wlr_output_commit_state(wlr_output, &state)) {
 		output_layout_add_auto(output);
 	}
+	output_update_usable_area(output);
 
 	view_position_all(output->server);
 	update_output_manager_config(output->server);
@@ -576,6 +777,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 	    server->display_map_path) {
 		output->cog_pid = spawn_cog_for_output(server, output);
 	}
+	output_start_keyboard(output);
 }
 
 void

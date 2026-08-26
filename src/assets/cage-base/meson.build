@@ -39,9 +39,13 @@ endif
 wlroots        = dependency('wlroots-0.18', fallback: ['wlroots', 'wlroots'])
 wayland_protos = dependency('wayland-protocols', version: '>=1.14')
 wayland_server = dependency('wayland-server')
+wayland_client = dependency('wayland-client')
 xkbcommon      = dependency('xkbcommon')
 libpng         = dependency('libpng')
+cairo          = dependency('cairo')
+threads        = dependency('threads')
 math           = cc.find_library('m')
+dynamic_loader = cc.find_library('dl')
 
 wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
 wayland_scanner = find_program('wayland-scanner')
@@ -50,9 +54,20 @@ wayland_scanner_server = generator(
   output: '@BASENAME@-protocol.h',
   arguments: ['server-header', '@INPUT@', '@OUTPUT@'],
 )
+wayland_scanner_client = generator(
+  wayland_scanner,
+  output: '@BASENAME@-client-protocol.h',
+  arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
+)
+wayland_scanner_code = generator(
+  wayland_scanner,
+  output: '@BASENAME@-protocol.c',
+  arguments: ['private-code', '@INPUT@', '@OUTPUT@'],
+)
 
 server_protocols = [
   [wl_protocol_dir, 'stable/xdg-shell/xdg-shell.xml'],
+  ['protocols/wlr-layer-shell-unstable-v1.xml'],
 ]
 
 server_protos_headers = []
@@ -115,9 +130,11 @@ endif
 cage_sources = [
   'cage.c',
   'idle_inhibit_v1.c',
+  'layer_shell.c',
   'output.c',
   'seat.c',
   'splash.c',
+  'text_input.c',
   'view.c',
   'xdg_shell.c',
 ]
@@ -127,10 +144,12 @@ cage_headers = [
                  output: 'config.h',
                  configuration: conf_data),
   'idle_inhibit_v1.h',
+  'layer_shell.h',
   'output.h',
   'seat.h',
   'server.h',
   'splash.h',
+  'text_input.h',
   'view.h',
   'xdg_shell.h',
 ]
@@ -150,6 +169,32 @@ executable(
     xkbcommon,
     libpng,
     math,
+  ],
+  install: true,
+)
+
+keyboard_protocols = [
+  [wl_protocol_dir, 'stable/xdg-shell/xdg-shell.xml'],
+  'protocols/wlr-layer-shell-unstable-v1.xml',
+  'protocols/virtual-keyboard-unstable-v1.xml',
+]
+keyboard_protocol_sources = []
+foreach protocol : keyboard_protocols
+  protocol_path = join_paths(protocol)
+  keyboard_protocol_sources += wayland_scanner_client.process(protocol_path)
+  keyboard_protocol_sources += wayland_scanner_code.process(protocol_path)
+endforeach
+
+executable(
+  'strux-keyboard',
+  ['strux_keyboard.c', 'keyboard_icons.c'] + keyboard_protocol_sources,
+  dependencies: [
+    wayland_client,
+    xkbcommon,
+    cairo,
+    threads,
+    math,
+    dynamic_loader,
   ],
   install: true,
 )

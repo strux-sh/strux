@@ -15,6 +15,7 @@ CAGE_SOURCE_DIR="$PROJECT_DIR/dist/artifacts/cage"
 # Use BSP_CACHE_DIR if provided, otherwise fallback to default
 CACHE_DIR="${BSP_CACHE_DIR:-$PROJECT_DIR/dist/cache}"
 CAGE_BINARY="$CACHE_DIR/cage"
+KEYBOARD_BINARY="$CACHE_DIR/strux-keyboard"
 
 # ============================================================================
 # CONFIGURATION READING FROM YAML FILES
@@ -365,6 +366,13 @@ cp build/cage "$CAGE_BINARY" || {
 
 # Make the binary executable
 chmod +x "$CAGE_BINARY"
+
+progress "Copying Strux touch keyboard binary..."
+cp build/strux-keyboard "$KEYBOARD_BINARY" || {
+    echo "Error: Failed to copy Strux touch keyboard binary"
+    exit 1
+}
+chmod +x "$KEYBOARD_BINARY"
 
 # ============================================================================
 # GENERATE CAGE ENVIRONMENT FILE

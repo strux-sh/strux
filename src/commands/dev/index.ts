@@ -7,7 +7,7 @@
  */
 import { join } from "path"
 import { readdir, rm, stat } from "node:fs/promises"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { Settings } from "../../settings"
 import { Logger } from "../../utils/log"
 import { MainYAMLValidator } from "../../types/main-yaml"
@@ -66,6 +66,7 @@ export class DevServer {
     private componentAckWaiters = new Map<string, {
         resolve: () => void
         reject: (error: Error) => void
+        expectedChecksum: string
         timeout: ReturnType<typeof setTimeout>
     }>()
     private systemUpdateAckWaiter: {
@@ -452,25 +453,32 @@ export class DevServer {
 
                     const frontendArchivePath = await this.createFrontendTransferArchive()
                     const cagePath = join(Settings.projectPath, "dist", "cache", bspName, "cage")
+                    const keyboardPath = join(Settings.projectPath, "dist", "cache", bspName, "strux-keyboard")
                     const wpePath = join(Settings.projectPath, "dist", "cache", bspName, "libstrux-extension.so")
                     const clientPath = join(Settings.projectPath, "dist", "cache", bspName, "client")
                     const cogPath = join(Settings.projectPath, "dist", "cache", bspName, "cog")
                     const screenPath = join(Settings.projectPath, "dist", "cache", bspName, "screen")
 
                     const sendEncodedComponent = async (data: string, destPath: string) => {
-                        const ack = this.waitForComponentAck(destPath)
-                        client.broadcast({ type: "component", payload: { data, destPath } })
+                        const decoded = Buffer.from(data, "base64")
+                        const sha256 = createHash("sha256").update(decoded).digest("hex")
+                        const ack = this.waitForComponentAck(destPath, sha256)
+                        client.broadcast({ type: "component", payload: { data, destPath, sha256 } })
                         await ack
                     }
 
-                    const sendComponent = async (filePath: string, destPath: string) => {
+                    const sendComponent = async (filePath: string, destPath: string, required = false) => {
                         const file = Bun.file(filePath)
-                        if (!await file.exists()) return
+                        if (!await file.exists()) {
+                            if (required) throw new Error(`Required component is missing: ${filePath}`)
+                            return
+                        }
                         const data = Buffer.from(await file.arrayBuffer()).toString("base64")
                         await sendEncodedComponent(data, destPath)
                     }
 
-                    await sendComponent(cagePath, "/usr/bin/cage")
+                    await sendComponent(cagePath, "/usr/bin/cage", true)
+                    await sendComponent(keyboardPath, "/usr/bin/strux-keyboard", true)
                     await sendComponent(wpePath, "/usr/lib/wpe-web-extensions/libstrux-extension.so")
                     await sendComponent(join(Settings.projectPath, "dist", "cache", bspName, "app", "main"), "/strux/.main-update")
                     await sendComponent(clientPath, "/strux/.client-update")
@@ -848,7 +856,7 @@ export class DevServer {
     }
 
 
-    waitForComponentAck(destPath: string, timeoutMs = 30000): Promise<void> {
+    waitForComponentAck(destPath: string, expectedChecksum: string, timeoutMs = 30000): Promise<void> {
 
         const existing = this.componentAckWaiters.get(destPath)
         if (existing) {
@@ -864,6 +872,7 @@ export class DevServer {
             }, timeoutMs)
 
             this.componentAckWaiters.set(destPath, {
+                expectedChecksum,
                 resolve: () => {
                     clearTimeout(timeout)
                     this.componentAckWaiters.delete(destPath)
@@ -881,7 +890,7 @@ export class DevServer {
     }
 
 
-    handleComponentAck(destPath: string, status: "updated" | "error", message: string): void {
+    handleComponentAck(destPath: string, status: "updated" | "error", message: string, checksum?: string): void {
 
         const waiter = this.componentAckWaiters.get(destPath)
         if (!waiter) return
@@ -889,6 +898,14 @@ export class DevServer {
         if (status === "error") {
             waiter.reject(new Error(message || `Component transfer failed: ${destPath}`))
             return
+        }
+
+        if (checksum && checksum !== waiter.expectedChecksum) {
+            waiter.reject(new Error(`Component checksum mismatch for ${destPath}`))
+            return
+        }
+        if (!checksum) {
+            Logger.warning(`Device did not return a checksum for ${destPath}; accepting legacy component ack`)
         }
 
         waiter.resolve()

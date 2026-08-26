@@ -40,6 +40,7 @@
 #include "output.h"
 #include "seat.h"
 #include "server.h"
+#include "text_input.h"
 #include "view.h"
 #if CAGE_HAS_XWAYLAND
 #include "xwayland.h"
@@ -61,6 +62,7 @@ static void drag_icon_update_position(struct cg_drag_icon *drag_icon);
 static struct cg_view *
 desktop_view_at(struct cg_server *server, double lx, double ly, struct wlr_surface **surface, double *sx, double *sy)
 {
+	*surface = NULL;
 	struct wlr_scene_node *node = wlr_scene_node_at(&server->scene->tree.node, lx, ly, sx, sy);
 	if (node == NULL || node->type != WLR_SCENE_NODE_BUFFER) {
 		return NULL;
@@ -85,8 +87,7 @@ desktop_view_at(struct cg_server *server, double lx, double ly, struct wlr_surfa
 		node = &node->parent->node;
 	}
 
-	assert(node != NULL);
-	return node->data;
+	return node ? node->data : NULL;
 }
 
 static void
@@ -533,23 +534,26 @@ cleanup:
 static void
 handle_new_keyboard(struct cg_seat *seat, struct wlr_keyboard *keyboard, bool virtual)
 {
-	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-	if (!context) {
-		wlr_log(WLR_ERROR, "Unable to create XKB context");
-		return;
-	}
+	/* Virtual keyboards provide their own keymap. Keep it so custom keys and
+	 * modifiers have the same meaning in the focused client. */
+	if (!keyboard->keymap) {
+		struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+		if (!context) {
+			wlr_log(WLR_ERROR, "Unable to create XKB context");
+			return;
+		}
 
-	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
-	if (!keymap) {
-		wlr_log(WLR_ERROR, "Unable to configure keyboard: keymap does not exist");
+		struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
+		if (!keymap) {
+			wlr_log(WLR_ERROR, "Unable to configure keyboard: keymap does not exist");
+			xkb_context_unref(context);
+			return;
+		}
+
+		wlr_keyboard_set_keymap(keyboard, keymap);
+		xkb_keymap_unref(keymap);
 		xkb_context_unref(context);
-		return;
 	}
-
-	wlr_keyboard_set_keymap(keyboard, keymap);
-
-	xkb_keymap_unref(keymap);
-	xkb_context_unref(context);
 	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
 
 	cg_keyboard_group_add(keyboard, seat, virtual);
@@ -652,10 +656,10 @@ handle_touch_down(struct wl_listener *listener, void *data)
 
 	double sx, sy;
 	struct wlr_surface *surface;
-	struct cg_view *view = desktop_view_at(seat->server, lx, ly, &surface, &sx, &sy);
+	desktop_view_at(seat->server, lx, ly, &surface, &sx, &sy);
 
 	uint32_t serial = 0;
-	if (view) {
+	if (surface) {
 		serial = wlr_seat_touch_notify_down(seat->seat, surface, event->time_msec, event->touch_id, sx, sy);
 	}
 
@@ -703,9 +707,9 @@ handle_touch_motion(struct wl_listener *listener, void *data)
 
 	double sx, sy;
 	struct wlr_surface *surface;
-	struct cg_view *view = desktop_view_at(seat->server, lx, ly, &surface, &sx, &sy);
+	desktop_view_at(seat->server, lx, ly, &surface, &sx, &sy);
 
-	if (view) {
+	if (surface) {
 		wlr_seat_touch_point_focus(seat->seat, surface, event->time_msec, event->touch_id, sx, sy);
 		wlr_seat_touch_notify_motion(seat->seat, event->time_msec, event->touch_id, sx, sy);
 	} else {
@@ -1108,6 +1112,7 @@ seat_set_focus(struct cg_seat *seat, struct cg_view *view)
 	} else {
 		wlr_seat_keyboard_notify_enter(wlr_seat, view->wlr_surface, NULL, 0, NULL);
 	}
+	text_input_set_focus(server, view->wlr_surface);
 
 	process_cursor_motion(seat, -1, 0, 0, 0, 0);
 }

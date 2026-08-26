@@ -197,8 +197,7 @@ handle_xdg_shell_surface_request_fullscreen(struct wl_listener *listener, void *
 	 */
 	struct wlr_box layout_box;
 	if (view->assigned_output) {
-		wlr_output_layout_get_box(view->server->output_layout,
-					  view->assigned_output->wlr_output, &layout_box);
+		output_get_usable_box(view->assigned_output, &layout_box);
 	} else {
 		wlr_output_layout_get_box(view->server->output_layout, NULL, &layout_box);
 	}

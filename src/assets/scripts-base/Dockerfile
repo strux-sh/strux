@@ -60,6 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     swig \
     libgnutls28-dev \
     uuid-dev \
+    optee-client-dev:arm64 \
     libfdt-dev \
     libftdi-dev \
     libgmp3-dev \

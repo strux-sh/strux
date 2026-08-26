@@ -296,6 +296,60 @@ export const STRUX_RUNTIME_TYPES = {
           }
         ]
       },
+      "deviceSigning": {
+        "methods": [
+          {
+            "name": "GetStatus",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "DeviceSigningStatus",
+                "tsType": "StruxRuntime.DeviceSigningStatus"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "GenerateKey",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "GenerateDeviceSigningKeyResult",
+                "tsType": "StruxRuntime.GenerateDeviceSigningKeyResult"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "GetPublicKey",
+            "params": [],
+            "returnTypes": [
+              {
+                "goType": "DevicePublicKey",
+                "tsType": "StruxRuntime.DevicePublicKey"
+              }
+            ],
+            "hasError": true
+          },
+          {
+            "name": "SignChallenge",
+            "params": [
+              {
+                "name": "request",
+                "goType": "DeviceSignRequest",
+                "tsType": "StruxRuntime.DeviceSignRequest"
+              }
+            ],
+            "returnTypes": [
+              {
+                "goType": "DeviceSignature",
+                "tsType": "StruxRuntime.DeviceSignature"
+              }
+            ],
+            "hasError": true
+          }
+        ]
+      },
       "display": {
         "methods": [
           {
@@ -1158,6 +1212,182 @@ export const STRUX_RUNTIME_TYPES = {
         }
       ]
     },
+    "DevicePublicKey": {
+      "fields": [
+        {
+          "name": "algorithm",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "keyId",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "format",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "encoding",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "key",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "DeviceSignRequest": {
+      "fields": [
+        {
+          "name": "purpose",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "audience",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "nonce",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "DeviceSignature": {
+      "fields": [
+        {
+          "name": "algorithm",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "keyId",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "encoding",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "signature",
+          "goType": "string",
+          "tsType": "string"
+        }
+      ]
+    },
+    "DeviceSigningStatus": {
+      "fields": [
+        {
+          "name": "available",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "normalWorldReady",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "reason",
+          "goType": "DeviceSigningReason",
+          "tsType": "string"
+        },
+        {
+          "name": "detail",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "backend",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "algorithm",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "storage",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "keyPresent",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "keyId",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "hardwareBacked",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "hardwareBound",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "rollbackProtected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "teeDevicePresent",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "teePrivDevicePresent",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "supplicantInstalled",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "supplicantActive",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "clientLibraryPresent",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "clientConnected",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "clientResult",
+          "goType": "string",
+          "tsType": "string"
+        },
+        {
+          "name": "trustedApplicationPresent",
+          "goType": "bool",
+          "tsType": "boolean"
+        }
+      ]
+    },
     "DisplayApplyOptions": {
       "fields": [
         {
@@ -1349,6 +1579,20 @@ export const STRUX_RUNTIME_TYPES = {
           "name": "events",
           "goType": "[]EventSpec",
           "tsType": "EventSpec[]"
+        }
+      ]
+    },
+    "GenerateDeviceSigningKeyResult": {
+      "fields": [
+        {
+          "name": "created",
+          "goType": "bool",
+          "tsType": "boolean"
+        },
+        {
+          "name": "publicKey",
+          "goType": "DevicePublicKey",
+          "tsType": "DevicePublicKey"
         }
       ]
     },

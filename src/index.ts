@@ -114,7 +114,8 @@ program.command("init")
 
 program.command("types")
     .description("Generate TypeScript type definitions from Go structs")
-    .action(async () => {
+    .option("--local-runtime <path>", "Use a local strux repo as the runtime API source")
+    .action(async (options: {localRuntime?: string}) => {
         const { generateTypes } = await import("./commands/types")
         const { MainYAMLValidator } = await import("./types/main-yaml")
         const { BSPYamlValidator } = await import("./types/bsp-yaml")
@@ -123,6 +124,7 @@ program.command("types")
         const cwd = process.cwd()
 
         Settings.projectPath = cwd
+        Settings.localRuntime = options.localRuntime ? resolve(options.localRuntime) : null
         if (fileExists(join(cwd, "strux.yaml"))) {
             MainYAMLValidator.validateAndLoad(join(cwd, "strux.yaml"))
         }

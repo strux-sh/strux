@@ -595,6 +595,7 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rebu
 
             // Read the built binaries
             const cagePath = join(Settings.projectPath, "dist", "cache", bspName, "cage")
+            const keyboardPath = join(Settings.projectPath, "dist", "cache", bspName, "strux-keyboard")
             const wpePath = join(Settings.projectPath, "dist", "cache", bspName, "libstrux-extension.so")
             const clientPath = join(Settings.projectPath, "dist", "cache", bspName, "client")
             const cogPath = join(Settings.projectPath, "dist", "cache", bspName, "cog")
@@ -602,6 +603,7 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rebu
             const screenPath = join(Settings.projectPath, "dist", "cache", bspName, "screen")
 
             const cageBinary = Buffer.from(await Bun.file(cagePath).arrayBuffer())
+            const keyboardBinary = Buffer.from(await Bun.file(keyboardPath).arrayBuffer())
             const wpeBinary = Buffer.from(await Bun.file(wpePath).arrayBuffer())
             const clientBinary = Buffer.from(await Bun.file(clientPath).arrayBuffer())
             const cogBinary = Buffer.from(await Bun.file(cogPath).arrayBuffer())
@@ -615,6 +617,7 @@ async function handleConfigAction(action: "restore" | "rebuild-transfer" | "rebu
 
             // Send each component to the device
             devServer.sendComponent("cage", cageBinary, "/usr/bin/cage")
+            devServer.sendComponent("keyboard", keyboardBinary, "/usr/bin/strux-keyboard")
             devServer.sendComponent("wpe-extension", wpeBinary, "/usr/lib/wpe-web-extensions/libstrux-extension.so")
             devServer.sendComponent("client", clientBinary, "/strux/client")
             devServer.sendComponent("cog", cogBinary, "/usr/bin/cog")

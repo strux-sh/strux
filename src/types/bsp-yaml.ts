@@ -228,6 +228,11 @@ const CageSchema = z.object({
     hide_cursor: z.boolean().optional(),
 })
 
+// Board-owned, development-only feature switches. Their meaning is defined by
+// the BSP scripts that consume them; production policy must still be enforced
+// by those scripts using the authoritative STRUX_BUILD_MODE environment value.
+const DevelopmentSchema = z.record(z.string(), z.boolean())
+
 // BSP configuration schema
 const BSPConfigSchema = z.object({
     name: z.string(),
@@ -240,6 +245,7 @@ const BSPConfigSchema = z.object({
     boot: BootSchema.optional(),
     rootfs: RootFSSchema.optional(),
     runtime: RuntimeSchema.optional(),
+    development: DevelopmentSchema.optional(),
 })
 
 // Main bsp.yaml schema
