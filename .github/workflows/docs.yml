@@ -45,27 +45,31 @@ jobs:
         working-directory: docs
         run: npm ci
 
-      # Work out what we are publishing and where, based on the branch.
-      #   main          -> root "latest"   (/<repo>/) + pinned snapshot (/<repo>/vX.Y.Z/)
-      #   feature/<name> -> preview         (/<repo>/preview/<name>/)
-      #   any other      -> preview         (/<repo>/preview/<sanitized-branch>/)
+      # Work out what we are publishing and where, based on the branch. The site is served at the
+      # docs.strux.sh custom domain, so every path starts at the domain root.
+      #   main          -> root "latest"   (/) + pinned snapshot (/vX.Y.Z/)
+      #   feature/<name> -> preview         (/preview/<name>/)
+      #   any other      -> preview         (/preview/<sanitized-branch>/)
+      # Only "latest" is indexed by search engines; snapshots and previews are built with noindex.
       - name: Resolve deployment target
         id: meta
         run: |
           set -euo pipefail
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          PAGES_BASE="/${REPO_NAME}"
+          PAGES_BASE=""
           VERSION="$(node -p "require('./docs/package.json').version")"
           BRANCH="${GITHUB_REF_NAME}"
 
           if [ "$BRANCH" = "main" ]; then
             KIND="release"
+            SNAPSHOT_CHANNEL="release"
             # latest lives at the pages root; pinned snapshot under /vX.Y.Z/
             LATEST_BASE="${PAGES_BASE}/"
             VERSION_DIR="v${VERSION}"
             DEPLOY_BASE="${PAGES_BASE}/${VERSION_DIR}/"
           else
             KIND="preview"
+            SNAPSHOT_CHANNEL="preview"
             SLUG="${BRANCH#feature/}"
             SLUG="$(printf '%s' "$SLUG" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
             [ -n "$SLUG" ] || SLUG="branch"
@@ -80,6 +84,7 @@ jobs:
             echo "version=${VERSION}"
             echo "branch=${BRANCH}"
             echo "kind=${KIND}"
+            echo "snapshot_channel=${SNAPSHOT_CHANNEL}"
             echo "latest_base=${LATEST_BASE}"
             echo "version_dir=${VERSION_DIR}"
             echo "deploy_base=${DEPLOY_BASE}"
@@ -92,6 +97,7 @@ jobs:
         working-directory: docs
         env:
           DOCS_BASE: ${{ steps.meta.outputs.pages_base }}/
+          DOCS_CHANNEL: preview
           DOCS_VERSIONS_URL: ${{ steps.meta.outputs.versions_url }}
         run: npm run docs:build
 
@@ -101,6 +107,7 @@ jobs:
         working-directory: docs
         env:
           DOCS_BASE: ${{ steps.meta.outputs.latest_base }}
+          DOCS_CHANNEL: latest
           DOCS_VERSIONS_URL: ${{ steps.meta.outputs.versions_url }}
         run: |
           set -euo pipefail
@@ -114,6 +121,7 @@ jobs:
         working-directory: docs
         env:
           DOCS_BASE: ${{ steps.meta.outputs.deploy_base }}
+          DOCS_CHANNEL: ${{ steps.meta.outputs.snapshot_channel }}
           DOCS_VERSIONS_URL: ${{ steps.meta.outputs.versions_url }}
         run: |
           set -euo pipefail
